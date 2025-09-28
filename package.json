@@ -1,6 +1,7 @@
 {
   "name": "game-host",
   "version": "1.0.0",
+  "description": "Tiny Socket.IO game host for 8-player rooms",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -11,7 +12,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "helmet": "^7.1.0",
-    "socket.io": "^4.7.5",
-    "socket.io-rate-limiter": "^1.3.0"
+    "rate-limiter-flexible": "8.0.1",
+    "socket.io": "^4.7.5"
   }
 }
