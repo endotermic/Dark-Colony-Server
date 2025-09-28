@@ -14,5 +14,12 @@
     "helmet": "^7.1.0",
     "rate-limiter-flexible": "8.0.1",
     "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "cross-env": "^10.0.0"
+  },
+  "scripts": {
+  "start": "node server.js",
+  "dev": "cross-env NODE_ENV=development node server.js"
   }
 }

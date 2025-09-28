@@ -9,7 +9,7 @@ import { RateLimiterMemory } from "rate-limiter-flexible";
 // ===== конфиг =====
 const PORT = process.env.PORT || 3000;
 // перечислите домены WP-страниц (через запятую) — протокол обязателен
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://ВАШ_САЙТ.wordpress.com")
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://endotermic.wordpress.com")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
