@@ -1,0 +1,27 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36301.6 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "Dark-Colony-Server", "Dark-Colony-Server.esproj", "{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Debug|Any CPU.Deploy.0 = Debug|Any CPU
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C3EBCE2C-4F3E-BE84-0E74-0649E5746600}.Release|Any CPU.Deploy.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6FA4BACB-91A9-4390-B393-26D98FF3B448}
+	EndGlobalSection
+EndGlobal

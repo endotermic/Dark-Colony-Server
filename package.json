@@ -1,25 +1,15 @@
 {
-  "name": "game-host",
+  "name": "dark-colony-server",
   "version": "1.0.0",
-  "description": "Tiny Socket.IO game host for 8-player rooms",
-  "type": "module",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "NODE_ENV=development node server.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "helmet": "^7.1.0",
-    "rate-limiter-flexible": "8.0.1",
-    "socket.io": "^4.7.5"
-  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
   "devDependencies": {
-    "cross-env": "^10.0.0"
-  },
-  "scripts": {
-  "start": "node server.js",
-  "dev": "cross-env NODE_ENV=development node server.js"
+    "eslint": "^9.36.0"
   }
 }
