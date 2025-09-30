@@ -1,14 +1,15 @@
 {
   "name": "dark-colony-server",
   "version": "1.0.0",
-  "main": "app.js",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Dark Colony TCP game server",
   "devDependencies": {
     "eslint": "^9.36.0"
   }
