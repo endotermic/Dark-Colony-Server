@@ -19,11 +19,7 @@ primary_region = "iad"
 
   [[services.ports]]
     port = 8888
-    handlers = ["tcp"]
-    # Optionally also expose plain tcp (remove if only tls wanted)
-    # [[services.ports]]
-    #   port = 80
-    #   handlers = ["tcp"]
+    handlers = ["http"]
 
   [[services.tcp_checks]]
     interval = "15s"
