@@ -19,7 +19,6 @@ primary_region = "iad"
 
   [[services.ports]]
     port = 8888
-    handlers = ["http"]
 
   [[services.tcp_checks]]
     interval = "15s"
