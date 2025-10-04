@@ -15,7 +15,8 @@ const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = 5_000; // disconnect idle clients after 60s
 
 let nextClientId = 1;
-const clients = new Map(); // id -> { socket, buffer, lastActivity }
+// Added handshakeComplete flag to gate further interaction until client sends first valid message.
+const clients = new Map(); // id -> { socket, buffer, lastActivity, handshakeComplete }
 
 function log(...args) {
   const ts = new Date().toISOString();
@@ -30,14 +31,6 @@ function send(socket, obj) {
   }
 }
 
-function broadcast(obj, exceptId = null) {
-  const payload = JSON.stringify(obj) + '\n';
-  for (const [id, c] of clients) {
-    if (id === exceptId) continue;
-    c.socket.write(payload);
-  }
-}
-
 function disconnect(id, reason) {
   const client = clients.get(id);
   if (!client) return;
@@ -46,32 +39,6 @@ function disconnect(id, reason) {
   log(`Client ${id} disconnected${reason ? ' (' + reason + ')' : ''}. Active: ${clients.size}`);
 }
 
-function handleMessage(id, msg) {
-  const client = clients.get(id);
-  if (!client) return;
-  client.lastActivity = Date.now();
-
-  // Basic routing by type field.
-  switch (msg.type) {
-    case 'ping':
-      send(client.socket, { type: 'pong', t: Date.now() });
-      break;
-    case 'chat': {
-      if (typeof msg.text === 'string' && msg.text.length <= 200) {
-        broadcast({ type: 'chat', from: id, text: msg.text });
-      } else {
-        send(client.socket, { type: 'error', error: 'Invalid chat text' });
-      }
-      break;
-    }
-    case 'who': {
-      send(client.socket, { type: 'who', players: Array.from(clients.keys()) });
-      break;
-    }
-    default:
-      send(client.socket, { type: 'error', error: 'Unknown type' });
-  }
-}
 
 // Optional: helper to send initial binary handshake/message.
 function sendInitialBinaryPacket(socket) {
@@ -86,16 +53,15 @@ function sendInitialBinaryPacket(socket) {
 
 // Second initialization binary packet.
 function sendSecondBinaryPacket(socket) {
-  // Component byte arrays (now using ASCII string prefixes for 'Player')
-    const bytesInit = [0x26, 0x11, 0x69, 0x00, 0x00,
-        0x6c, 0x00, 0x00,
-        0x6c, 0x00, 0x02,
-        0x6c, 0x00, 0x03,
-        0x6c, 0x00, 0x04,
-        0x6c, 0x00, 0x05,
-        0x6c, 0x00, 0x06,
-        0x6c, 0x00, 0x07,
-        0x67, 0x00, 0x00];
+  const bytesInit = [0x26, 0x11, 0x69, 0x00, 0x00,
+    0x6c, 0x00, 0x00,
+    0x6c, 0x00, 0x02,
+    0x6c, 0x00, 0x03,
+    0x6c, 0x00, 0x04,
+    0x6c, 0x00, 0x05,
+    0x6c, 0x00, 0x06,
+    0x6c, 0x00, 0x07,
+    0x67, 0x00, 0x00];
   const bytesPlayer0 = [...Buffer.from('Player0\0', 'ascii'), 0x66, 0x00, 0x00, 0x6a, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x68, 0x01, 0x00, 0x67, 0x02, 0x00];
   const bytesPlayer2 = [...Buffer.from('Player2\0', 'ascii'), 0x66, 0x00, 0x02, 0x6a, 0x03, 0x02, 0x6e, 0x02, 0x02, 0x68, 0x00, 0x02, 0x67, 0x03, 0x00];
   const bytesPlayer3 = [...Buffer.from('Player3\0', 'ascii'), 0x66, 0x01, 0x03, 0x6a, 0x03, 0x03, 0x6e, 0x03, 0x03, 0x68, 0x00, 0x03, 0x67, 0x04, 0x00];
@@ -166,48 +132,11 @@ function sendMapPacket(socket) {
 const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-  clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
+  clients.set(id, { socket, buffer: '', lastActivity: Date.now(), handshakeComplete: false });
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
 
-  // Send required binary packets immediately after connection established.
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
-  // sendMapPacket(socket); // commented out per request
-
-  broadcast({ type: 'join', id }, id);
-
-  socket.setEncoding('utf8');
-
-  socket.on('data', (chunk) => {
-    const client = clients.get(id);
-    if (!client) return;
-    client.buffer += chunk;
-
-    // Process full lines.
-    let idx;
-    while ((idx = client.buffer.indexOf('\n')) >= 0) {
-      const line = client.buffer.slice(0, idx).trim();
-      client.buffer = client.buffer.slice(idx + 1);
-      if (!line) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch (err) {
-        send(socket, { type: 'error', error: 'Invalid JSON' });
-        continue;
-      }
-      handleMessage(id, msg);
-    }
-  });
-
-  socket.on('error', (err) => {
-    log(`Client ${id} error:`, err.message);
-  });
-
-  socket.on('close', () => {
-    disconnect(id, 'closed');
-    broadcast({ type: 'leave', id });
-  });
 });
 
 server.on('error', (err) => {
