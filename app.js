@@ -2,19 +2,17 @@
 
 // Simple unencrypted TCP game server skeleton.
 // Players connect via TCP (e.g. client ephemeral port like 57094) to server port 8888.
-// Protocol: newline-delimited JSON messages. Each line must be a complete JSON object.
-// Example message from client: {"type":"ping"}\n
+// Protocol: binary packets
 // Design goals:
 //  - Keep connections list for broadcasting.
 //  - Basic heartbeat / idle timeout.
 //  - Graceful error handling & logging.
-//  - Easily extendable command handlers.
 
 const net = require('net');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
-const IDLE_TIMEOUT_MS = 60_000; // disconnect idle clients after 60s
+const IDLE_TIMEOUT_MS = 5_000; // disconnect idle clients after 60s
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { socket, buffer, lastActivity }
