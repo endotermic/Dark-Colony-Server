@@ -5,11 +5,15 @@
     <PackageJsonVersion Condition="$(PackageJsonVersion) == ''">1.0.0</PackageJsonVersion>
     <PackageJsonMain Condition="$(PackageJsonMain) == ''">server.js</PackageJsonMain>
     <PackageJsonScriptsStart Condition="$(PackageJsonScriptsStart) == ''">node server.js</PackageJsonScriptsStart>
-    <PackageJsonScriptsTest Condition="$(PackageJsonScriptsTest) == ''">echo "Error: no test specified" &amp;&amp; exit 1</PackageJsonScriptsTest>
-    <PackageJsonKeywords Condition="$(PackageJsonKeywords) == ''">[]</PackageJsonKeywords>
+    <PackageJsonKeywords Condition="$(PackageJsonKeywords) == ''">[
+  "game",
+  "tcp",
+  "server"
+]</PackageJsonKeywords>
     <PackageJsonAuthor Condition="$(PackageJsonAuthor) == ''"></PackageJsonAuthor>
     <PackageJsonLicense Condition="$(PackageJsonLicense) == ''">ISC</PackageJsonLicense>
     <PackageJsonDescription Condition="$(PackageJsonDescription) == ''">Dark Colony TCP game server</PackageJsonDescription>
     <PackageJsonDevdependenciesEslint Condition="$(PackageJsonDevdependenciesEslint) == ''">^9.36.0</PackageJsonDevdependenciesEslint>
+    <PackageJsonEnginesNode Condition="$(PackageJsonEnginesNode) == ''">&gt;=18</PackageJsonEnginesNode>
   </PropertyGroup>
 </Project>
