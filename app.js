@@ -122,6 +122,9 @@ const COMMANDS = {
   ping: Buffer.from([0x71, 0x00]),
   player_name: Buffer.from([0x67, 0x01, 0x00]),
   player_chat: Buffer.from([0x65, 0x50, 0x6c, 0x61, 0x79, 0x65, 0x72]),
+  player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
+  player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
+  player_team: Buffer.from([0x6d])   // value after command is in range 0x01..0x07
 };
 
 function parseClientBinary(id, buf) {
