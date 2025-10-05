@@ -1,11 +1,11 @@
-This file explains how Visual Studio created the project.
+Server for Dark Colony game released in 1997.
 
-The following steps were used to generate this project:
-- Create project file (`Dark-Colony-Server.esproj`).
-- Create `launch.json` to enable debugging.
-- Install npm packages: `npm init && npm i --save-dev eslint`.
-- Create `app.js`.
-- Update `package.json` entry point.
-- Create `eslint.config.js` to enable linting.
-- Add project to solution.
-- Write this file.
+In original game server is built in the game.
+This project tries to reverse engineer interaction protocol and control it through the server application.
+
+Seeking for these abilities:
+1) Server will be put on the internet, available for the players all around the globe.
+2) Infinite amount of rooms (every room is restricted to max 8 players)
+3) Tournaments
+4) special server commands (switching between rooms/maps/options)
+
