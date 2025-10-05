@@ -283,7 +283,7 @@ const server = net.createServer((socket) => {
 
   socket.on('close', (hadError) => {
     disconnect(id, hadError ? 'closed with error' : 'closed');
-    broadcast({ type: 'leave', id });
+    //broadcast({ type: 'leave', id });
   });
 });
 
