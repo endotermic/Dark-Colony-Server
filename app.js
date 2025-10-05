@@ -163,6 +163,52 @@ function sendMapPacket(socket) {
   }
 }
 
+// Binary parsing helpers per user instructions
+const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
+const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
+const COMMANDS = {
+  ping: Buffer.from([0x71, 0x00]),
+  player_name: Buffer.from([0x67, 0x01, 0x00])
+};
+
+function parseClientBinary(id, buf) {
+  if (!Buffer.isBuffer(buf) || buf.length === 0) return;
+  let offset = 0;
+  // Ignore first byte of chunk
+  offset += 1;
+  // Skip any subsequent ignored markers (single bytes 0x00..0xf0 or DATA_HEADER sequences)
+  while (offset < buf.length) {
+    if (buf.length - offset >= DATA_HEADER.length && buf[offset] === DATA_HEADER[0] && buf[offset+1] === DATA_HEADER[1] && buf[offset+2] === DATA_HEADER[2]) {
+      offset += DATA_HEADER.length;
+      continue;
+    }
+    if (IGNORED_SINGLE_BYTES.has(buf[offset])) { offset += 1; continue; }
+    break;
+  }
+  if (offset >= buf.length) return;
+  const remaining = buf.slice(offset);
+  let matched = false;
+  for (const [name, pattern] of Object.entries(COMMANDS)) {
+    if (remaining.length >= pattern.length && remaining.slice(0, pattern.length).equals(pattern)) {
+      matched = true;
+      if (name === 'player_name') {
+        const after = remaining.slice(pattern.length);
+        let end = after.indexOf(0x00);
+        if (end === -1) end = after.length; // take all if no terminator
+        const rawNameBuf = after.slice(0, end);
+        const playerName = rawNameBuf.toString('ascii').replace(/[^\x20-\x7E]/g, '');
+        log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
+      } else {
+        log(`Binary command from Client ${id}: ${name}`);
+      }
+      break; // Stop after first recognized command
+    }
+  }
+  if (!matched) {
+    log(`Unknown binary data from Client ${id}: ${remaining.toString('hex')}`);
+  }
+}
+
 const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
@@ -176,19 +222,33 @@ const server = net.createServer((socket) => {
 
   broadcast({ type: 'join', id }, id);
 
-  socket.setEncoding('utf8');
+  // Removed socket.setEncoding('utf8') to keep raw binary data
 
   socket.on('data', (chunk) => {
-    clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
-
     const client = clients.get(id);
     if (!client) return;
-    client.buffer += chunk;
+    client.lastActivity = Date.now();
 
-    var buf_hex = Buffer.from(chunk).toString('hex');
-    log(`Received packet from Client ${id}. Content ${buf_hex}`);
+    
 
-    // Process full lines.
+    // Ensure chunk is a Buffer
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
+
+
+    //const buf_hex = buf.toString('hex');
+    //log(`Received raw packet from Client ${id}. Hex ${buf_hex}`);
+
+
+    // Parse binary command per spec
+    parseClientBinary(id, buf);
+
+    // Still support JSON line messages mixed in (convert buffer to string)
+    const str = buf.toString('utf8');
+    client.buffer += str;
+
+    
+
+    // Process full JSON lines if present
     let idx;
     while ((idx = client.buffer.indexOf('\n')) >= 0) {
       const line = client.buffer.slice(0, idx).trim();
