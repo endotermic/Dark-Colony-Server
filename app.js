@@ -1,20 +1,14 @@
 'use strict';
 
 // Simple unencrypted TCP game server skeleton.
-// Players connect via TCP (e.g. client ephemeral port like 57094) to server port 8888.
-// Protocol: binary packets
-// Design goals:
-//  - Keep connections list for broadcasting.
-//  - Basic heartbeat / idle timeout.
-//  - Graceful error handling & logging.
+// Players connect via TCP to server port 8888.
+// Protocol: binary packets + optional JSON lines.
 
 const net = require('net');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
-// Idle timeout (ms). Was incorrectly set to 5000 while comment said 60s causing early disconnects when a second client connected later.
-// Can override via env IDLE_TIMEOUT_MS.
-const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 60_000; // disconnect idle clients after 60s
+const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { socket, buffer, lastActivity }
@@ -24,20 +18,22 @@ function log(...args) {
   console.log(`[${ts}]`, ...args);
 }
 
-function send(socket, obj) {
+function safeWrite(socket, data) {
+  if (!socket || socket.destroyed) return false;
   try {
-    socket.write(JSON.stringify(obj) + '\n');
+    const ok = socket.write(data);
+    if (!ok) {
+      socket.once('drain', () => log('Socket drain event (backpressure relieved)'));
+    }
+    return ok;
   } catch (err) {
-    log('Send error', err.message);
+    log('Write error:', err.message);
+    return false;
   }
 }
 
-function broadcast(obj, exceptId = null) {
-  const payload = JSON.stringify(obj) + '\n';
-  for (const [id, c] of clients) {
-    if (id === exceptId) continue;
-    c.socket.write(payload);
-  }
+function send(socket, obj) {
+  safeWrite(socket, JSON.stringify(obj) + '\n');
 }
 
 function disconnect(id, reason) {
@@ -48,47 +44,13 @@ function disconnect(id, reason) {
   log(`Client ${id} disconnected${reason ? ' (' + reason + ')' : ''}. Active: ${clients.size}`);
 }
 
-function handleMessage(id, msg) {
-  const client = clients.get(id);
-  if (!client) return;
-  client.lastActivity = Date.now();
-
-  // Basic routing by type field.
-  switch (msg.type) {
-    case 'ping':
-      send(client.socket, { type: 'pong', t: Date.now() });
-      break;
-    case 'chat': {
-      if (typeof msg.text === 'string' && msg.text.length <= 200) {
-        broadcast({ type: 'chat', from: id, text: msg.text });
-      } else {
-        send(client.socket, { type: 'error', error: 'Invalid chat text' });
-      }
-      break;
-    }
-    case 'who': {
-      send(client.socket, { type: 'who', players: Array.from(clients.keys()) });
-      break;
-    }
-    default:
-      send(client.socket, { type: 'error', error: 'Unknown type' });
-  }
-}
-
-// Optional: helper to send initial binary handshake/message.
 function sendInitialBinaryPacket(socket) {
   const packet = Buffer.from([0x08, 0x00, 0x64, 0x0f, 0x00, 0x01, 0x00, 0x00]);
-  try {
-    socket.write(packet);
-    log('Sent initial binary packet to client');
-  } catch (err) {
-    log('Failed to send initial binary packet:', err.message);
-  }
+  if (!safeWrite(socket, packet)) log('Failed to send initial binary packet');
+  else log('Sent initial binary packet to client');
 }
 
-// Second initialization binary packet.
 function sendSecondBinaryPacket(socket) {
-  // Component byte arrays (now using ASCII string prefixes for 'Player')
   const bytesInit = [0x26, 0x11, 0x69, 0x00, 0x00,
     0x6c, 0x00, 0x00,
     0x6c, 0x00, 0x02,
@@ -125,8 +87,6 @@ function sendSecondBinaryPacket(socket) {
     0x6f, 0x0f, 0x00, 0x00, 0x00,
     0x00
   ];
-
-  // Concatenate all parts
   const allBytes = [
     ...bytesInit,
     ...bytesPlayer0,
@@ -139,16 +99,10 @@ function sendSecondBinaryPacket(socket) {
     ...bytesPlayer1,
     ...bytesParams
   ];
-
-  try {
-    socket.write(Buffer.from(allBytes));
-    log('Sent second binary init packet (constructed from component arrays, length=' + allBytes.length + ')');
-  } catch (err) {
-    log('Failed to send second binary packet:', err.message);
-  }
+  if (!safeWrite(socket, Buffer.from(allBytes))) log('Failed to send second binary init packet');
+  else log('Sent second binary init packet (length=' + allBytes.length + ')');
 }
 
-// Map selection packet (indicates which map will be played)
 function sendMapPacket(socket) {
   const bytes = [
     0x54, 0xe0, 0x69, 0x4a, 0x34, 0x50, 0x4c, 0x41, 0x59, 0x30, 0x31, 0x2e, 0x53, 0x43, 0x4e, 0x00,
@@ -157,12 +111,8 @@ function sendMapPacket(socket) {
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x28, 0x34, 0x20, 0x50, 0x6c, 0x61, 0x79, 0x65,
     0x72, 0x20, 0x4a, 0x75, 0x6e, 0x67, 0x6c, 0x65, 0x20, 0x4d, 0x61, 0x70, 0x20, 0x29, 0x00, 0x00
   ];
-  try {
-    socket.write(Buffer.from(bytes));
-    log('Sent map packet (length=' + bytes.length + ')');
-  } catch (err) {
-    log('Failed to send map packet:', err.message);
-  }
+  if (!safeWrite(socket, Buffer.from(bytes))) log('Failed to send map packet');
+  else log('Sent map packet (length=' + bytes.length + ')');
 }
 
 // Binary parsing helpers per user instructions
@@ -197,27 +147,23 @@ function parseClientBinary(id, buf) {
       if (name === 'player_name') {
         const after = remaining.slice(pattern.length);
         let end = after.indexOf(0x00);
-        if (end === -1) end = after.length; // take all if no terminator
-        const rawNameBuf = after.slice(0, end);
-        const playerName = rawNameBuf.toString('ascii');
+          if (end === -1) end = after.length; // take all if no terminator
+          const playerName = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
       } else if (name === 'player_chat') {
         const after = remaining.slice(pattern.length);
         // Chat message assumed to be null-terminated or rest of buffer
         let end = after.indexOf(0x00);
         if (end === -1) end = after.length;
-        const rawChatBuf = after.slice(0, end);
-        const chatMsg = rawChatBuf.toString('ascii');
+        const chatMsg = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
-      break; // Stop after first recognized command
+      break;
     }
   }
-  if (!matched) {
-    log(`Unknown binary data from Client ${id}: ${remaining.toString('hex')}`);
-  }
+  if (!matched) log(`Unknown binary data from Client ${id}: ${remaining.toString('hex')}`);
 }
 
 const server = net.createServer((socket) => {
@@ -226,76 +172,30 @@ const server = net.createServer((socket) => {
   clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
 
-  // Enable keep-alive to prevent premature disconnections
   socket.setKeepAlive(true, 30_000);
 
-  // Send required binary packets immediately after connection established.
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
-  // sendMapPacket(socket); // commented out per request
-
-  broadcast({ type: 'join', id }, id);
-
-  // Removed socket.setEncoding('utf8') to keep raw binary data
+  // sendMapPacket(socket); // optional
 
   socket.on('data', (chunk) => {
-    const client = clients.get(id);
-    if (!client) return;
+    const client = clients.get(id); if (!client) return;
     client.lastActivity = Date.now();
-
-    // Ensure chunk is a Buffer
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
-
-    const buf_hex = buf.toString('hex');
-    log(`Received raw packet from Client ${id}. Hex ${buf_hex}`);
-
-    // Parse binary command per spec
+    //log(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
     parseClientBinary(id, buf);
-
-    // Still support JSON line messages mixed in (convert buffer to string)
-    const str = buf.toString('utf8');
+    const str = buf.toString('ascii');
     client.buffer += str;
-
-    // Process full JSON lines if present
-    let idx;
-    while ((idx = client.buffer.indexOf('\n')) >= 0) {
-      const line = client.buffer.slice(0, idx).trim();
-      client.buffer = client.buffer.slice(idx + 1);
-      if (!line) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch (err) {
-        send(socket, { type: 'error', error: 'Invalid JSON' });
-        continue;
-      }
-      handleMessage(id, msg);
-    }
   });
 
-  socket.on('end', () => {
-    log(`Client ${id} ended connection`);
-  });
-
-  socket.on('error', (err) => {
-    log(`Client ${id} error:`, err.message);
-  });
-
-  socket.on('close', (hadError) => {
-    disconnect(id, hadError ? 'closed with error' : 'closed');
-    //broadcast({ type: 'leave', id });
-  });
+  socket.on('end', () => log(`Client ${id} ended connection`));
+  socket.on('error', (err) => log(`Client ${id} error:`, err.message));
+  socket.on('close', (hadError) => { disconnect(id, hadError ? 'closed with error' : 'closed'); });
 });
 
-server.on('error', (err) => {
-  log('Server error:', err);
-});
+server.on('error', (err) => { log('Server error:', err); });
+server.listen(PORT, HOST, () => { log(`Game server listening on ${HOST}:${PORT} (unencrypted TCP)`); });
 
-server.listen(PORT, HOST, () => {
-  log(`Game server listening on ${HOST}:${PORT} (unencrypted TCP)`);
-});
-
-// Heartbeat / idle cleanup interval
 setInterval(() => {
   const now = Date.now();
   for (const [id, client] of clients) {
