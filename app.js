@@ -168,7 +168,8 @@ const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const COMMANDS = {
   ping: Buffer.from([0x71, 0x00]),
-  player_name: Buffer.from([0x67, 0x01, 0x00])
+  player_name: Buffer.from([0x67, 0x01, 0x00]),
+  player_chat: Buffer.from([0x65, 0x50, 0x6c, 0x61, 0x79, 0x65, 0x72]),
 };
 
 function parseClientBinary(id, buf) {
@@ -196,8 +197,16 @@ function parseClientBinary(id, buf) {
         let end = after.indexOf(0x00);
         if (end === -1) end = after.length; // take all if no terminator
         const rawNameBuf = after.slice(0, end);
-        const playerName = rawNameBuf.toString('ascii').replace(/[^\x20-\x7E]/g, '');
+        const playerName = rawNameBuf.toString('ascii');
         log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
+      } else if (name === 'player_chat') {
+        const after = remaining.slice(pattern.length);
+        // Chat message assumed to be null-terminated or rest of buffer
+        let end = after.indexOf(0x00);
+        if (end === -1) end = after.length;
+        const rawChatBuf = after.slice(0, end);
+        const chatMsg = rawChatBuf.toString('ascii');
+        log(`Binary command from Client ${id}: ${name}${chatMsg ? chatMsg : ''}`);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
@@ -229,15 +238,11 @@ const server = net.createServer((socket) => {
     if (!client) return;
     client.lastActivity = Date.now();
 
-    
-
     // Ensure chunk is a Buffer
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
 
-
-    //const buf_hex = buf.toString('hex');
-    //log(`Received raw packet from Client ${id}. Hex ${buf_hex}`);
-
+    const buf_hex = buf.toString('hex');
+    log(`Received raw packet from Client ${id}. Hex ${buf_hex}`);
 
     // Parse binary command per spec
     parseClientBinary(id, buf);
@@ -245,8 +250,6 @@ const server = net.createServer((socket) => {
     // Still support JSON line messages mixed in (convert buffer to string)
     const str = buf.toString('utf8');
     client.buffer += str;
-
-    
 
     // Process full JSON lines if present
     let idx;
