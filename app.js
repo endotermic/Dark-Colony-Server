@@ -179,9 +179,14 @@ const server = net.createServer((socket) => {
   socket.setEncoding('utf8');
 
   socket.on('data', (chunk) => {
+    clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
+
     const client = clients.get(id);
     if (!client) return;
     client.buffer += chunk;
+
+    var buf_hex = Buffer.from(chunk).toString('hex');
+    log(`Received packet from Client ${id}. Content ${buf_hex}`);
 
     // Process full lines.
     let idx;
