@@ -12,7 +12,9 @@ const net = require('net');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
-const IDLE_TIMEOUT_MS = 5_000; // disconnect idle clients after 60s
+// Idle timeout (ms). Was incorrectly set to 5000 while comment said 60s causing early disconnects when a second client connected later.
+// Can override via env IDLE_TIMEOUT_MS.
+const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 60_000; // disconnect idle clients after 60s
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { socket, buffer, lastActivity }
@@ -87,15 +89,15 @@ function sendInitialBinaryPacket(socket) {
 // Second initialization binary packet.
 function sendSecondBinaryPacket(socket) {
   // Component byte arrays (now using ASCII string prefixes for 'Player')
-    const bytesInit = [0x26, 0x11, 0x69, 0x00, 0x00,
-        0x6c, 0x00, 0x00,
-        0x6c, 0x00, 0x02,
-        0x6c, 0x00, 0x03,
-        0x6c, 0x00, 0x04,
-        0x6c, 0x00, 0x05,
-        0x6c, 0x00, 0x06,
-        0x6c, 0x00, 0x07,
-        0x67, 0x00, 0x00];
+  const bytesInit = [0x26, 0x11, 0x69, 0x00, 0x00,
+    0x6c, 0x00, 0x00,
+    0x6c, 0x00, 0x02,
+    0x6c, 0x00, 0x03,
+    0x6c, 0x00, 0x04,
+    0x6c, 0x00, 0x05,
+    0x6c, 0x00, 0x06,
+    0x6c, 0x00, 0x07,
+    0x67, 0x00, 0x00];
   const bytesPlayer0 = [...Buffer.from('Player0\0', 'ascii'), 0x66, 0x00, 0x00, 0x6a, 0x02, 0x00, 0x6e, 0x00, 0x00, 0x68, 0x01, 0x00, 0x67, 0x02, 0x00];
   const bytesPlayer2 = [...Buffer.from('Player2\0', 'ascii'), 0x66, 0x00, 0x02, 0x6a, 0x03, 0x02, 0x6e, 0x02, 0x02, 0x68, 0x00, 0x02, 0x67, 0x03, 0x00];
   const bytesPlayer3 = [...Buffer.from('Player3\0', 'ascii'), 0x66, 0x01, 0x03, 0x6a, 0x03, 0x03, 0x6e, 0x03, 0x03, 0x68, 0x00, 0x03, 0x67, 0x04, 0x00];
@@ -206,7 +208,7 @@ function parseClientBinary(id, buf) {
         if (end === -1) end = after.length;
         const rawChatBuf = after.slice(0, end);
         const chatMsg = rawChatBuf.toString('ascii');
-        log(`Binary command from Client ${id}: ${name}${chatMsg ? chatMsg : ''}`);
+        log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
@@ -223,6 +225,9 @@ const server = net.createServer((socket) => {
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
   clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
+
+  // Enable keep-alive to prevent premature disconnections
+  socket.setKeepAlive(true, 30_000);
 
   // Send required binary packets immediately after connection established.
   sendInitialBinaryPacket(socket);
@@ -268,12 +273,16 @@ const server = net.createServer((socket) => {
     }
   });
 
+  socket.on('end', () => {
+    log(`Client ${id} ended connection`);
+  });
+
   socket.on('error', (err) => {
     log(`Client ${id} error:`, err.message);
   });
 
-  socket.on('close', () => {
-    disconnect(id, 'closed');
+  socket.on('close', (hadError) => {
+    disconnect(id, hadError ? 'closed with error' : 'closed');
     broadcast({ type: 'leave', id });
   });
 });
@@ -290,9 +299,10 @@ server.listen(PORT, HOST, () => {
 setInterval(() => {
   const now = Date.now();
   for (const [id, client] of clients) {
-    if (now - client.lastActivity > IDLE_TIMEOUT_MS) {
+    const idleFor = now - client.lastActivity;
+    if (idleFor > IDLE_TIMEOUT_MS) {
       send(client.socket, { type: 'disconnect', reason: 'idle' });
-      disconnect(id, 'idle timeout');
+      disconnect(id, `idle timeout ${idleFor}ms`);
     }
   }
 }, 10_000);
