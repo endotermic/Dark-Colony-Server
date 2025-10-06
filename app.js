@@ -20,7 +20,21 @@ function log(...args) {
 
 function safeWrite(socket, data) {
   if (!socket || socket.destroyed) return false;
+  // Added detailed logging of what is being written
   try {
+    const isBuffer = Buffer.isBuffer(data);
+    const length = isBuffer ? data.length : Buffer.byteLength(data, 'utf8');
+    // Produce a preview (hex for buffers, plain for strings) limited in size
+    let preview;
+    if (isBuffer) {
+      preview = data.toString('hex');
+      if (preview.length > 160) preview = preview.slice(0, 160) + '...';
+    } else {
+      preview = data;
+      if (preview.length > 160) preview = preview.slice(0, 160) + '...';
+    }
+    log(`safeWrite -> ${isBuffer ? 'Buffer' : 'String'} len=${length} preview=${preview}`);
+
     const ok = socket.write(data);
     if (!ok) {
       socket.once('drain', () => log('Socket drain event (backpressure relieved)'));
@@ -110,21 +124,42 @@ function sendMapPacket(socket) {
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x28, 0x34, 0x20, 0x50, 0x6c, 0x61, 0x79, 0x65,
     0x72, 0x20, 0x4a, 0x75, 0x6e, 0x67, 0x6c, 0x65, 0x20, 0x4d, 0x61, 0x70, 0x20, 0x29, 0x00, 0x00
-  ];
-  if (!safeWrite(socket, Buffer.from(bytes))) log('Failed to send map packet');
-  else log('Sent map packet (length=' + bytes.length + ')');
+    ];
+
+    const bytesCounter = [0x54, 0xe0];
+    const bytesCommand = [0x69]; // room_map command
+    const bytesMapType = [0x4a]; // map type J=0x4a or D=0x44
+    const bytesPlayersCount = [0x34]; // '4'=0x34 players 
+    const bytesMapFilename = [...Buffer.from('PLAY01.SCN\0', 'ascii')]; // null-terminated
+    const bytesMapDisplayName = [...Buffer.from('4 Kingdoms\n                    (4 Player Jungle Map )\0', 'ascii')]; // null-terminated
+
+    const allBytes = [
+        ...bytesCounter,
+        ...bytesCommand,
+        ...bytesMapType,
+        ...bytesPlayersCount,
+        ...bytesMapFilename,
+        ...bytesMapDisplayName,
+        ...[0x00] // null byte at the end
+    ];
+  if (!safeWrite(socket, Buffer.from(allBytes))) log('Failed to send map packet');
+  else log('Sent map packet (length=' + allBytes.length + ')');
 }
 
 // Binary parsing helpers per user instructions
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const COMMANDS = {
-  ping: Buffer.from([0x71, 0x00]),
-  player_name: Buffer.from([0x67, 0x01, 0x00]),
-  player_chat: Buffer.from([0x65, 0x50, 0x6c, 0x61, 0x79, 0x65, 0x72]),
+  ping: Buffer.from([0x71]),
+  player_name: Buffer.from([0x67]),
+  player_chat: Buffer.from([0x65]),
   player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
   player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
-  player_team: Buffer.from([0x6d])   // value after command is in range 0x01..0x07
+  player_team: Buffer.from([0x6d]),  // value after command is in range 0x01..0x07
+  room_greeting: Buffer.from([0x6f]),
+    room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
+    room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
+  room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
 };
 
 function parseClientBinary(id, buf) {
@@ -160,6 +195,12 @@ function parseClientBinary(id, buf) {
         if (end === -1) end = after.length;
         const chatMsg = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
+      } else if (name === 'room_greeting') {
+        log(`Binary command from Client ${id}: ${name} -> sending map packet`);
+        const client = clients.get(id);
+        if (client) {
+          //try { sendMapPacket(client.socket); } catch (e) { log('Error sending map packet for client', id, e.message); }
+        }
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
@@ -178,14 +219,14 @@ const server = net.createServer((socket) => {
   socket.setKeepAlive(true, 30_000);
 
   sendInitialBinaryPacket(socket);
-  sendSecondBinaryPacket(socket);
-  // sendMapPacket(socket); // optional
+  sendSecondBinaryPacket(socket); // optional
+  //sendMapPacket(socket); // optional
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
     client.lastActivity = Date.now();
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
-    //log(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
+    log(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
     parseClientBinary(id, buf);
     const str = buf.toString('ascii');
     client.buffer += str;
