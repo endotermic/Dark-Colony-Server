@@ -221,6 +221,8 @@ function sendSecondBinaryPacket(socket) {
 }
 
 function sendMapPacket(socket) {
+  const armageddon = [0x69, 0x44, 0x38, 0x50, 0x4c, 0x41, 0x59, 0x30, 0x31, 0x2e, 0x53, 0x43, 0x4e, 0x0, 0x41, 0x72, 0x6d, 0x61, 0x67, 0x65, 0x64, 0x64, 0x6f, 0x6e, 0xa, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x28, 0x38, 0x20, 0x50, 0x6c, 0x61, 0x79, 0x65, 0x72, 0x20, 0x44, 0x65, 0x73, 0x65, 0x72, 0x74, 0x20, 0x4d, 0x61, 0x70, 0x20, 0x29, 0x0];
+
   const bytes = [
     0x69, 0x4a, 0x34, 0x50, 0x4c, 0x41, 0x59, 0x30, 0x31, 0x2e, 0x53, 0x43, 0x4e, 0x00,
     0x34, 0x20, 0x4b, 0x69, 0x6e, 0x67, 0x64, 0x6f, 0x6d, 0x73, 0x0a, 0x20, 0x20, 0x20, 0x20, 0x20,
@@ -245,23 +247,35 @@ function sendMapPacket(socket) {
         ...bytesMapDisplayName,
         ...[0x00] // null byte at the end
     ];
-  if (!sendPacket(socket, Buffer.from(bytes))) log('Failed to send map packet');
-  else log('Sent map packet (length=' + bytes.length + ')');
+    if (!sendPacket(socket, Buffer.from(armageddon))) log('Failed to send map packet');
+    else log('Sent map packet (length=' + armageddon.length + ')');
+}
+
+function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
+    // Clamp values to protocol expectations
+    if (playerIndex < 0x01) playerIndex = 0x01;
+    if (playerIndex > 0x08) playerIndex = 0x08;
+    readiness = readiness ? 0x01 : 0x00;
+    const payload = Buffer.from([0x68, playerIndex, readiness]);
+    if (!sendPacket(socket, payload)) log(`Failed to send player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
+    else log(`Sent player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
 }
 
 // Binary parsing helpers per user instructions
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const COMMANDS = {
+  hz: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
   ping: Buffer.from([0x71]),
+  player_ready: Buffer.from([0x68]), // plus player index byte in range 0x01..0x08 followed by readyness byte 0x00 or 0x01
   player_name: Buffer.from([0x67]),
   player_chat: Buffer.from([0x65]),
   player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
   player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
   player_team: Buffer.from([0x6d]),  // value after command is in range 0x01..0x07
   room_greeting: Buffer.from([0x6f]),
-    room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
-    room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
+  room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
+  room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
 };
 
@@ -288,16 +302,21 @@ function parseClientBinary(id, buf) {
       if (name === 'player_name') {
         const after = remaining.slice(pattern.length);
         let end = after.indexOf(0x00);
-          if (end === -1) end = after.length; // take all if no terminator
-          const playerName = after.slice(0, end).toString('ascii');
+        if (end === -1) end = after.length;
+        const playerName = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
       } else if (name === 'player_chat') {
         const after = remaining.slice(pattern.length);
-        // Chat message assumed to be null-terminated or rest of buffer
         let end = after.indexOf(0x00);
         if (end === -1) end = after.length;
         const chatMsg = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
+      } else if (name === 'player_ready') {
+        log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
+        const client = clients.get(id);
+        if (client) {
+            sendPlayerReady(client.socket, 0x02, 0x01);
+        }
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> sending map packet`);
         const client = clients.get(id);
@@ -323,8 +342,9 @@ const server = net.createServer((socket) => {
   socket.setKeepAlive(true, 30_000);
 
   sendInitialBinaryPacket(socket);
-  sendSecondBinaryPacket(socket); // optional
-  sendMapPacket(socket); // optional
+  sendSecondBinaryPacket(socket);
+  sendMapPacket(socket);
+  sendPlayerReady(socket, 0x01, 0x01);
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
