@@ -103,6 +103,8 @@ function sendFramedPacket(socket, payload) {
  */
 function sendPacket(socket, payload) {
   if (!socket || socket.destroyed) return false;
+  // Initialize per-socket counter if missing
+  if (socket.__packetCounter === undefined) socket.__packetCounter = 0x00; // values 0x00,0x10,...,0xF0
   let payloadBuf;
   if (Buffer.isBuffer(payload)) {
     payloadBuf = payload;
@@ -114,30 +116,28 @@ function sendPacket(socket, payload) {
     throw new TypeError('Unsupported payload type for sendPacket');
   }
 
-  // total length includes: length byte + counter byte + payload + terminator
   const totalLen = 2 + payloadBuf.length + 1;
   if (totalLen > 0x0FFF) throw new RangeError('Packet too long (max 4095 bytes): ' + totalLen);
 
-  // Split length across 12 bits: low 8 bits in first byte, high 4 bits in second byte (low nibble)
   const lenLow = totalLen & 0xFF;
-  const lenHigh = (totalLen >> 8) & 0x0F; // goes in low nibble of second byte if non-zero
+  const lenHigh = (totalLen >> 8) & 0x0F;
 
-  // Counter stored in high nibble (values 0x0..0xF) shifted << 4
-  const counterNibble = (packetCounter >> 4) & 0x0F; // packetCounter already steps 0x00,0x10,...
-  const counterByte = (counterNibble << 4) | lenHigh; // combine high nibble(counter) + low nibble(length high bits)
+  const counterByteValue = socket.__packetCounter; // 0x00..0xF0
+  const counterNibble = (counterByteValue >> 4) & 0x0F;
+  const counterByte = (counterNibble << 4) | lenHigh;
 
-  // Prepare next counter value
-  packetCounter += 0x10;
-  if (packetCounter > 0xF0) packetCounter = 0x00;
+  // Advance per-socket counter
+  socket.__packetCounter += 0x10;
+  if (socket.__packetCounter > 0xF0) socket.__packetCounter = 0x00;
 
   const packet = Buffer.alloc(totalLen);
   let o = 0;
-  packet[o++] = lenLow;      // length low byte
-  packet[o++] = counterByte; // counter (high nibble) + len high bits (low nibble)
+  packet[o++] = lenLow;
+  packet[o++] = counterByte;
   payloadBuf.copy(packet, o); o += payloadBuf.length;
-  packet[o++] = 0x00;        // terminator
+  packet[o++] = 0x00;
 
-  log(`sendPacket len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) counterNibble=0x${counterNibble.toString(16)} payloadLen=${payloadBuf.length}`);
+  log(`sendPacket [clientCounter=0x${counterNibble.toString(16)}] len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payloadBuf.length}`);
   return safeWrite(socket, packet);
 }
 
@@ -317,6 +317,7 @@ const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
   clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
+  socket.__packetCounter = 0x00; // initialize per-client packet counter
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
 
   socket.setKeepAlive(true, 30_000);
