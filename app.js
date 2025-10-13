@@ -368,6 +368,15 @@ const server = net.createServer((socket) => {
   sendSecondBinaryPacket(socket);
   sendMapPacket(socket);
   sendPlayerReady(socket, 0x01, 0x01);
+  // Send greeting chat message to client
+  try {
+    const greetingMsg = 'Greetings to DarkColony online server!';
+    const greetingPayload = Buffer.concat([Buffer.from([0x65]), Buffer.from(greetingMsg, 'ascii'), Buffer.from([0x00])]);
+    sendPacket(socket, greetingPayload);
+    log('Sent greeting chat message to client');
+  } catch (e) {
+    log('Failed to send greeting message:', e.message);
+  }
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
