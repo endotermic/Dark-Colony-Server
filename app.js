@@ -263,22 +263,30 @@ function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
 
 // Generic command packet helper: builds [commandBytes...][data bytes][0x00 terminator]
 function sendCommandPacket(socket, command, data) {
-  if (!socket || socket.destroyed) return false;
+  if (!socket || socket.destroyed) {
+    log('sendCommandPacket: socket invalid/destroyed');
+    return; // no value returned
+  }
   let commandBuf;
-  if (typeof command === 'number') {
-    if (command < 0 || command > 0xFF) throw new TypeError('Single command byte must be 0..255');
-    commandBuf = Buffer.from([command]);
-  } else if (Array.isArray(command)) {
-    if (command.length === 0) throw new TypeError('command array empty');
-    commandBuf = Buffer.from(command.map(b => {
-      if (typeof b !== 'number' || b < 0 || b > 0xFF) throw new TypeError('command array values must be bytes (0..255)');
-      return b;
-    }));
-  } else if (Buffer.isBuffer(command)) {
-    if (command.length === 0) throw new TypeError('command buffer empty');
-    commandBuf = command;
-  } else {
-    throw new TypeError('command must be number | number[] | Buffer');
+  try {
+    if (typeof command === 'number') {
+      if (command < 0 || command > 0xFF) throw new TypeError('Single command byte must be 0..255');
+      commandBuf = Buffer.from([command]);
+    } else if (Array.isArray(command)) {
+      if (command.length === 0) throw new TypeError('command array empty');
+      commandBuf = Buffer.from(command.map(b => {
+        if (typeof b !== 'number' || b < 0 || b > 0xFF) throw new TypeError('command array values must be bytes (0..255)');
+        return b;
+      }));
+    } else if (Buffer.isBuffer(command)) {
+      if (command.length === 0) throw new TypeError('command buffer empty');
+      commandBuf = command;
+    } else {
+      throw new TypeError('command must be number | number[] | Buffer');
+    }
+  } catch (e) {
+    log('sendCommandPacket command error:', e.message);
+    return; // stop on invalid command
   }
 
   let dataBuf;
@@ -292,10 +300,10 @@ function sendCommandPacket(socket, command, data) {
     dataBuf = dataBuf.slice(0, dataBuf.length - 1);
   }
   const payload = Buffer.concat([commandBuf, dataBuf, Buffer.from([0x00])]);
-  const ok = sendPacket(socket, payload);
+  const sent = sendPacket(socket, payload);
   const cmdHex = commandBuf.toString('hex');
-  log(ok ? `Sent command (${cmdHex}) totalPayloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
-  return ok;
+  log(sent ? `Sent command (${cmdHex}) totalPayloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
+  // Purposefully no return value
 }
 
 // NEW: helper to echo back player name changes (simplistic format 0x67 <name bytes> 0x00)
@@ -404,13 +412,8 @@ const server = net.createServer((socket) => {
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
   sendMapPacket(socket);
-  sendPlayerReady(socket, 0x01, 0x01);
-  // Send greeting chat message using generic command helper (0x65 = player_chat)
-  try {
-    sendCommandPacket(socket, 0x65, 'Greetings to DarkColony online server!');
-  } catch (e) {
-    log('Failed to send greeting message:', e.message);
-  }
+    sendPlayerReady(socket, 0x01, 0x01);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to DarkColony online server!');
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
