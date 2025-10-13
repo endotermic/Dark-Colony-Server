@@ -261,13 +261,32 @@ function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
     else log(`Sent player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
 }
 
+// NEW: helper to echo back player name changes (simplistic format 0x67 <name bytes> 0x00)
+function sendPlayerName(socket, name) {
+  if (!name) name = '';
+  // sanitize to ascii and limit length
+  const clean = Buffer.from(name.replace(/[^\x20-\x7e]/g,'').slice(0,32),'ascii');
+  const payload = Buffer.concat([Buffer.from([0x67, 0x01, 0x00]), clean, Buffer.from([0x00])]);
+  if (!sendPacket(socket, payload)) log('Failed to echo player_name');
+  else log('Echoed player_name: ' + name);
+}
+
+// NEW: helper to echo chat message (format 0x65 <msg bytes> 0x00)
+function sendPlayerChat(socket, msg) {
+  if (!msg) msg = '';
+  const clean = Buffer.from(msg.replace(/\r|\n/g,'').slice(0,120),'ascii');
+  const payload = Buffer.concat([Buffer.from([0x65]), clean, Buffer.from([0x00])]);
+  if (!sendPacket(socket, payload)) log('Failed to echo player_chat');
+  else log('Echoed player_chat: ' + msg);
+}
+
 // Binary parsing helpers per user instructions
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const ROOM_COMMANDS = {
   ping: Buffer.from([0x71]),
   player_ready: Buffer.from([0x68]), // plus player index byte in range 0x01..0x08 followed by readyness byte 0x00 or 0x01
-  player_name: Buffer.from([0x67]),
+  player_name: Buffer.from([0x67, 0x01, 0x00]),
   player_chat: Buffer.from([0x65]),
   player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
   player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
@@ -307,12 +326,14 @@ function parseClientBinary(id, buf) {
         if (end === -1) end = after.length;
         const playerName = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
+        const client = clients.get(id); if (client) sendPlayerName(client.socket, playerName);
       } else if (name === 'player_chat') {
         const after = remaining.slice(pattern.length);
         let end = after.indexOf(0x00);
         if (end === -1) end = after.length;
         const chatMsg = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
+        const client = clients.get(id); if (client) sendPlayerChat(client.socket, chatMsg);
       } else if (name === 'player_ready') {
         log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
         const client = clients.get(id);
