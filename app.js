@@ -264,8 +264,7 @@ function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
 // Binary parsing helpers per user instructions
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
-const COMMANDS = {
-  hz: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
+const ROOM_COMMANDS = {
   ping: Buffer.from([0x71]),
   player_ready: Buffer.from([0x68]), // plus player index byte in range 0x01..0x08 followed by readyness byte 0x00 or 0x01
   player_name: Buffer.from([0x67]),
@@ -277,6 +276,9 @@ const COMMANDS = {
   room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
   room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
+};
+const BATTLE_COMMANDS = {
+    hz: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
 };
 
 function parseClientBinary(id, buf) {
@@ -296,7 +298,7 @@ function parseClientBinary(id, buf) {
   if (offset >= buf.length) return;
   const remaining = buf.slice(offset);
   let matched = false;
-  for (const [name, pattern] of Object.entries(COMMANDS)) {
+  for (const [name, pattern] of Object.entries(ROOM_COMMANDS)) {
     if (remaining.length >= pattern.length && remaining.slice(0, pattern.length).equals(pattern)) {
       matched = true;
       if (name === 'player_name') {
