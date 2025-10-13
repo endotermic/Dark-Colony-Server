@@ -261,6 +261,43 @@ function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
     else log(`Sent player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
 }
 
+// Generic command packet helper: builds [commandBytes...][data bytes][0x00 terminator]
+function sendCommandPacket(socket, command, data) {
+  if (!socket || socket.destroyed) return false;
+  let commandBuf;
+  if (typeof command === 'number') {
+    if (command < 0 || command > 0xFF) throw new TypeError('Single command byte must be 0..255');
+    commandBuf = Buffer.from([command]);
+  } else if (Array.isArray(command)) {
+    if (command.length === 0) throw new TypeError('command array empty');
+    commandBuf = Buffer.from(command.map(b => {
+      if (typeof b !== 'number' || b < 0 || b > 0xFF) throw new TypeError('command array values must be bytes (0..255)');
+      return b;
+    }));
+  } else if (Buffer.isBuffer(command)) {
+    if (command.length === 0) throw new TypeError('command buffer empty');
+    commandBuf = command;
+  } else {
+    throw new TypeError('command must be number | number[] | Buffer');
+  }
+
+  let dataBuf;
+  if (data == null) dataBuf = Buffer.alloc(0);
+  else if (Buffer.isBuffer(data)) dataBuf = data;
+  else if (Array.isArray(data)) dataBuf = Buffer.from(data);
+  else if (typeof data === 'string') dataBuf = Buffer.from(data, 'ascii');
+  else dataBuf = Buffer.from(String(data), 'ascii');
+
+  while (dataBuf.length && dataBuf[dataBuf.length - 1] === 0x00) {
+    dataBuf = dataBuf.slice(0, dataBuf.length - 1);
+  }
+  const payload = Buffer.concat([commandBuf, dataBuf, Buffer.from([0x00])]);
+  const ok = sendPacket(socket, payload);
+  const cmdHex = commandBuf.toString('hex');
+  log(ok ? `Sent command (${cmdHex}) totalPayloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
+  return ok;
+}
+
 // NEW: helper to echo back player name changes (simplistic format 0x67 <name bytes> 0x00)
 function sendPlayerName(socket, name) {
   if (!name) name = '';
@@ -368,12 +405,9 @@ const server = net.createServer((socket) => {
   sendSecondBinaryPacket(socket);
   sendMapPacket(socket);
   sendPlayerReady(socket, 0x01, 0x01);
-  // Send greeting chat message to client
+  // Send greeting chat message using generic command helper (0x65 = player_chat)
   try {
-    const greetingMsg = 'Greetings to DarkColony online server!';
-    const greetingPayload = Buffer.concat([Buffer.from([0x65]), Buffer.from(greetingMsg, 'ascii'), Buffer.from([0x00])]);
-    sendPacket(socket, greetingPayload);
-    log('Sent greeting chat message to client');
+    sendCommandPacket(socket, 0x65, 'Greetings to DarkColony online server!');
   } catch (e) {
     log('Failed to send greeting message:', e.message);
   }
