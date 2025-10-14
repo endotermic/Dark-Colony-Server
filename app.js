@@ -251,16 +251,6 @@ function sendMapPacket(socket) {
     else log('Sent map packet (length=' + armageddon.length + ')');
 }
 
-function sendPlayerReady(socket, playerIndex = 0x01, readiness = 0x01) {
-    // Clamp values to protocol expectations
-    if (playerIndex < 0x01) playerIndex = 0x01;
-    if (playerIndex > 0x08) playerIndex = 0x08;
-    readiness = readiness ? 0x01 : 0x00;
-    const payload = Buffer.from([0x68, playerIndex, readiness]);
-    if (!sendPacket(socket, payload)) log(`Failed to send player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
-    else log(`Sent player_ready idx=0x${playerIndex.toString(16)} ready=${readiness}`);
-}
-
 // Generic command packet helper: builds [commandBytes...][data bytes][0x00 terminator]
 function sendCommandPacket(socket, command, data) {
   if (!socket || socket.destroyed) {
@@ -329,6 +319,7 @@ function sendPlayerChat(socket, msg) {
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const ROOM_COMMANDS = {
+  begin_battle: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
   ping: Buffer.from([0x71]),
   player_ready: Buffer.from([0x68]), // plus player index byte in range 0x01..0x08 followed by readyness byte 0x00 or 0x01
   player_name: Buffer.from([0x67, 0x01, 0x00]),
@@ -342,7 +333,7 @@ const ROOM_COMMANDS = {
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
 };
 const BATTLE_COMMANDS = {
-    hz: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
+    
 };
 
 function parseClientBinary(id, buf) {
@@ -380,17 +371,11 @@ function parseClientBinary(id, buf) {
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
         const client = clients.get(id); if (client) sendPlayerChat(client.socket, chatMsg);
       } else if (name === 'player_ready') {
-        log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
-        const client = clients.get(id);
-        if (client) {
-            sendPlayerReady(client.socket, 0x02, 0x01);
-        }
+          log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
+          const client = clients.get(id);
+          if (client) sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
       } else if (name === 'room_greeting') {
-        log(`Binary command from Client ${id}: ${name} -> sending map packet`);
-        const client = clients.get(id);
-        if (client) {
-          //try { sendMapPacket(client.socket); } catch (e) { log('Error sending map packet for client', id, e.message); }
-        }
+        log(`Binary command from Client ${id}: ${name} -> room greeting`);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
@@ -412,8 +397,7 @@ const server = net.createServer((socket) => {
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
   sendMapPacket(socket);
-    sendPlayerReady(socket, 0x01, 0x01);
-    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to DarkColony online server!');
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to the DarkColony online server!');
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
