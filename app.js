@@ -329,9 +329,9 @@ const ROOM_COMMANDS = {
   room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
   room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
-};
-const BATTLE_COMMANDS = {
-    
+
+  hz1: Buffer.from([0x02]),
+  hz2: Buffer.from([0x08]),
 };
 
 function parseClientBinary(client, buf) {
@@ -372,6 +372,8 @@ function parseClientBinary(client, buf) {
       } else if (name === 'player_ready') {
           log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
+          sendCommandPacket(client.socket, ROOM_COMMANDS.hz1, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00]));
+          sendCommandPacket(client.socket, ROOM_COMMANDS.hz1, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00]));
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> room greeting`);
       } else {
