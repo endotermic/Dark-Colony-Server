@@ -286,13 +286,11 @@ function sendCommandPacket(socket, command, data) {
   else if (typeof data === 'string') dataBuf = Buffer.from(data, 'ascii');
   else dataBuf = Buffer.from(String(data), 'ascii');
 
-  while (dataBuf.length && dataBuf[dataBuf.length - 1] === 0x00) {
-    dataBuf = dataBuf.slice(0, dataBuf.length - 1);
-  }
-  const payload = Buffer.concat([commandBuf, dataBuf, Buffer.from([0x00])]);
+  // Do NOT append an internal 0x00 terminator; sendPacket itself will append the single packet terminator.
+  const payload = Buffer.concat([commandBuf, dataBuf]);
   const sent = sendPacket(socket, payload);
   const cmdHex = commandBuf.toString('hex');
-  log(sent ? `Sent command (${cmdHex}) totalPayloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
+  log(sent ? `Sent command (${cmdHex}) payloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
   // Purposefully no return value
 }
 
@@ -373,7 +371,7 @@ function parseClientBinary(client, buf) {
         sendPlayerChat(client.socket, chatMsg);
       } else if (name === 'player_ready') {
           log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
-          //sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> room greeting`);
       } else {
