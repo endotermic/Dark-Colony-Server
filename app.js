@@ -332,6 +332,7 @@ const ROOM_COMMANDS = {
 
   hz1: Buffer.from([0x02]),
   hz2: Buffer.from([0x08]),
+  unit_move: Buffer.from([0x19]),
 };
 
 function parseClientBinary(client, buf) {
@@ -376,6 +377,16 @@ function parseClientBinary(client, buf) {
           sendCommandPacket(client.socket, ROOM_COMMANDS.hz1, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00]));
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> room greeting`);
+      } else if (name === 'unit_move') {
+        // Echo back the unit_move command without an optional trailing 0x00 training byte
+        let moveData = remaining.slice(pattern.length);
+        if (moveData.length > 0 && moveData[moveData.length - 1] === 0x00) {
+          log(`Binary command from Client ${id}: ${name} (stripping trailing training 0x00)`);
+          moveData = moveData.slice(0, -1);
+        } else {
+          log(`Binary command from Client ${id}: ${name} (echoing ${moveData.length} data bytes)`);
+        }
+        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
