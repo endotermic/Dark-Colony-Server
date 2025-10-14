@@ -11,7 +11,7 @@ const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
 
 let nextClientId = 1;
-const clients = new Map(); // id -> { socket, buffer, lastActivity }
+const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
 let packetCounter = 0x00; // increments 0x00,0x10,...,0xf0 then wraps
 
 function log(...args) {
@@ -336,8 +336,9 @@ const BATTLE_COMMANDS = {
     
 };
 
-function parseClientBinary(id, buf) {
-  if (!Buffer.isBuffer(buf) || buf.length === 0) return;
+function parseClientBinary(client, buf) {
+  if (!client || !Buffer.isBuffer(buf) || buf.length === 0) return;
+  const id = client.id;
   let offset = 0;
   // Ignore first byte of chunk
   offset += 1;
@@ -362,18 +363,17 @@ function parseClientBinary(id, buf) {
         if (end === -1) end = after.length;
         const playerName = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
-        const client = clients.get(id); if (client) sendPlayerName(client.socket, playerName);
+        sendPlayerName(client.socket, playerName);
       } else if (name === 'player_chat') {
         const after = remaining.slice(pattern.length);
         let end = after.indexOf(0x00);
         if (end === -1) end = after.length;
         const chatMsg = after.slice(0, end).toString('ascii');
         log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
-        const client = clients.get(id); if (client) sendPlayerChat(client.socket, chatMsg);
+        sendPlayerChat(client.socket, chatMsg);
       } else if (name === 'player_ready') {
           log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
-          const client = clients.get(id);
-          if (client) sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
+          //sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> room greeting`);
       } else {
@@ -388,7 +388,8 @@ function parseClientBinary(id, buf) {
 const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-  clients.set(id, { socket, buffer: '', lastActivity: Date.now() });
+  const clientObj = { id, socket, buffer: '', lastActivity: Date.now() };
+  clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
 
@@ -397,14 +398,15 @@ const server = net.createServer((socket) => {
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
   sendMapPacket(socket);
-  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to the DarkColony online server!');
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to the Dark Colony online!');
+  sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
     client.lastActivity = Date.now();
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
     log(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
-    parseClientBinary(id, buf);
+    parseClientBinary(client, buf);
     const str = buf.toString('ascii');
     client.buffer += str;
   });
