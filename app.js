@@ -12,7 +12,6 @@ const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
-let packetCounter = 0x00; // increments 0x00,0x10,...,0xf0 then wraps
 
 function log(...args) {
   const ts = new Date().toISOString();
@@ -47,100 +46,6 @@ function safeWrite(socket, data) {
   }
 }
 
-/**
- * Sends a framed binary packet.
- * Layout: [ length, counter, <payload bytes>, 0x00 ]
- * - length: total packet length INCLUDING the length byte itself.
- * - counter: cycles 0x00 -> 0x10 -> ... -> 0xF0 -> 0x00 (step 0x10)
- * - last byte always 0x00 terminator
- * @param {net.Socket} socket
- * @param {Buffer|number[]|string} payload - Raw payload bytes (without length / counter / terminator). String will be encoded as ASCII.
- */
-function sendFramedPacket(socket, payload) {
-  if (!socket || socket.destroyed) return false;
-  let payloadBuf;
-  if (Buffer.isBuffer(payload)) {
-    payloadBuf = payload;
-  } else if (Array.isArray(payload)) {
-    payloadBuf = Buffer.from(payload);
-  } else if (typeof payload === 'string') {
-    payloadBuf = Buffer.from(payload, 'ascii');
-  } else {
-    throw new TypeError('Unsupported payload type for sendFramedPacket');
-  }
-
-  // Compute packet
-  const totalLen = 1 /*len*/ + 1 /*counter*/ + payloadBuf.length + 1 /*terminator*/;
-  if (totalLen > 0xFF) throw new RangeError('Packet too long for single-byte length: ' + totalLen);
-
-  const counter = packetCounter;
-  // Prepare next counter value
-  packetCounter += 0x10;
-  if (packetCounter > 0xF0) packetCounter = 0x00;
-
-  const packet = Buffer.alloc(totalLen);
-  let o = 0;
-  packet[o++] = totalLen; // length byte (includes itself)
-  packet[o++] = counter;  // counter byte
-  payloadBuf.copy(packet, o); o += payloadBuf.length;
-  packet[o++] = 0x00; // terminator
-
-  log(`sendFramedPacket len=${totalLen} counter=0x${counter.toString(16).padStart(2,'0')} payloadLen=${payloadBuf.length}`);
-  return safeWrite(socket, packet);
-}
-
-/**
- * New generic packet sender.
- * Rules:
- *  - First byte stores low 8 bits of total packet length (including length/counter and trailing 0x00 terminator).
- *  - Second byte high nibble is the packet counter cycling 0x0..0xF (encoded as 0x00,0x10,...,0xF0).
- *  - Second byte low nibble stores the high 4 bits of the packet length (only used when length > 0xFF).
- *  - Counter increments by 0x10 and wraps after 0xF0 back to 0x00.
- *  - Last byte of every packet is 0x00 terminator.
- * Max encodable length = 0x0FFF (4095). If exceeded an error is thrown.
- * @param {net.Socket} socket
- * @param {Buffer|number[]|string} payload Raw payload bytes (excluding header & terminator)
- */
-function sendPacket(socket, payload) {
-  if (!socket || socket.destroyed) return false;
-  // Initialize per-socket counter if missing
-  if (socket.__packetCounter === undefined) socket.__packetCounter = 0x00; // values 0x00,0x10,...,0xF0
-  let payloadBuf;
-  if (Buffer.isBuffer(payload)) {
-    payloadBuf = payload;
-  } else if (Array.isArray(payload)) {
-    payloadBuf = Buffer.from(payload);
-  } else if (typeof payload === 'string') {
-    payloadBuf = Buffer.from(payload, 'ascii');
-  } else {
-    throw new TypeError('Unsupported payload type for sendPacket');
-  }
-
-  const totalLen = 2 + payloadBuf.length + 1;
-  if (totalLen > 0x0FFF) throw new RangeError('Packet too long (max 4095 bytes): ' + totalLen);
-
-  const lenLow = totalLen & 0xFF;
-  const lenHigh = (totalLen >> 8) & 0x0F;
-
-  const counterByteValue = socket.__packetCounter; // 0x00..0xF0
-  const counterNibble = (counterByteValue >> 4) & 0x0F;
-  const counterByte = (counterNibble << 4) | lenHigh;
-
-  // Advance per-socket counter
-  socket.__packetCounter += 0x10;
-  if (socket.__packetCounter > 0xF0) socket.__packetCounter = 0x00;
-
-  const packet = Buffer.alloc(totalLen);
-  let o = 0;
-  packet[o++] = lenLow;
-  packet[o++] = counterByte;
-  payloadBuf.copy(packet, o); o += payloadBuf.length;
-  packet[o++] = 0x00;
-
-  log(`sendPacket [clientCounter=0x${counterNibble.toString(16)}] len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payloadBuf.length}`);
-  return safeWrite(socket, packet);
-}
-
 function send(socket, obj) {
   safeWrite(socket, JSON.stringify(obj) + '\n');
 }
@@ -155,8 +60,8 @@ function disconnect(id, reason) {
 
 function sendInitialBinaryPacket(socket) {
   const packet = Buffer.from([0x64, 0x0f, 0x00, 0x01, 0x00]);
-  if (!sendPacket(socket, packet)) log('Failed to send initial binary packet');
-  else log('Sent initial binary packet to client');
+  sendCommandPacket(socket, 0x64, Buffer.from([0x0f, 0x00, 0x01, 0x00]));
+  log('Sent initial binary packet to client');
 }
 
 function sendSecondBinaryPacket(socket) {
@@ -216,8 +121,8 @@ function sendSecondBinaryPacket(socket) {
 
 
 
-    if (!sendPacket(socket, Buffer.from(allBytes))) log('Failed to send second binary init packet');
-    else log('Sent second binary init packet (length=' + allBytes.length + ')');
+    sendCommandPacket(socket, allBytes[0], Buffer.from(allBytes.slice(1)));
+    log('Sent second binary init packet (length=' + allBytes.length + ')');
 }
 
 function sendMapPacket(socket) {
@@ -247,8 +152,8 @@ function sendMapPacket(socket) {
         ...bytesMapDisplayName,
         ...[0x00] // null byte at the end
     ];
-    if (!sendPacket(socket, Buffer.from(armageddon))) log('Failed to send map packet');
-    else log('Sent map packet (length=' + armageddon.length + ')');
+    sendCommandPacket(socket, armageddon[0], Buffer.from(armageddon.slice(1)));
+    log('Sent map packet (length=' + armageddon.length + ')');
 }
 
 // Generic command packet helper: builds [commandBytes...][data bytes][0x00 terminator]
@@ -286,11 +191,39 @@ function sendCommandPacket(socket, command, data) {
   else if (typeof data === 'string') dataBuf = Buffer.from(data, 'ascii');
   else dataBuf = Buffer.from(String(data), 'ascii');
 
-  // Do NOT append an internal 0x00 terminator; sendPacket itself will append the single packet terminator.
+  // Build payload from command and data
   const payload = Buffer.concat([commandBuf, dataBuf]);
-  const sent = sendPacket(socket, payload);
+  
+  // Initialize per-socket counter if missing
+  if (socket.__packetCounter === undefined) socket.__packetCounter = 0x00;
+  
+  const totalLen = 2 + payload.length + 1;
+  if (totalLen > 0x0FFF) {
+    log('sendCommandPacket: packet too long (max 4095 bytes): ' + totalLen);
+    return;
+  }
+
+  const lenLow = totalLen & 0xFF;
+  const lenHigh = (totalLen >> 8) & 0x0F;
+
+  const counterByteValue = socket.__packetCounter;
+  const counterNibble = (counterByteValue >> 4) & 0x0F;
+  const counterByte = (counterNibble << 4) | lenHigh;
+
+  // Advance per-socket counter
+  socket.__packetCounter += 0x10;
+  if (socket.__packetCounter > 0xF0) socket.__packetCounter = 0x00;
+
+  const packet = Buffer.alloc(totalLen);
+  let o = 0;
+  packet[o++] = lenLow;
+  packet[o++] = counterByte;
+  payload.copy(packet, o); o += payload.length;
+  packet[o++] = 0x00;
+
   const cmdHex = commandBuf.toString('hex');
-  log(sent ? `Sent command (${cmdHex}) payloadBytes=${payload.length}` : `Failed to send command (${cmdHex})`);
+  log(`sendCommandPacket [clientCounter=0x${counterNibble.toString(16)}] command=${cmdHex} len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payload.length}`);
+  safeWrite(socket, packet);
   // Purposefully no return value
 }
 
@@ -299,18 +232,18 @@ function sendPlayerName(socket, name) {
   if (!name) name = '';
   // sanitize to ascii and limit length
   const clean = Buffer.from(name.replace(/[^\x20-\x7e]/g,'').slice(0,32),'ascii');
-  const payload = Buffer.concat([Buffer.from([0x67, 0x01, 0x00]), clean, Buffer.from([0x00])]);
-  if (!sendPacket(socket, payload)) log('Failed to echo player_name');
-  else log('Echoed player_name: ' + name);
+  const data = Buffer.concat([Buffer.from([0x01, 0x00]), clean, Buffer.from([0x00])]);
+  sendCommandPacket(socket, 0x67, data);
+  log('Echoed player_name: ' + name);
 }
 
 // NEW: helper to echo chat message (format 0x65 <msg bytes> 0x00)
 function sendPlayerChat(socket, msg) {
   if (!msg) msg = '';
   const clean = Buffer.from(msg.replace(/\r|\n/g,'').slice(0,120),'ascii');
-  const payload = Buffer.concat([Buffer.from([0x65]), clean, Buffer.from([0x00])]);
-  if (!sendPacket(socket, payload)) log('Failed to echo player_chat');
-  else log('Echoed player_chat: ' + msg);
+  const data = Buffer.concat([clean, Buffer.from([0x00])]);
+  sendCommandPacket(socket, 0x65, data);
+  log('Echoed player_chat: ' + msg);
 }
 
 // Binary parsing helpers per user instructions
