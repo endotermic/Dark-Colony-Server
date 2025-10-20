@@ -9,6 +9,7 @@ const net = require('net');
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
+const BATTLE_PING_INTERVAL_MS = 999; // battle ping interval in milliseconds
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
@@ -53,6 +54,11 @@ function send(socket, obj) {
 function disconnect(id, reason) {
   const client = clients.get(id);
   if (!client) return;
+  // Clean up battle ping interval if exists
+  if (client.battlePingInterval) {
+    clearInterval(client.battlePingInterval);
+    client.battlePingInterval = null;
+  }
   try { client.socket.destroy(); } catch (_) { /* ignore */ }
   clients.delete(id);
   log(`Client ${id} disconnected${reason ? ' (' + reason + ')' : ''}. Active: ${clients.size}`);
@@ -265,8 +271,8 @@ const ROOM_COMMANDS = {
   room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
 
-  hz1: Buffer.from([0x02]),
-  hz2: Buffer.from([0x08]),
+  battle_ping1: Buffer.from([0x02]),
+  battle_ping2: Buffer.from([0x08]),
   unit_move: Buffer.from([0x19]),
 };
 
@@ -314,10 +320,25 @@ function parseClientBinary(client, buf) {
       } else if (name === 'player_ready') {
           log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
-          sendCommandPacket(client.socket, ROOM_COMMANDS.hz1, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00]));
-          sendCommandPacket(client.socket, ROOM_COMMANDS.hz1, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00]));
       } else if (name === 'room_greeting') {
         log(`Binary command from Client ${id}: ${name} -> room greeting`);
+      } else if (name === 'begin_battle') {
+        log(`Binary command from Client ${id}: ${name} -> starting battle ping`);
+        // Start periodic battle ping
+        if (client.battlePingInterval) {
+          clearInterval(client.battlePingInterval);
+        }
+        const initialPacketCounter = client.socket.__packetCounter || 0;
+        client.battlePingCounter = 0;
+        client.battlePingInterval = setInterval(() => {
+          const buf = Buffer.alloc(8);
+          // First 32-bit counter (little-endian) - counts from 0
+          buf.writeUInt32LE(client.battlePingCounter, 0);
+          // Second 32-bit counter (little-endian) - starts from initial packet counter
+          buf.writeUInt32LE(initialPacketCounter + client.battlePingCounter, 4);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
+          client.battlePingCounter++;
+        }, BATTLE_PING_INTERVAL_MS);
       } else if (name === 'unit_move') {
         // Echo back the unit_move command without an optional trailing 0x00 training byte
         let moveData = remaining.slice(pattern.length);
@@ -340,7 +361,14 @@ function parseClientBinary(client, buf) {
 const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-  const clientObj = { id, socket, buffer: '', lastActivity: Date.now() };
+  const clientObj = { 
+    id, 
+    socket, 
+    buffer: '', 
+    lastActivity: Date.now(),
+    battlePingInterval: null,
+    battlePingCounter: 0
+  };
   clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
