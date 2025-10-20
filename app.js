@@ -60,7 +60,7 @@ function disconnect(id, reason) {
 
 function sendInitialBinaryPacket(socket) {
   const packet = Buffer.from([0x64, 0x0f, 0x00, 0x01, 0x00]);
-  sendCommandPacket(socket, 0x64, Buffer.from([0x0f, 0x00, 0x01, 0x00]));
+  sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([0x0f, 0x00, 0x01, 0x00]));
   log('Sent initial binary packet to client');
 }
 
@@ -121,7 +121,7 @@ function sendSecondBinaryPacket(socket) {
 
 
 
-    sendCommandPacket(socket, allBytes[0], Buffer.from(allBytes.slice(1)));
+    sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(allBytes.slice(1)));
     log('Sent second binary init packet (length=' + allBytes.length + ')');
 }
 
@@ -152,7 +152,7 @@ function sendMapPacket(socket) {
         ...bytesMapDisplayName,
         ...[0x00] // null byte at the end
     ];
-    sendCommandPacket(socket, armageddon[0], Buffer.from(armageddon.slice(1)));
+    sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(armageddon.slice(1)));
     log('Sent map packet (length=' + armageddon.length + ')');
 }
 
@@ -227,14 +227,15 @@ function sendCommandPacket(socket, command, data) {
   // Purposefully no return value
 }
 
-// NEW: helper to echo back player name changes (simplistic format 0x67 <name bytes> 0x00)
-function sendPlayerName(socket, name) {
+// NEW: helper to echo back player name changes
+// Format: 0x67 [player_ordinal] [0x00] [name_string] [0x00]
+function sendPlayerName(socket, playerOrdinal, name) {
   if (!name) name = '';
   // sanitize to ascii and limit length
   const clean = Buffer.from(name.replace(/[^\x20-\x7e]/g,'').slice(0,32),'ascii');
-  const data = Buffer.concat([Buffer.from([0x01, 0x00]), clean, Buffer.from([0x00])]);
-  sendCommandPacket(socket, 0x67, data);
-  log('Echoed player_name: ' + name);
+  const data = Buffer.concat([Buffer.from([playerOrdinal, 0x00]), clean, Buffer.from([0x00])]);
+  sendCommandPacket(socket, ROOM_COMMANDS.player_name, data);
+  log(`Echoed player_name: ordinal=${playerOrdinal} name="${name}"`);
 }
 
 // NEW: helper to echo chat message (format 0x65 <msg bytes> 0x00)
@@ -242,7 +243,7 @@ function sendPlayerChat(socket, msg) {
   if (!msg) msg = '';
   const clean = Buffer.from(msg.replace(/\r|\n/g,'').slice(0,120),'ascii');
   const data = Buffer.concat([clean, Buffer.from([0x00])]);
-  sendCommandPacket(socket, 0x65, data);
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, data);
   log('Echoed player_chat: ' + msg);
 }
 
@@ -250,10 +251,11 @@ function sendPlayerChat(socket, msg) {
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
 const ROOM_COMMANDS = {
+  initial_packet: Buffer.from([0x64]), // initial handshake packet
   begin_battle: Buffer.from([0x76]), // [0x76, 0x06, 0x00, 0x02]
   ping: Buffer.from([0x71]),
   player_ready: Buffer.from([0x68]), // plus player index byte in range 0x01..0x08 followed by readyness byte 0x00 or 0x01
-  player_name: Buffer.from([0x67, 0x01, 0x00]),
+  player_name: Buffer.from([0x67]),
   player_chat: Buffer.from([0x65]),
   player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
   player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
@@ -291,11 +293,17 @@ function parseClientBinary(client, buf) {
       matched = true;
       if (name === 'player_name') {
         const after = remaining.slice(pattern.length);
-        let end = after.indexOf(0x00);
-        if (end === -1) end = after.length;
-        const playerName = after.slice(0, end).toString('ascii');
-        log(`Binary command from Client ${id}: ${name} ${playerName ? '(' + playerName + ')' : ''}`);
-        sendPlayerName(client.socket, playerName);
+        // Format: [player_ordinal_byte] [0x00] [name_string] [0x00]
+        if (after.length >= 2) {
+          const playerOrdinal = after[0];
+          const separatorIndex = 1; // should be 0x00
+          const nameStart = 2;
+          let nameEnd = after.indexOf(0x00, nameStart);
+          if (nameEnd === -1) nameEnd = after.length;
+          const playerName = after.slice(nameStart, nameEnd).toString('ascii');
+          log(`Binary command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
+          sendPlayerName(client.socket, playerOrdinal, playerName);
+        }
       } else if (name === 'player_chat') {
         const after = remaining.slice(pattern.length);
         let end = after.indexOf(0x00);
