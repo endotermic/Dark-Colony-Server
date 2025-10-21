@@ -9,7 +9,7 @@ const net = require('net');
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
-const BATTLE_PING_INTERVAL_MS = 999; // battle ping interval in milliseconds
+const BATTLE_PING_INTERVAL_MS = 99; // battle ping interval in milliseconds
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
@@ -351,10 +351,11 @@ function parseClientBinary(client, buf) {
         }
         sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
       } else if (name === 'unit_select') {
-        // Echo back the unit_select command
+        // Echo back the unit_select command with only the first data byte
         const selectData = remaining.slice(pattern.length);
-        log(`Binary command from Client ${id}: ${name} (echoing ${selectData.length} data bytes)`);
-        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, selectData);
+        const firstByte = selectData.length > 0 ? selectData.slice(0, 1) : Buffer.alloc(0);
+        log(`Binary command from Client ${id}: ${name} (echoing first byte only, received ${selectData.length} bytes)`);
+        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, firstByte);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
