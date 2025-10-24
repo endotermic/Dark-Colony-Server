@@ -273,7 +273,8 @@ const ROOM_COMMANDS = {
 
   battle_ping1: Buffer.from([0x02]),
   battle_ping2: Buffer.from([0x08]),
-  unit_select: Buffer.from([0x15]),
+  unit_select: Buffer.from([0x12]),
+  unit_destination: Buffer.from([0x15]),
   unit_move: Buffer.from([0x19]),
 };
 
@@ -350,12 +351,17 @@ function parseClientBinary(client, buf) {
           log(`Binary command from Client ${id}: ${name} (echoing ${moveData.length} data bytes)`);
         }
         sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
-      } else if (name === 'unit_select') {
-        // Echo back the unit_select command with only the first data byte
+      } else if (name === 'unit_destination') {
+        // Echo back the unit_destination command with only the first data byte
         const selectData = remaining.slice(pattern.length);
         const firstByte = selectData.length > 0 ? selectData.slice(0, 1) : Buffer.alloc(0);
         log(`Binary command from Client ${id}: ${name} (echoing first byte only, received ${selectData.length} bytes)`);
-        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, firstByte);
+        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination, firstByte);
+      } else if (name === 'unit_select') {
+        // Echo back the unit_select command with all data bytes
+        const selectData = remaining.slice(pattern.length);
+        log(`Binary command from Client ${id}: ${name} (echoing all ${selectData.length} data bytes)`);
+        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, selectData);
       } else {
         log(`Binary command from Client ${id}: ${name}`);
       }
