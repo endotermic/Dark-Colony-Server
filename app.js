@@ -10,9 +10,10 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
 const BATTLE_PING_INTERVAL_MS = 66; // battle ping interval in milliseconds
+const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
 
 let nextClientId = 1;
-const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
+const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState }
 
 function log(...args) {
   const ts = new Date().toISOString();
@@ -54,10 +55,12 @@ function send(socket, obj) {
 function disconnect(id, reason) {
   const client = clients.get(id);
   if (!client) return;
-  // Clean up battle ping interval if exists
-  if (client.battlePingInterval) {
-    clearInterval(client.battlePingInterval);
-    client.battlePingInterval = null;
+  // Clean up battle ping state if exists
+  if (client.battlePingState) {
+    if (client.battlePingState.timeoutId) {
+      clearTimeout(client.battlePingState.timeoutId);
+    }
+    client.battlePingState = null;
   }
   try { client.socket.destroy(); } catch (_) { /* ignore */ }
   clients.delete(id);
@@ -253,6 +256,60 @@ function sendPlayerChat(socket, msg) {
   log('Echoed player_chat: ' + msg);
 }
 
+// Send next battle ping and set up timeout
+function sendNextBattlePing(client) {
+  if (!client || !client.battlePingState || client.battlePingState.waitingForEcho) {
+    return;
+  }
+
+  const buf = Buffer.alloc(8);
+  // First 32-bit counter (little-endian) - counts from 0
+  buf.writeUInt32LE(client.battlePingState.counter, 0);
+  // Second 32-bit counter (little-endian) - starts from initial packet counter
+  buf.writeUInt32LE(client.battlePingState.initialPacketCounter + client.battlePingState.counter, 4);
+  
+  sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
+  client.battlePingState.waitingForEcho = true;
+  client.battlePingState.lastPingSentAt = Date.now();
+  
+  // Set timeout in case echo is never received
+  client.battlePingState.timeoutId = setTimeout(() => {
+    if (client.battlePingState && client.battlePingState.waitingForEcho) {
+      log(`Client ${client.id}: Battle ping echo timeout, sending next ping anyway`);
+      client.battlePingState.waitingForEcho = false;
+      client.battlePingState.counter++;
+      sendNextBattlePing(client);
+    }
+  }, BATTLE_PING_TIMEOUT_MS);
+}
+
+// Handle received battle ping echo
+function handleBattlePingEcho(client) {
+  if (!client || !client.battlePingState || !client.battlePingState.waitingForEcho) {
+    return;
+  }
+
+  const echoDelay = Date.now() - client.battlePingState.lastPingSentAt;
+  log(`Client ${client.id}: Battle ping echo received after ${echoDelay}ms`);
+  
+  // Clear timeout
+  if (client.battlePingState.timeoutId) {
+    clearTimeout(client.battlePingState.timeoutId);
+    client.battlePingState.timeoutId = null;
+  }
+
+  client.battlePingState.waitingForEcho = false;
+  client.battlePingState.counter++;
+  
+  // Wait the appropriate interval before sending next ping
+  setTimeout(() => {
+    if (client.battlePingState) {
+      sendNextBattlePing(client);
+    }
+  }, BATTLE_PING_INTERVAL_MS);
+}
+
+
 // Binary parsing helpers per user instructions
 const DATA_HEADER = Buffer.from([0xef, 0xbf, 0xbd]);
 const IGNORED_SINGLE_BYTES = new Set([0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0]);
@@ -357,21 +414,27 @@ function parseClientBinary(client, buf) {
           log(`Binary command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
           log(`Binary command from Client ${id}: ${name} -> starting battle ping`);
-          // Start periodic battle ping
-          if (client.battlePingInterval) {
-            clearInterval(client.battlePingInterval);
+          // Initialize battle ping state
+          if (client.battlePingState) {
+            if (client.battlePingState.timeoutId) {
+              clearTimeout(client.battlePingState.timeoutId);
+            }
           }
-          const initialPacketCounter = client.socket.__packetCounter || 0;
-          client.battlePingCounter = 0;
-          client.battlePingInterval = setInterval(() => {
-            const buf = Buffer.alloc(8);
-            // First 32-bit counter (little-endian) - counts from 0
-            buf.writeUInt32LE(client.battlePingCounter, 0);
-            // Second 32-bit counter (little-endian) - starts from initial packet counter
-            buf.writeUInt32LE(initialPacketCounter + client.battlePingCounter, 4);
-            sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
-            client.battlePingCounter++;
-          }, BATTLE_PING_INTERVAL_MS);
+          client.battlePingState = {
+            counter: 0,
+            initialPacketCounter: client.socket.__packetCounter || 0,
+            waitingForEcho: false,
+            timeoutId: null,
+            lastPingSentAt: null
+          };
+          // Send the first ping
+          sendNextBattlePing(client);
+        } else if (name === 'battle_ping1') {
+          log(`Binary command from Client ${id}: ${name} (echo received)`);
+          handleBattlePingEcho(client);
+        } else if (name === 'battle_ping2') {
+          // battle_ping2 does not send echo by protocol definition, just log it
+          log(`Binary command from Client ${id}: ${name} (no echo expected)`);
         } else if (name === 'unit_move') {
           // Echo back the unit_move command without an optional trailing 0x00 training byte
           let moveData = remaining;
@@ -419,8 +482,7 @@ const server = net.createServer((socket) => {
     socket, 
     buffer: '', 
     lastActivity: Date.now(),
-    battlePingInterval: null,
-    battlePingCounter: 0
+    battlePingState: null
   };
   clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
