@@ -9,7 +9,7 @@ const net = require('net');
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
-const BATTLE_PING_INTERVAL_MS = 99; // battle ping interval in milliseconds
+const BATTLE_PING_INTERVAL_MS = 66; // battle ping interval in milliseconds
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity }
@@ -284,93 +284,122 @@ function parseClientBinary(client, buf) {
   if (!client || !Buffer.isBuffer(buf) || buf.length === 0) return;
   const id = client.id;
   let offset = 0;
-  // Ignore first byte of chunk
-  offset += 1;
-  // Skip any subsequent ignored markers (single bytes 0x00..0xf0 or DATA_HEADER sequences)
+
+  // Process multiple commands in the packet
   while (offset < buf.length) {
-    if (buf.length - offset >= DATA_HEADER.length && buf[offset] === DATA_HEADER[0] && buf[offset+1] === DATA_HEADER[1] && buf[offset+2] === DATA_HEADER[2]) {
-      offset += DATA_HEADER.length;
-      continue;
-    }
-    if (IGNORED_SINGLE_BYTES.has(buf[offset])) { offset += 1; continue; }
-    break;
-  }
-  if (offset >= buf.length) return;
-  const remaining = buf.slice(offset);
-  let matched = false;
-  for (const [name, pattern] of Object.entries(ROOM_COMMANDS)) {
-    if (remaining.length >= pattern.length && remaining.slice(0, pattern.length).equals(pattern)) {
-      matched = true;
-      if (name === 'player_name') {
-        const after = remaining.slice(pattern.length);
-        // Format: [player_ordinal_byte] [0x00] [name_string] [0x00]
-        if (after.length >= 2) {
-          const playerOrdinal = after[0];
-          const separatorIndex = 1; // should be 0x00
-          const nameStart = 2;
-          let nameEnd = after.indexOf(0x00, nameStart);
-          if (nameEnd === -1) nameEnd = after.length;
-          const playerName = after.slice(nameStart, nameEnd).toString('ascii');
-          log(`Binary command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
-          sendPlayerName(client.socket, playerOrdinal, playerName);
-        }
-      } else if (name === 'player_chat') {
-        const after = remaining.slice(pattern.length);
-        let end = after.indexOf(0x00);
-        if (end === -1) end = after.length;
-        const chatMsg = after.slice(0, end).toString('ascii');
-        log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
-        sendPlayerChat(client.socket, chatMsg);
-      } else if (name === 'player_ready') {
-          log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
-      } else if (name === 'room_greeting') {
-        log(`Binary command from Client ${id}: ${name} -> room greeting`);
-      } else if (name === 'begin_battle') {
-        log(`Binary command from Client ${id}: ${name} -> starting battle ping`);
-        // Start periodic battle ping
-        if (client.battlePingInterval) {
-          clearInterval(client.battlePingInterval);
-        }
-        const initialPacketCounter = client.socket.__packetCounter || 0;
-        client.battlePingCounter = 0;
-        client.battlePingInterval = setInterval(() => {
-          const buf = Buffer.alloc(8);
-          // First 32-bit counter (little-endian) - counts from 0
-          buf.writeUInt32LE(client.battlePingCounter, 0);
-          // Second 32-bit counter (little-endian) - starts from initial packet counter
-          buf.writeUInt32LE(initialPacketCounter + client.battlePingCounter, 4);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
-          client.battlePingCounter++;
-        }, BATTLE_PING_INTERVAL_MS);
-      } else if (name === 'unit_move') {
-        // Echo back the unit_move command without an optional trailing 0x00 training byte
-        let moveData = remaining.slice(pattern.length);
-        if (moveData.length > 0 && moveData[moveData.length - 1] === 0x00) {
-          log(`Binary command from Client ${id}: ${name} (stripping trailing training 0x00)`);
-          moveData = moveData.slice(0, -1);
-        } else {
-          log(`Binary command from Client ${id}: ${name} (echoing ${moveData.length} data bytes)`);
-        }
-        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
-      } else if (name === 'unit_destination') {
-        // Echo back the unit_destination command with only the first data byte
-        const selectData = remaining.slice(pattern.length);
-        const firstByte = selectData.length > 0 ? selectData.slice(0, 1) : Buffer.alloc(0);
-        log(`Binary command from Client ${id}: ${name} (echoing first byte only, received ${selectData.length} bytes)`);
-        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination, firstByte);
-      } else if (name === 'unit_select') {
-        // Echo back the unit_select command with all data bytes
-        const selectData = remaining.slice(pattern.length);
-        log(`Binary command from Client ${id}: ${name} (echoing all ${selectData.length} data bytes)`);
-        sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, selectData);
-      } else {
-        log(`Binary command from Client ${id}: ${name}`);
-      }
+    // Check if we have at least 2 bytes for length header
+    if (offset + 2 > buf.length) {
+      log(`Client ${id}: Not enough bytes for command header at offset ${offset}`);
       break;
     }
+
+    // Read length from first 2 bytes (little endian with mask 0xff 0x0f)
+    const lenLow = buf[offset];
+    const lenHigh = buf[offset + 1] & 0x0f;
+    const cmdLength = lenLow | (lenHigh << 8);
+    
+    log(`Client ${id}: Command at offset ${offset}, length=${cmdLength} (0x${lenLow.toString(16).padStart(2,'0')} 0x${buf[offset+1].toString(16).padStart(2,'0')})`);
+
+    // Check if we have the full command available
+    if (offset + cmdLength > buf.length) {
+      log(`Client ${id}: Incomplete command at offset ${offset}, need ${cmdLength} bytes but only have ${buf.length - offset}`);
+      break;
+    }
+
+    // Extract the command payload (skip the 2-byte length header)
+    const commandData = buf.slice(offset + 2, offset + cmdLength);
+    
+    // Process the command
+    let matched = false;
+    for (const [name, pattern] of Object.entries(ROOM_COMMANDS)) {
+      if (commandData.length >= pattern.length && commandData.slice(0, pattern.length).equals(pattern)) {
+        matched = true;
+        let remaining = commandData.slice(pattern.length);
+        
+        // Strip trailing 0x00 from this command's data (each command has its own terminator)
+        if (remaining.length > 0 && remaining[remaining.length - 1] === 0x00) {
+          remaining = remaining.slice(0, -1);
+        }
+        
+        if (name === 'player_name') {
+          // Format: [player_ordinal_byte] [0x00] [name_string] [0x00]
+          if (remaining.length >= 2) {
+            const playerOrdinal = remaining[0];
+            const nameStart = 2;
+            let nameEnd = remaining.indexOf(0x00, nameStart);
+            if (nameEnd === -1) nameEnd = remaining.length;
+            const playerName = remaining.slice(nameStart, nameEnd).toString('ascii');
+            log(`Binary command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
+            sendPlayerName(client.socket, playerOrdinal, playerName);
+          }
+        } else if (name === 'player_chat') {
+          let end = remaining.indexOf(0x00);
+          if (end === -1) end = remaining.length;
+          const chatMsg = remaining.slice(0, end).toString('ascii');
+          log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
+          sendPlayerChat(client.socket, chatMsg);
+        } else if (name === 'player_ready') {
+          log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
+        } else if (name === 'room_greeting') {
+          log(`Binary command from Client ${id}: ${name} -> room greeting`);
+        } else if (name === 'begin_battle') {
+          log(`Binary command from Client ${id}: ${name} -> starting battle ping`);
+          // Start periodic battle ping
+          if (client.battlePingInterval) {
+            clearInterval(client.battlePingInterval);
+          }
+          const initialPacketCounter = client.socket.__packetCounter || 0;
+          client.battlePingCounter = 0;
+          client.battlePingInterval = setInterval(() => {
+            const buf = Buffer.alloc(8);
+            // First 32-bit counter (little-endian) - counts from 0
+            buf.writeUInt32LE(client.battlePingCounter, 0);
+            // Second 32-bit counter (little-endian) - starts from initial packet counter
+            buf.writeUInt32LE(initialPacketCounter + client.battlePingCounter, 4);
+            sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
+            client.battlePingCounter++;
+          }, BATTLE_PING_INTERVAL_MS);
+        } else if (name === 'unit_move') {
+          // Echo back the unit_move command without an optional trailing 0x00 training byte
+          let moveData = remaining;
+          if (moveData.length > 0 && moveData[moveData.length - 1] === 0x00) {
+            log(`Binary command from Client ${id}: ${name} (stripping trailing training 0x00)`);
+            moveData = moveData.slice(0, -1);
+          } else {
+            log(`Binary command from Client ${id}: ${name} (echoing ${moveData.length} data bytes)`);
+          }
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
+        } else if (name === 'unit_select_data') {
+          // Echo back the full unit_select_data command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select_data, remaining);
+        } else if (name === 'unit_select') {
+          // Echo back the full unit_select command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, remaining);
+        } else if (name === 'unit_destination_data') {
+          // Echo back the full unit_destination_data command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination_data, remaining);
+        } else if (name === 'unit_destination') {
+          // Echo back the full unit_destination command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination, remaining);
+        } else {
+          log(`Binary command from Client ${id}: ${name}`);
+        }
+        break;
+      }
+    }
+    
+    if (!matched) {
+      log(`Unknown binary command from Client ${id}: ${commandData.toString('hex')}`);
+    }
+
+    // Move to next command
+    offset += cmdLength;
   }
-  if (!matched) log(`Unknown binary data from Client ${id}: ${remaining.toString('hex')}`);
 }
 
 const server = net.createServer((socket) => {
