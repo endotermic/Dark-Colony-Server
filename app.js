@@ -330,11 +330,16 @@ const ROOM_COMMANDS = {
 
   battle_ping1: Buffer.from([0x02]),
   battle_ping2: Buffer.from([0x08]),
+  button_building: Buffer.from([0x09]),
+  button_unit: Buffer.from([0x0a]),
+  button_upgrade: Buffer.from([0x0c]),
   unit_select_data: Buffer.from([0x11]),
   unit_select: Buffer.from([0x12]),
   unit_destination_data: Buffer.from([0x14]),
   unit_destination: Buffer.from([0x15]),
+  unit_attack: Buffer.from([0x18]),
   unit_move: Buffer.from([0x19]),
+  unit_inspire: Buffer.from([0x1a]),
 };
 
 function parseClientBinary(client, buf) {
@@ -410,6 +415,15 @@ function parseClientBinary(client, buf) {
         } else if (name === 'player_ready') {
           log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
+        } else if (name === 'player_race') {
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_race, remaining);
+        } else if (name === 'player_color') {
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_color, remaining);
+        } else if (name === 'player_team') {
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_team, remaining);
         } else if (name === 'room_greeting') {
           log(`Binary command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
@@ -435,6 +449,10 @@ function parseClientBinary(client, buf) {
         } else if (name === 'battle_ping2') {
           // battle_ping2 does not send echo by protocol definition, just log it
           log(`Binary command from Client ${id}: ${name} (no echo expected)`);
+        } else if (name === 'unit_attack') {
+          // Echo back the full unit_attack command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_attack, remaining);
         } else if (name === 'unit_move') {
           // Echo back the unit_move command without an optional trailing 0x00 training byte
           let moveData = remaining;
@@ -461,6 +479,22 @@ function parseClientBinary(client, buf) {
           // Echo back the full unit_destination command with all data bytes
           log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination, remaining);
+        } else if (name === 'button_unit') {
+          // Echo back the full button_unit command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.button_unit, remaining);
+        } else if (name === 'button_building') {
+          // Echo back the full button_building command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.button_building, remaining);
+        } else if (name === 'unit_inspire') {
+          // Echo back the full unit_inspire command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_inspire, remaining);
+        } else if (name === 'button_upgrade') {
+          // Echo back the full button_upgrade command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.button_upgrade, remaining);
         } else {
           log(`Binary command from Client ${id}: ${name}`);
         }
