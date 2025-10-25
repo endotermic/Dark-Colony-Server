@@ -273,7 +273,9 @@ const ROOM_COMMANDS = {
 
   battle_ping1: Buffer.from([0x02]),
   battle_ping2: Buffer.from([0x08]),
+  unit_select_data: Buffer.from([0x11]),
   unit_select: Buffer.from([0x12]),
+  unit_destination_data: Buffer.from([0x14]),
   unit_destination: Buffer.from([0x15]),
   unit_move: Buffer.from([0x19]),
 };
