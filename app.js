@@ -285,7 +285,9 @@ function parseClientBinary(client, buf) {
   const id = client.id;
   let offset = 0;
 
-  // Process multiple commands in the packet
+  // STEP 1: Collect all commands from the packet into a list
+  const commandList = [];
+  
   while (offset < buf.length) {
     // Check if we have at least 2 bytes for length header
     if (offset + 2 > buf.length) {
@@ -309,7 +311,17 @@ function parseClientBinary(client, buf) {
     // Extract the command payload (skip the 2-byte length header)
     const commandData = buf.slice(offset + 2, offset + cmdLength);
     
-    // Process the command
+    // Add to command list
+    commandList.push(commandData);
+
+    // Move to next command
+    offset += cmdLength;
+  }
+
+  log(`Client ${id}: Collected ${commandList.length} command(s) from packet`);
+
+  // STEP 2: Process commands from the list
+  for (const commandData of commandList) {
     let matched = false;
     for (const [name, pattern] of Object.entries(ROOM_COMMANDS)) {
       if (commandData.length >= pattern.length && commandData.slice(0, pattern.length).equals(pattern)) {
@@ -396,9 +408,6 @@ function parseClientBinary(client, buf) {
     if (!matched) {
       log(`Unknown binary command from Client ${id}: ${commandData.toString('hex')}`);
     }
-
-    // Move to next command
-    offset += cmdLength;
   }
 }
 
