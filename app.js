@@ -325,6 +325,8 @@ const ROOM_COMMANDS = {
   button_building: Buffer.from([0x09]),
   button_unit: Buffer.from([0x0a]),
   button_upgrade: Buffer.from([0x0c]),
+  button_superweapon: Buffer.from([0x0d]), // napalm or virus attack
+  battle_chat: Buffer.from([0x0e]), // header [0x06, 0xff] followed by null-terminated ascii string
   unit_select_data: Buffer.from([0x11]),
   unit_select: Buffer.from([0x12]),
   unit_destination_data: Buffer.from([0x14]),
@@ -487,6 +489,19 @@ function parseClientBinary(client, buf) {
           // Echo back the full button_upgrade command with all data bytes
           log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.button_upgrade, remaining);
+        } else if (name === 'button_superweapon') {
+          // Echo back the full button_superweapon command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.button_superweapon, remaining);
+        } else if (name === 'battle_chat') {
+          // Echo back the battle chat message (skip first 2 bytes for logging - they are header)
+          const messageStart = remaining.length >= 2 ? 2 : 0;
+          const messageData = remaining.slice(messageStart);
+          let end = messageData.indexOf(0x00);
+          if (end === -1) end = messageData.length;
+          const chatMsg = messageData.slice(0, end).toString('ascii');
+          log(`Binary command from Client ${id}: ${name}${chatMsg ? ' "' + chatMsg + '"' : ' (empty)'}`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.battle_chat, remaining);
         } else {
           log(`Binary command from Client ${id}: ${name}`);
         }
