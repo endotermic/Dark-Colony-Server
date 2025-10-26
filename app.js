@@ -67,13 +67,12 @@ function disconnect(id, reason) {
   log(`Client ${id} disconnected${reason ? ' (' + reason + ')' : ''}. Active: ${clients.size}`);
 }
 
-function sendInitialBinaryPacket(socket) {
-  const packet = Buffer.from([0x64, 0x0f, 0x00, 0x01, 0x00]);
+function sendRoomGreeting(socket) {
   sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([0x0f, 0x00, 0x01, 0x00]));
   log('Sent initial binary packet to client');
 }
 
-function sendSecondBinaryPacket(socket) {
+function sendRoomData(socket) {
   const bytesInit = [0x00, 0x00,
     0x6c, 0x00, 0x00,
     0x6c, 0x00, 0x02,
@@ -516,8 +515,8 @@ const server = net.createServer((socket) => {
 
   // Check if socket is still open before sending initial packets (some automated tools disconnect immediately)
   if (!socket.destroyed && socket.writable) {
-    sendInitialBinaryPacket(socket);
-    sendSecondBinaryPacket(socket);
+    sendRoomGreeting(socket);
+    sendRoomData(socket);
     sendMapPacket(socket);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to the Dark Colony online!');
     sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
