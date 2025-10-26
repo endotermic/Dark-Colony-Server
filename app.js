@@ -523,6 +523,7 @@ const server = net.createServer((socket) => {
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
 
   socket.setKeepAlive(true, 30_000);
+  socket.setNoDelay(true); // Disable Nagle's algorithm to send packets immediately without buffering
 
   sendInitialBinaryPacket(socket);
   sendSecondBinaryPacket(socket);
