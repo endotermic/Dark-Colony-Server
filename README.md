@@ -5,10 +5,11 @@ HOWTO run:
 2. download Dark-Colony-Server
 3. in it's folder open console
 4. execute script: node .\server.js
-5. open Dark Colony game
-6. Select 'MULTI PLAYER WAR'
-7. Select 'CONNECT TO SERVER'
-8. In 'IP ADDRESS' field enter 'localhost'
+5. don't close the terminal where this script is running!
+6. open Dark Colony game
+7. Select 'MULTI PLAYER WAR'
+8. Select 'CONNECT TO SERVER'
+9. In 'IP ADDRESS' field enter 'localhost'
 
 
 Info about this server:
