@@ -123,24 +123,14 @@ function getAvailableColor(room) {
 
 function broadcastRoomUpdate(room, excludeClientId = null) {
   // Send updated room data and map to all connected clients in the room
-  // Also reset battleInitiated flag since room reinitialization resets client battle state
   for (const clientId of room.clients) {
     if (clientId === excludeClientId) continue; // Skip the excluded client
     
     const client = clients.get(clientId);
     if (client && client.socket && !client.socket.destroyed) {
-      // Reset battle state since client will reinitialize room
-      client.battleInitiated = false;
-      if (client.battlePingState) {
-        if (client.battlePingState.timeoutId) {
-          clearTimeout(client.battlePingState.timeoutId);
-        }
-        client.battlePingState = null;
-      }
-      
       sendRoomData(client.socket, room);
       sendMapPacket(client.socket, room);
-      log(`Sent room update (including map) to Client ${clientId} in Room ${room.id} - battle state reset`);
+      log(`Sent room update (including map) to Client ${clientId} in Room ${room.id}`);
     }
   }
 }
