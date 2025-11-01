@@ -43,7 +43,7 @@ All trademarks and copyrights are the property of their respective owners.
 Licensed under the **GNU Affero General Public License v3 (AGPLv3)**.  
 You can use, modify, and share this project — **as long as your version stays open source** under the same license.  
 
-[Read full license →](./LICENSE.txt)
+[Read full license →](./LICENSE)
 
 ---
 
