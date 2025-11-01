@@ -33,34 +33,89 @@ function log(...args) {
 // Room management functions
 function createRoom() {
   const roomId = nextRoomId++;
+  
+  // Helper to get random race
+  const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
+  
+  // Initialize 8 player slots
+  // Player 0 is always AI Easy and not ready
+  // Players 1-7 are empty slots (type: none, ready: true)
+  const playerSlots = [
+    { index: 0, clientId: null, name: 'Player0', race: getRandomRace(), type: 'ai_easy', team: 0, ready: false },
+    { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true },
+    { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true },
+    { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true },
+    { index: 4, clientId: null, name: 'Player4', race: getRandomRace(), type: 'none', team: 4, ready: true },
+    { index: 5, clientId: null, name: 'Player5', race: getRandomRace(), type: 'none', team: 5, ready: true },
+    { index: 6, clientId: null, name: 'Player6', race: getRandomRace(), type: 'none', team: 6, ready: true },
+    { index: 7, clientId: null, name: 'Player7', race: getRandomRace(), type: 'none', team: 7, ready: true }
+  ];
+  
   const room = {
     id: roomId,
     clients: new Set(),
-    inBattle: false
+    inBattle: false,
+    playerSlots: playerSlots
   };
   rooms.set(roomId, room);
-  log(`Created Room ${roomId}`);
+  log(`Created Room ${roomId} with 8 initialized player slots`);
   return room;
 }
 
 function getAvailableRoom() {
-  // Find a room that is not in battle and has space
+  // Find available rooms (not in battle and have free slots)
+  const availableRooms = [];
   for (const room of rooms.values()) {
-    if (!room.inBattle && room.clients.size < MAX_CLIENTS_PER_ROOM) {
-      return room;
+    if (!room.inBattle) {
+      // Check if there are free slots (slots where clientId is null and type is 'none')
+      const freeSlots = room.playerSlots.filter(slot => slot.clientId === null && slot.type === 'none');
+      if (freeSlots.length > 0) {
+        availableRooms.push(room);
+      }
     }
   }
+  
+  // If we have available rooms, return the one with the minimum ID
+  if (availableRooms.length > 0) {
+    availableRooms.sort((a, b) => a.id - b.id);
+    return availableRooms[0];
+  }
+  
   // No available room found, create a new one
   return createRoom();
 }
 
+function getFreeSlotInRoom(room) {
+  // Get all free slots (excluding the AI slot at index 0)
+  const freeSlots = room.playerSlots.filter(slot => slot.clientId === null && slot.type === 'none');
+  if (freeSlots.length === 0) return null;
+  
+  // Pick a random free slot
+  const randomIndex = Math.floor(Math.random() * freeSlots.length);
+  return freeSlots[randomIndex];
+}
+
 function addClientToRoom(clientId, room) {
+  // Find a free slot for the client
+  const slot = getFreeSlotInRoom(room);
+  if (!slot) {
+    log(`ERROR: No free slot available in Room ${room.id} for Client ${clientId}`);
+    return null;
+  }
+  
   room.clients.add(clientId);
   const client = clients.get(clientId);
   if (client) {
     client.roomId = room.id;
+    client.playerSlotIndex = slot.index;
+    
+    // Update the slot with client info
+    slot.clientId = clientId;
+    slot.type = 'gamer';
+    slot.ready = false;
   }
-  log(`Client ${clientId} added to Room ${room.id}. Room has ${room.clients.size}/${MAX_CLIENTS_PER_ROOM} clients`);
+  log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index}. Room has ${room.clients.size} connected clients`);
+  return slot.index;
 }
 
 function removeClientFromRoom(clientId) {
@@ -70,7 +125,17 @@ function removeClientFromRoom(clientId) {
   const room = rooms.get(client.roomId);
   if (room) {
     room.clients.delete(clientId);
-    log(`Client ${clientId} removed from Room ${room.id}. Room has ${room.clients.size}/${MAX_CLIENTS_PER_ROOM} clients`);
+    
+    // Reset the player slot
+    if (client.playerSlotIndex !== undefined) {
+      const slot = room.playerSlots[client.playerSlotIndex];
+      if (slot) {
+        slot.clientId = null;
+        slot.type = 'none';
+        slot.ready = true;
+        log(`Client ${clientId} removed from Room ${room.id} slot ${client.playerSlotIndex}. Room has ${room.clients.size} connected clients`);
+      }
+    }
     
     // Clean up empty rooms that are not the first room
     if (room.clients.size === 0 && room.id > 1) {
@@ -148,78 +213,42 @@ function disconnect(id, reason) {
   log(`Client ${id} disconnected${reason ? ' (' + reason + ')' : ''}. Active: ${clients.size}`);
 }
 
-function sendRoomGreeting(socket) {
-  sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([...PLAYER_INIT_PARAM.player_index, ...NULL_SEPARATOR, ...PLAYER_INDEX.p1, ...NULL_SEPARATOR]));
-  log('Sent initial binary packet to client');
+function sendRoomGreeting(socket, playerSlotIndex) {
+  const playerIndexBytes = PLAYER_INDEX[`p${playerSlotIndex}`];
+  sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([...PLAYER_INIT_PARAM.player_index, ...NULL_SEPARATOR, ...playerIndexBytes, ...NULL_SEPARATOR]));
+  log(`Sent initial binary packet to client (assigned to slot ${playerSlotIndex})`);
 }
 
-function sendRoomData(socket) {
-
+function sendRoomData(socket, room) {
   const bytesMap = [
     0x00, 0x00 // placeholder for the map
   ];
 
-  const bytesInit = [
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p0,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p1,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p2,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p3,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p4,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p5,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p6,
-    ...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX.p7];
+  // Initialize all 8 player slots
+  const bytesInit = [];
+  for (let i = 0; i < 8; i++) {
+    bytesInit.push(...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX[`p${i}`]);
+  }
   
-  // Helper to get random race
-  const getRandomRace = () => Math.random() < 0.5 ? PLAYER_RACE.humans : PLAYER_RACE.aliens;
+  // Build player data dynamically based on room state
+  const playerBytesArray = [];
+  for (const slot of room.playerSlots) {
+    const playerIndex = PLAYER_INDEX[`p${slot.index}`];
+    const playerRace = slot.race === 'humans' ? PLAYER_RACE.humans : PLAYER_RACE.aliens;
+    const playerType = PLAYER_TYPE[slot.type];
+    const playerTeam = TEAM_INDEX[`t${slot.team}`];
+    const playerReady = slot.ready ? PLAYER_READY.ready : PLAYER_READY.not_ready;
+    
+    const playerBytes = [
+      ...ROOM_COMMANDS.player_name, ...playerIndex, ...NULL_SEPARATOR, ...Buffer.from(slot.name + '\0', 'ascii'),
+      ...ROOM_COMMANDS.player_race, ...playerRace, ...playerIndex,
+      ...ROOM_COMMANDS.player_type, ...playerType, ...playerIndex,
+      ...ROOM_COMMANDS.player_team2, ...playerTeam, ...playerIndex,
+      ...ROOM_COMMANDS.player_ready, ...playerReady, ...playerIndex
+    ];
+    playerBytesArray.push(playerBytes);
+  }
   
-  const bytesPlayer0 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p0, ...NULL_SEPARATOR, ...Buffer.from('Player0\0', 'ascii'),
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p0,
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.ai_easy, ...PLAYER_INDEX.p0,
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t0, ...PLAYER_INDEX.p0, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.not_ready, ...PLAYER_INDEX.p0];
-  const bytesPlayer1 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p1, ...NULL_SEPARATOR, ...Buffer.from('Player1\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p1, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.gamer, ...PLAYER_INDEX.p1, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t1, ...PLAYER_INDEX.p1, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.not_ready, ...PLAYER_INDEX.p1];
-  const bytesPlayer2 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p2, ...NULL_SEPARATOR, ...Buffer.from('Player2\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p2, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p2, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t2, ...PLAYER_INDEX.p2, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p2];
-  const bytesPlayer3 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p3, ...NULL_SEPARATOR, ...Buffer.from('Player3\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p3, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p3, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t3, ...PLAYER_INDEX.p3, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p3];
-  const bytesPlayer4 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p4, ...NULL_SEPARATOR, ...Buffer.from('Player4\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p4, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p4, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t4, ...PLAYER_INDEX.p4, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p4];
-  const bytesPlayer5 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p5, ...NULL_SEPARATOR, ...Buffer.from('Player5\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p5, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p5, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t5, ...PLAYER_INDEX.p5, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p5];
-  const bytesPlayer6 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p6, ...NULL_SEPARATOR, ...Buffer.from('Player6\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p6, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p6, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t6, ...PLAYER_INDEX.p6, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p6];
-  const bytesPlayer7 = [
-    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p7, ...NULL_SEPARATOR, ...Buffer.from('Player7\0', 'ascii'), 
-    ...ROOM_COMMANDS.player_race, ...getRandomRace(), ...PLAYER_INDEX.p7, 
-    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p7, 
-    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t7, ...PLAYER_INDEX.p7, 
-    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p7];
   const bytesParams = [
     ...ROOM_COMMANDS.room_param, 0x00, 0x00, 0x00, 0x00,
     ...ROOM_COMMANDS.room_param, 0x01, 0x00, 0x00, 0x00,
@@ -238,22 +267,16 @@ function sendRoomData(socket) {
     ...ROOM_COMMANDS.room_param, 0x0e, 0x00, 0x00, 0x00,
     ...ROOM_COMMANDS.room_param, 0x0f, 0x00, 0x00, 0x00
   ];
+  
   const allBytes = [
     ...bytesMap,
     ...bytesInit,
-    ...bytesPlayer0,
-    ...bytesPlayer2,
-    ...bytesPlayer3,
-    ...bytesPlayer4,
-    ...bytesPlayer5,
-    ...bytesPlayer6,
-    ...bytesPlayer7,
-    ...bytesPlayer1,
+    ...playerBytesArray.flat(),
     ...bytesParams
   ];
 
-    sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(allBytes));
-    log('Sent second binary init packet (length=' + allBytes.length + ')');
+  sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(allBytes));
+  log('Sent second binary init packet (length=' + allBytes.length + ')');
 }
 
 function sendMapPacket(socket) {
@@ -426,6 +449,7 @@ const PLAYER_TYPE = {
   none: Buffer.from([0x03]),
 };
 const PLAYER_READY = {
+  ready_for_battle: Buffer.from([0x02]),
   not_ready: Buffer.from([0x01]),
   ready: Buffer.from([0x00]),
 };
@@ -562,8 +586,10 @@ function parseClientBinary(client, buf) {
           log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
           sendPlayerChat(client.socket, chatMsg);
         } else if (name === 'player_ready') {
-          log(`Binary command from Client ${id}: ${name} -> echoing readiness back`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x01]));
+          // Echo back the player_ready command with the client's actual player slot index
+          const playerIndex = PLAYER_INDEX[`p${client.playerSlotIndex}`];
+          log(`Binary command from Client ${id}: ${name} -> echoing readiness back for slot ${client.playerSlotIndex}`);
+          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...playerIndex]));
         } else if (name === 'player_race') {
           log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
           sendCommandPacket(client.socket, ROOM_COMMANDS.player_race, remaining);
@@ -695,26 +721,36 @@ const server = net.createServer((socket) => {
     lastActivity: Date.now(),
     battlePingState: null,
     roomId: null,
+    playerSlotIndex: null,
     battleInitiated: false
   };
   clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
   
-  // Add client to the room
-  addClientToRoom(id, room);
+  // Add client to the room and get assigned slot
+  const slotIndex = addClientToRoom(id, room);
   
-  log(`Client ${id} connected from ${remote}. Active: ${clients.size}. Assigned to Room ${room.id}`);
+  if (slotIndex === null) {
+    log(`Client ${id} could not be added to any room - no free slots`);
+    socket.destroy();
+    clients.delete(id);
+    return;
+  }
+  
+  log(`Client ${id} connected from ${remote}. Active: ${clients.size}. Assigned to Room ${room.id} slot ${slotIndex}`);
 
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true); // Disable Nagle's algorithm to send packets immediately without buffering
 
   // Check if socket is still open before sending initial packets (some automated tools disconnect immediately)
   if (!socket.destroyed && socket.writable) {
-    sendRoomGreeting(socket);
-    sendRoomData(socket);
+    sendRoomGreeting(socket, slotIndex);
+    sendRoomData(socket, room);
     sendMapPacket(socket);
-    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to Dark Colony Room ${room.id}!`);
-    sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to the world of Dark Colony!`);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...PLAYER_INDEX.p0])); // mark as ready this static player slot 0
   } else {
     log(`Client ${id} socket closed immediately after connection (automated scanner?)`);
     disconnect(id, 'socket closed before initialization');
@@ -736,7 +772,11 @@ const server = net.createServer((socket) => {
 });
 
 server.on('error', (err) => { log('Server error:', err); });
-server.listen(PORT, HOST, () => { log(`Game server listening on ${HOST}:${PORT} (unencrypted TCP)`); });
+server.listen(PORT, HOST, () => { 
+  log(`Game server listening on ${HOST}:${PORT} (unencrypted TCP)`);
+  // Initialize the first room when server starts
+  createRoom();
+});
 
 setInterval(() => {
   const now = Date.now();
