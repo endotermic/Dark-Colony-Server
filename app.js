@@ -41,21 +41,27 @@ function createRoom() {
   // Player 0 is always AI Easy and not ready
   // Players 1-7 are empty slots (type: none, ready: true)
   const playerSlots = [
-    { index: 0, clientId: null, name: 'Player0', race: getRandomRace(), type: 'ai_easy', team: 0, ready: false },
-    { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true },
-    { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true },
-    { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true },
-    { index: 4, clientId: null, name: 'Player4', race: getRandomRace(), type: 'none', team: 4, ready: true },
-    { index: 5, clientId: null, name: 'Player5', race: getRandomRace(), type: 'none', team: 5, ready: true },
-    { index: 6, clientId: null, name: 'Player6', race: getRandomRace(), type: 'none', team: 6, ready: true },
-    { index: 7, clientId: null, name: 'Player7', race: getRandomRace(), type: 'none', team: 7, ready: true }
+    { index: 0, clientId: null, name: 'Player0', race: getRandomRace(), type: 'ai_easy', team: 0, ready: false, color: 0 },
+    { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true, color: 1 },
+    { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true, color: 2 },
+    { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true, color: 3 },
+    { index: 4, clientId: null, name: 'Player4', race: getRandomRace(), type: 'none', team: 4, ready: true, color: 4 },
+    { index: 5, clientId: null, name: 'Player5', race: getRandomRace(), type: 'none', team: 5, ready: true, color: 5 },
+    { index: 6, clientId: null, name: 'Player6', race: getRandomRace(), type: 'none', team: 6, ready: true, color: 6 },
+    { index: 7, clientId: null, name: 'Player7', race: getRandomRace(), type: 'none', team: 7, ready: true, color: 7 }
   ];
   
   const room = {
     id: roomId,
     clients: new Set(),
     inBattle: false,
-    playerSlots: playerSlots
+    playerSlots: playerSlots,
+    map: {
+      type: 'D',
+      playerCount: '8',
+      filename: 'PLAY01.SCN',
+      displayName: 'Armageddon\n                                 (8 Player Desert Map )'
+    }
   };
   rooms.set(roomId, room);
   log(`Created Room ${roomId} with 8 initialized player slots`);
@@ -95,6 +101,40 @@ function getFreeSlotInRoom(room) {
   return freeSlots[randomIndex];
 }
 
+function getAvailableColor(room) {
+  // Get all colors currently in use by active players (gamer or ai types)
+  const usedColors = new Set();
+  for (const slot of room.playerSlots) {
+    if (slot.type === 'gamer' || slot.type === 'ai_easy' || slot.type === 'ai_hard') {
+      usedColors.add(slot.color);
+    }
+  }
+  
+  // Find first available color (0-7)
+  for (let color = 0; color <= 7; color++) {
+    if (!usedColors.has(color)) {
+      return color;
+    }
+  }
+  
+  // If all colors are taken, return a random color
+  return Math.floor(Math.random() * 8);
+}
+
+function broadcastRoomUpdate(room, excludeClientId = null) {
+  // Send updated room data and map to all connected clients in the room
+  for (const clientId of room.clients) {
+    if (clientId === excludeClientId) continue; // Skip the excluded client
+    
+    const client = clients.get(clientId);
+    if (client && client.socket && !client.socket.destroyed) {
+      sendRoomData(client.socket, room);
+      sendMapPacket(client.socket, room);
+      log(`Sent room update (including map) to Client ${clientId} in Room ${room.id}`);
+    }
+  }
+}
+
 function addClientToRoom(clientId, room) {
   // Find a free slot for the client
   const slot = getFreeSlotInRoom(room);
@@ -102,6 +142,12 @@ function addClientToRoom(clientId, room) {
     log(`ERROR: No free slot available in Room ${room.id} for Client ${clientId}`);
     return null;
   }
+  
+  // Check if there were already clients in the room before adding this one
+  const hadExistingClients = room.clients.size > 0;
+  
+  // Find an available color for the new client
+  const availableColor = getAvailableColor(room);
   
   room.clients.add(clientId);
   const client = clients.get(clientId);
@@ -113,8 +159,16 @@ function addClientToRoom(clientId, room) {
     slot.clientId = clientId;
     slot.type = 'gamer';
     slot.ready = false;
+    slot.color = availableColor;
   }
-  log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index}. Room has ${room.clients.size} connected clients`);
+  log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index} with color ${availableColor}. Room has ${room.clients.size} connected clients`);
+  
+  // Broadcast room update to existing clients when a new client joins
+  if (hadExistingClients) {
+    broadcastRoomUpdate(room, clientId);
+    log(`Broadcasting room update to existing clients in Room ${room.id}`);
+  }
+  
   return slot.index;
 }
 
@@ -135,6 +189,12 @@ function removeClientFromRoom(clientId) {
         slot.ready = true;
         log(`Client ${clientId} removed from Room ${room.id} slot ${client.playerSlotIndex}. Room has ${room.clients.size} connected clients`);
       }
+    }
+    
+    // Broadcast room update to remaining clients when a client leaves
+    if (room.clients.size > 0) {
+      broadcastRoomUpdate(room);
+      log(`Broadcasting room update to remaining clients in Room ${room.id} after client departure`);
     }
     
     // Clean up empty rooms that are not the first room
@@ -238,11 +298,13 @@ function sendRoomData(socket, room) {
     const playerType = PLAYER_TYPE[slot.type];
     const playerTeam = TEAM_INDEX[`t${slot.team}`];
     const playerReady = slot.ready ? PLAYER_READY.ready : PLAYER_READY.not_ready;
+    const playerColor = slot.color;
     
     const playerBytes = [
       ...ROOM_COMMANDS.player_name, ...playerIndex, ...NULL_SEPARATOR, ...Buffer.from(slot.name + '\0', 'ascii'),
       ...ROOM_COMMANDS.player_race, ...playerRace, ...playerIndex,
       ...ROOM_COMMANDS.player_type, ...playerType, ...playerIndex,
+      ...ROOM_COMMANDS.player_color, playerColor, ...playerIndex,
       ...ROOM_COMMANDS.player_team2, ...playerTeam, ...playerIndex,
       ...ROOM_COMMANDS.player_ready, ...playerReady, ...playerIndex
     ];
@@ -279,13 +341,18 @@ function sendRoomData(socket, room) {
   log('Sent second binary init packet (length=' + allBytes.length + ')');
 }
 
-function sendMapPacket(socket) {
+function sendMapPacket(socket, room) {
+  // Use map data from room if provided, otherwise use defaults
+  const mapType = room?.map?.type || 'D';
+  const playerCount = room?.map?.playerCount || '8';
+  const filename = room?.map?.filename || 'PLAY01.SCN';
+  const displayName = room?.map?.displayName || 'Armageddon\n                                 (8 Player Desert Map )';
 
   const room_map = Buffer.from([
-    ...Buffer.from('D', 'ascii'), // map type J=0x4a or D=0x44
-    ...Buffer.from('8', 'ascii'), // '8'=0x38 players count
-    ...Buffer.from('PLAY01.SCN\0', 'ascii'), // null-terminated
-    ...Buffer.from('Armageddon\n                                 (8 Player Desert Map )', 'ascii'), // null-terminated with 33 spaces
+    ...Buffer.from(mapType, 'ascii'), // map type J=0x4a or D=0x44
+    ...Buffer.from(playerCount, 'ascii'), // '8'=0x38 players count
+    ...Buffer.from(filename + '\0', 'ascii'), // null-terminated
+    ...Buffer.from(displayName, 'ascii'), // display name
   ]);
 
   sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(room_map));
@@ -361,6 +428,18 @@ function sendCommandPacket(socket, command, data) {
   log(`sendCommandPacket [clientCounter=0x${counterNibble.toString(16)}] command=${cmdHex} len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payload.length}`);
   safeWrite(socket, packet);
   // Purposefully no return value
+}
+
+// Broadcast a command packet to all clients in a room
+function broadcastCommandPacket(room, command, data, excludeClientId = null) {
+  for (const clientId of room.clients) {
+    if (clientId === excludeClientId) continue;
+    
+    const client = clients.get(clientId);
+    if (client && client.socket && !client.socket.destroyed) {
+      sendCommandPacket(client.socket, command, data);
+    }
+  }
 }
 
 // NEW: helper to echo back player name changes
@@ -577,28 +656,134 @@ function parseClientBinary(client, buf) {
             if (nameEnd === -1) nameEnd = remaining.length;
             const playerName = remaining.slice(nameStart, nameEnd).toString('ascii');
             log(`Binary command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
-            sendPlayerName(client.socket, playerOrdinal, playerName);
+            
+            // Update the room's player slot data
+            const room = rooms.get(client.roomId);
+            if (room) {
+              const slot = room.playerSlots[playerOrdinal];
+              if (slot) {
+                slot.name = playerName.replace(/[^\x20-\x7e]/g,'').slice(0,32) || `Player${playerOrdinal}`;
+                log(`Updated slot ${playerOrdinal} name to "${slot.name}" in Room ${room.id}`);
+              }
+              
+              // Broadcast to all clients in the room
+              const data = Buffer.concat([Buffer.from([playerOrdinal, 0x00]), Buffer.from(slot.name,'ascii'), Buffer.from([0x00])]);
+              broadcastCommandPacket(room, ROOM_COMMANDS.player_name, data);
+            }
           }
         } else if (name === 'player_chat') {
           let end = remaining.indexOf(0x00);
           if (end === -1) end = remaining.length;
           const chatMsg = remaining.slice(0, end).toString('ascii');
           log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
-          sendPlayerChat(client.socket, chatMsg);
+          
+          // Broadcast to all clients in the room
+          const room = rooms.get(client.roomId);
+          if (room) {
+            const clean = Buffer.from(chatMsg.replace(/\r|\n/g,'').slice(0,120),'ascii');
+            const data = Buffer.concat([clean, Buffer.from([0x00])]);
+            broadcastCommandPacket(room, ROOM_COMMANDS.player_chat, data);
+          }
         } else if (name === 'player_ready') {
           // Echo back the player_ready command with the client's actual player slot index
           const playerIndex = PLAYER_INDEX[`p${client.playerSlotIndex}`];
-          log(`Binary command from Client ${id}: ${name} -> echoing readiness back for slot ${client.playerSlotIndex}`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...playerIndex]));
+          log(`Binary command from Client ${id}: ${name} -> broadcasting readiness for slot ${client.playerSlotIndex}`);
+          
+          // Update the room's player slot ready state
+          const room = rooms.get(client.roomId);
+          if (room) {
+            const slot = room.playerSlots[client.playerSlotIndex];
+            if (slot) {
+              slot.ready = true;
+              log(`Updated slot ${client.playerSlotIndex} ready state to true in Room ${room.id}`);
+            }
+            
+            // Broadcast to all clients in the room
+            broadcastCommandPacket(room, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...playerIndex]));
+            
+            // Check if all connected clients (gamers) are ready
+            let allClientsReady = true;
+            for (const clientId of room.clients) {
+              const c = clients.get(clientId);
+              if (c && c.playerSlotIndex !== undefined) {
+                const s = room.playerSlots[c.playerSlotIndex];
+                if (s && !s.ready) {
+                  allClientsReady = false;
+                  break;
+                }
+              }
+            }
+            
+            // If all clients are ready, mark the first slot (AI) as ready and broadcast
+            if (allClientsReady && room.clients.size > 0) {
+              const aiSlot = room.playerSlots[0];
+              if (aiSlot && !aiSlot.ready) {
+                aiSlot.ready = true;
+                log(`All clients ready in Room ${room.id}. Marking AI slot 0 as ready.`);
+                
+                // Broadcast AI ready status to all clients
+                const aiPlayerIndex = PLAYER_INDEX.p0;
+                broadcastCommandPacket(room, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...aiPlayerIndex]));
+              }
+            }
+          }
         } else if (name === 'player_race') {
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_race, remaining);
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          
+          // Update the room's player slot race
+          if (remaining.length >= 2) {
+            const raceValue = remaining[0];
+            const playerOrdinal = remaining[1];
+            const room = rooms.get(client.roomId);
+            if (room) {
+              const slot = room.playerSlots[playerOrdinal];
+              if (slot) {
+                slot.race = raceValue === 0x01 ? 'humans' : 'aliens';
+                log(`Updated slot ${playerOrdinal} race to "${slot.race}" in Room ${room.id}`);
+              }
+              
+              // Broadcast to all clients in the room
+              broadcastCommandPacket(room, ROOM_COMMANDS.player_race, remaining);
+            }
+          }
         } else if (name === 'player_color') {
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_color, remaining);
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          
+          // Update the room's player slot color
+          if (remaining.length >= 2) {
+            const colorValue = remaining[0];
+            const playerOrdinal = remaining[1];
+            const room = rooms.get(client.roomId);
+            if (room) {
+              const slot = room.playerSlots[playerOrdinal];
+              if (slot) {
+                slot.color = colorValue;
+                log(`Updated slot ${playerOrdinal} color to ${slot.color} in Room ${room.id}`);
+              }
+              
+              // Broadcast to all clients in the room
+              broadcastCommandPacket(room, ROOM_COMMANDS.player_color, remaining);
+            }
+          }
         } else if (name === 'player_team') {
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.player_team, remaining);
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          
+          // Update the room's player slot team
+          if (remaining.length >= 2) {
+            const teamValue = remaining[0];
+            const playerOrdinal = remaining[1];
+            const room = rooms.get(client.roomId);
+            if (room) {
+              const slot = room.playerSlots[playerOrdinal];
+              if (slot) {
+                slot.team = teamValue;
+                log(`Updated slot ${playerOrdinal} team to ${slot.team} in Room ${room.id}`);
+              }
+              
+              // Broadcast to all clients in the room
+              broadcastCommandPacket(room, ROOM_COMMANDS.player_team, remaining);
+            }
+          }
         } else if (name === 'room_greeting') {
           log(`Binary command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
@@ -636,64 +821,100 @@ function parseClientBinary(client, buf) {
           // battle_ping2 does not send echo by protocol definition, just log it
           log(`Binary command from Client ${id}: ${name} (no echo expected)`);
         } else if (name === 'unit_attack') {
-          // Echo back the full unit_attack command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_attack, remaining);
+          // Broadcast the full unit_attack command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_attack, remaining);
+          }
         } else if (name === 'unit_move') {
-          // Echo back the unit_move command without an optional trailing 0x00 training byte
+          // Broadcast the unit_move command without an optional trailing 0x00 training byte
           let moveData = remaining;
           if (moveData.length > 0 && moveData[moveData.length - 1] === 0x00) {
             log(`Binary command from Client ${id}: ${name} (stripping trailing training 0x00)`);
             moveData = moveData.slice(0, -1);
           } else {
-            log(`Binary command from Client ${id}: ${name} (echoing ${moveData.length} data bytes)`);
+            log(`Binary command from Client ${id}: ${name} (broadcasting ${moveData.length} data bytes)`);
           }
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_move, moveData);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_move, moveData);
+          }
         } else if (name === 'unit_select_data') {
-          // Echo back the full unit_select_data command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select_data, remaining);
+          // Broadcast the full unit_select_data command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_select_data, remaining);
+          }
         } else if (name === 'unit_select') {
-          // Echo back the full unit_select command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_select, remaining);
+          // Broadcast the full unit_select command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_select, remaining);
+          }
         } else if (name === 'unit_destination_data') {
-          // Echo back the full unit_destination_data command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination_data, remaining);
+          // Broadcast the full unit_destination_data command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_destination_data, remaining);
+          }
         } else if (name === 'unit_destination') {
-          // Echo back the full unit_destination command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_destination, remaining);
+          // Broadcast the full unit_destination command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_destination, remaining);
+          }
         } else if (name === 'button_unit') {
-          // Echo back the full button_unit command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.button_unit, remaining);
+          // Broadcast the full button_unit command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.button_unit, remaining);
+          }
         } else if (name === 'button_building') {
-          // Echo back the full button_building command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.button_building, remaining);
+          // Broadcast the full button_building command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.button_building, remaining);
+          }
         } else if (name === 'unit_inspire') {
-          // Echo back the full unit_inspire command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.unit_inspire, remaining);
+          // Broadcast the full unit_inspire command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.unit_inspire, remaining);
+          }
         } else if (name === 'button_upgrade') {
-          // Echo back the full button_upgrade command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.button_upgrade, remaining);
+          // Broadcast the full button_upgrade command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.button_upgrade, remaining);
+          }
         } else if (name === 'button_superweapon') {
-          // Echo back the full button_superweapon command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (echoing all ${remaining.length} data bytes)`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.button_superweapon, remaining);
+          // Broadcast the full button_superweapon command with all data bytes
+          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.button_superweapon, remaining);
+          }
         } else if (name === 'battle_chat') {
-          // Echo back the battle chat message (skip first 2 bytes for logging - they are header)
+          // Broadcast the battle chat message (skip first 2 bytes for logging - they are header)
           const messageStart = remaining.length >= 2 ? 2 : 0;
           const messageData = remaining.slice(messageStart);
           let end = messageData.indexOf(0x00);
           if (end === -1) end = messageData.length;
           const chatMsg = messageData.slice(0, end).toString('ascii');
           log(`Binary command from Client ${id}: ${name}${chatMsg ? ' "' + chatMsg + '"' : ' (empty)'}`);
-          sendCommandPacket(client.socket, ROOM_COMMANDS.battle_chat, remaining);
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.battle_chat, remaining);
+          }
         } else {
           log(`Binary command from Client ${id}: ${name}`);
         }
@@ -746,11 +967,10 @@ const server = net.createServer((socket) => {
   if (!socket.destroyed && socket.writable) {
     sendRoomGreeting(socket, slotIndex);
     sendRoomData(socket, room);
-    sendMapPacket(socket);
+    sendMapPacket(socket, room);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to the world of Dark Colony!`);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
-    sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...PLAYER_INDEX.p0])); // mark as ready this static player slot 0
   } else {
     log(`Client ${id} socket closed immediately after connection (automated scanner?)`);
     disconnect(id, 'socket closed before initialization');
