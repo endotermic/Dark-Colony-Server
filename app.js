@@ -149,7 +149,7 @@ function disconnect(id, reason) {
 }
 
 function sendRoomGreeting(socket) {
-  sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([0x0f, 0x00, 0x01, 0x00]));
+  sendCommandPacket(socket, ROOM_COMMANDS.initial_packet, Buffer.from([...PLAYER_INIT_PARAM.player_index, ...NULL_SEPARATOR, ...PLAYER_INDEX.p1, ...NULL_SEPARATOR]));
   log('Sent initial binary packet to client');
 }
 
@@ -452,6 +452,9 @@ const TEAM_INDEX = {
 const ROOM_PARAM = {
   erupting_vents: Buffer.from([0x02]),
   renewable_vents: Buffer.from([0x03]),
+};
+const PLAYER_INIT_PARAM = {
+  player_index: Buffer.from([0x0f]),
 };
 const NULL_SEPARATOR = Buffer.from([0x00]);
 const ROOM_COMMANDS = {
