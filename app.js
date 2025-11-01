@@ -1,3 +1,10 @@
+/*!
+ * (c) 2025 Nikolajs Agafonovs
+ * Licensed under the AGPL-3.0-or-later license.
+ * This server may be used only in open source projects.
+ * Source code must remain publicly available under the same license.
+ */
+
 'use strict';
 
 // Simple unencrypted TCP game server skeleton.
@@ -11,13 +18,83 @@ const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
 const BATTLE_PING_INTERVAL_MS = 66; // battle ping interval in milliseconds
 const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
+const MAX_CLIENTS_PER_ROOM = 8; // maximum clients per room
 
 let nextClientId = 1;
-const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState }
+let nextRoomId = 1;
+const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState, roomId, battleInitiated }
+const rooms = new Map(); // roomId -> { id, clients: Set<clientId>, inBattle: boolean }
 
 function log(...args) {
   const ts = new Date().toISOString();
   console.log(`[${ts}]`, ...args);
+}
+
+// Room management functions
+function createRoom() {
+  const roomId = nextRoomId++;
+  const room = {
+    id: roomId,
+    clients: new Set(),
+    inBattle: false
+  };
+  rooms.set(roomId, room);
+  log(`Created Room ${roomId}`);
+  return room;
+}
+
+function getAvailableRoom() {
+  // Find a room that is not in battle and has space
+  for (const room of rooms.values()) {
+    if (!room.inBattle && room.clients.size < MAX_CLIENTS_PER_ROOM) {
+      return room;
+    }
+  }
+  // No available room found, create a new one
+  return createRoom();
+}
+
+function addClientToRoom(clientId, room) {
+  room.clients.add(clientId);
+  const client = clients.get(clientId);
+  if (client) {
+    client.roomId = room.id;
+  }
+  log(`Client ${clientId} added to Room ${room.id}. Room has ${room.clients.size}/${MAX_CLIENTS_PER_ROOM} clients`);
+}
+
+function removeClientFromRoom(clientId) {
+  const client = clients.get(clientId);
+  if (!client || !client.roomId) return;
+  
+  const room = rooms.get(client.roomId);
+  if (room) {
+    room.clients.delete(clientId);
+    log(`Client ${clientId} removed from Room ${room.id}. Room has ${room.clients.size}/${MAX_CLIENTS_PER_ROOM} clients`);
+    
+    // Clean up empty rooms that are not the first room
+    if (room.clients.size === 0 && room.id > 1) {
+      rooms.delete(room.id);
+      log(`Room ${room.id} deleted (empty)`);
+    }
+  }
+}
+
+function checkAllClientsInitiatedBattle(room) {
+  if (room.clients.size === 0) return false;
+  
+  for (const clientId of room.clients) {
+    const client = clients.get(clientId);
+    if (!client || !client.battleInitiated) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function startRoomBattle(room) {
+  room.inBattle = true;
+  log(`Room ${room.id} battle started with ${room.clients.size} players. Room is now locked.`);
 }
 
 function safeWrite(socket, data) {
@@ -55,6 +132,10 @@ function send(socket, obj) {
 function disconnect(id, reason) {
   const client = clients.get(id);
   if (!client) return;
+  
+  // Remove from room first
+  removeClientFromRoom(id);
+  
   // Clean up battle ping state if exists
   if (client.battlePingState) {
     if (client.battlePingState.timeoutId) {
@@ -402,7 +483,18 @@ function parseClientBinary(client, buf) {
         } else if (name === 'room_greeting') {
           log(`Binary command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
-          log(`Binary command from Client ${id}: ${name} -> starting battle ping`);
+          log(`Binary command from Client ${id}: ${name} -> player initiating battle`);
+          
+          // Mark this client as having initiated battle
+          client.battleInitiated = true;
+          
+          // Check if all clients in the room have initiated battle
+          const room = rooms.get(client.roomId);
+          if (room && checkAllClientsInitiatedBattle(room)) {
+            startRoomBattle(room);
+            log(`All ${room.clients.size} clients in Room ${room.id} have initiated battle`);
+          }
+          
           // Initialize battle ping state
           if (client.battlePingState) {
             if (client.battlePingState.timeoutId) {
@@ -499,16 +591,26 @@ function parseClientBinary(client, buf) {
 const server = net.createServer((socket) => {
   const id = nextClientId++;
   const remote = `${socket.remoteAddress}:${socket.remotePort}`;
+  
+  // Find or create an available room
+  const room = getAvailableRoom();
+  
   const clientObj = { 
     id, 
     socket, 
     buffer: '', 
     lastActivity: Date.now(),
-    battlePingState: null
+    battlePingState: null,
+    roomId: null,
+    battleInitiated: false
   };
   clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
-  log(`Client ${id} connected from ${remote}. Active: ${clients.size}`);
+  
+  // Add client to the room
+  addClientToRoom(id, room);
+  
+  log(`Client ${id} connected from ${remote}. Active: ${clients.size}. Assigned to Room ${room.id}`);
 
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true); // Disable Nagle's algorithm to send packets immediately without buffering
@@ -518,7 +620,7 @@ const server = net.createServer((socket) => {
     sendRoomGreeting(socket);
     sendRoomData(socket);
     sendMapPacket(socket);
-    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, 'Greetings to the Dark Colony online!');
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to Dark Colony Room ${room.id}!`);
     sendCommandPacket(socket, ROOM_COMMANDS.player_ready, Buffer.from([0x02, 0x00]));
   } else {
     log(`Client ${id} socket closed immediately after connection (automated scanner?)`);

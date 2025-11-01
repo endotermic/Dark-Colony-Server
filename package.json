@@ -7,7 +7,8 @@
   },
   "keywords": ["game", "tcp", "server"],
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0-or-later",
+  "author": "nikolajs.agafonovs@gmail.com",
   "description": "Dark Colony TCP game server",
   "devDependencies": {
     "eslint": "^9.36.0"

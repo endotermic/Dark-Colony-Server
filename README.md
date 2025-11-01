@@ -1,24 +1,50 @@
-Server for Dark Colony game released in 1997.
+# Dark Colony Server
 
-HOWTO run:
-1. download and install Node.js
-2. download Dark-Colony-Server
-3. in it's folder open console
-4. execute script: node .\server.js
-5. don't close the terminal where this script is running!
-6. open Dark Colony game
-7. Select 'MULTI PLAYER WAR'
-8. Select 'CONNECT TO SERVER'
-9. In 'IP ADDRESS' field enter 'localhost'
+Standalone multiplayer server for the classic game *Dark Colony* (1997).  
+Reverse-engineered the original built-in TCP/IP server for interoperability and online play.
 
+---
 
-Info about this server:
-In original game server is built in the game.
-This project tries to reverse engineer interaction protocol and control it through the server application.
+## Disclaimer
 
-Seeking for these abilities:
-1) Server will be put on the internet, available for the players all around the globe.
-2) Infinite amount of rooms (every room is restricted to max 8 players)
-3) Tournaments
-4) special server commands (switching between rooms/maps/options)
+This project is a fan-made, open-source recreation of the original *Dark Colony* network server.  
+It was developed through **reverse engineering** for the sole purpose of **interoperability** and **preservation** of the original multiplayer experience.  
 
+This project **does not include or distribute any original game assets, binaries, or copyrighted material** from *Dark Colony* (1997).  
+You must own a legitimate copy of the game to use this software.
+
+All trademarks and copyrights are the property of their respective owners.
+
+---
+
+## Features / Goals
+- Public internet server for players worldwide  
+- Unlimited rooms (each up to 8 players)  
+- Tournaments  
+- Admin commands (switch rooms, maps, options)
+
+---
+
+## How to Run
+1. Install [Node.js](https://nodejs.org)  
+2. Download or clone this repo  
+3. Open a terminal in the project folder  
+4. Run:
+   ```bash
+   node ./server.js
+   ```
+5. Keep the terminal open while it runs  
+6. Launch *Dark Colony* → **MULTI PLAYER WAR** → **CONNECT TO SERVER**  
+7. Enter `localhost` as the IP address
+
+---
+
+## License
+Licensed under the **GNU Affero General Public License v3 (AGPLv3)**.  
+You can use, modify, and share this project — **as long as your version stays open source** under the same license.  
+
+[Read full license →](./LICENSE.txt)
+
+---
+
+(c) 2025 Nikolajs Agafonovs
