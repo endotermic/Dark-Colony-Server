@@ -41,7 +41,7 @@ function createRoom() {
   // Player 0 is always AI Easy and not ready
   // Players 1-7 are empty slots (type: none, ready: true)
   const playerSlots = [
-    { index: 0, clientId: null, name: 'Player0', race: getRandomRace(), type: 'ai_easy', team: 0, ready: false, color: 0 },
+    { index: 0, clientId: null, name: 'battle_bot', race: getRandomRace(), type: 'ai_hard', team: 0, ready: false, color: 0 },
     { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true, color: 1 },
     { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true, color: 2 },
     { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true, color: 3 },
