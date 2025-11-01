@@ -160,78 +160,78 @@ function sendRoomData(socket) {
   ];
 
   const bytesInit = [
-    0x6c, 0x00, 0x00,
-    0x6c, 0x00, 0x02,
-    0x6c, 0x00, 0x03,
-    0x6c, 0x00, 0x04,
-    0x6c, 0x00, 0x05,
-    0x6c, 0x00, 0x06,
-    0x6c, 0x00, 0x07];
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p0,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p2,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p3,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p4,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p5,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p6,
+    ...ROOM_COMMANDS.player_init, 0x00, ...PLAYER_INDEX.p7];
   const bytesPlayer0 = [
-    0x67, 0x00, 0x00, ...Buffer.from('endotermic\0', 'ascii'),
-    0x66, ...PLAYER_RACE.aliens, 0x00,
-    0x6a, ...PLAYER_TYPE.ai_easy, 0x00,
-    0x6e, 0x00, 0x00, 
-    0x68, 0x01, 0x00];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p0, 0x00, ...Buffer.from('endotermic\0', 'ascii'),
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.aliens, ...PLAYER_INDEX.p0,
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.ai_easy, ...PLAYER_INDEX.p0,
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t0, ...PLAYER_INDEX.p0, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.not_ready, ...PLAYER_INDEX.p0];
   const bytesPlayer2 = [
-    0x67, 0x02, 0x00, ...Buffer.from('Player2\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.aliens, 0x02, 
-    0x6a, ...PLAYER_TYPE.none, 0x02, 
-    0x6e, 0x02, 0x02, 
-    0x68, 0x00, 0x02];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p2, 0x00, ...Buffer.from('Player2\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.aliens, ...PLAYER_INDEX.p2, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p2, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t2, ...PLAYER_INDEX.p2, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p2];
   const bytesPlayer3 = [
-    0x67, 0x03, 0x00, ...Buffer.from('Player3\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.aliens, 0x03, 
-    0x6a, ...PLAYER_TYPE.none, 0x03, 
-    0x6e, 0x03, 0x03, 
-    0x68, 0x00, 0x03];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p3, 0x00, ...Buffer.from('Player3\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.aliens, ...PLAYER_INDEX.p3, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p3, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t3, ...PLAYER_INDEX.p3, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p3];
   const bytesPlayer4 = [
-    0x67, 0x04, 0x00, ...Buffer.from('Player4\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.aliens, 0x04, 
-    0x6a, ...PLAYER_TYPE.none, 0x04, 
-    0x6e, 0x04, 0x04, 
-    0x68, 0x00, 0x04];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p4, 0x00, ...Buffer.from('Player4\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.aliens, ...PLAYER_INDEX.p4, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p4, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t4, ...PLAYER_INDEX.p4, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p4];
   const bytesPlayer5 = [
-    0x67, 0x05, 0x00, ...Buffer.from('Player5\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.humans, 0x05, 
-    0x6a, ...PLAYER_TYPE.none, 0x05, 
-    0x6e, 0x05, 0x05, 
-    0x68, 0x00, 0x05];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p5, 0x00, ...Buffer.from('Player5\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.humans, ...PLAYER_INDEX.p5, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p5, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t5, ...PLAYER_INDEX.p5, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p5];
   const bytesPlayer6 = [
-    0x67, 0x06, 0x00, ...Buffer.from('Player6\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.humans, 0x06, 
-    0x6a, ...PLAYER_TYPE.none, 0x06, 
-    0x6e, 0x06, 0x06, 
-    0x68, 0x00, 0x06];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p6, 0x00, ...Buffer.from('Player6\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.humans, ...PLAYER_INDEX.p6, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p6, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t6, ...PLAYER_INDEX.p6, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p6];
   const bytesPlayer7 = [
-    0x67, 0x07, 0x00, ...Buffer.from('Player7\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.humans, 0x07, 
-    0x6a, ...PLAYER_TYPE.none, 0x07, 
-    0x6e, 0x07, 0x07, 
-    0x68, 0x00, 0x07];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p7, 0x00, ...Buffer.from('Player7\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.humans, ...PLAYER_INDEX.p7, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.none, ...PLAYER_INDEX.p7, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t7, ...PLAYER_INDEX.p7, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.ready, ...PLAYER_INDEX.p7];
   const bytesPlayer1 = [
-    0x67, 0x01, 0x00, ...Buffer.from('Player1\0', 'ascii'), 
-    0x66, ...PLAYER_RACE.humans, 0x01, 
-    0x6a, ...PLAYER_TYPE.gamer, 0x01, 
-    0x6e, 0x01, 0x01, 
-    0x68, 0x01, 0x01];
+    ...ROOM_COMMANDS.player_name, ...PLAYER_INDEX.p1, 0x00, ...Buffer.from('Player1\0', 'ascii'), 
+    ...ROOM_COMMANDS.player_race, ...PLAYER_RACE.humans, ...PLAYER_INDEX.p1, 
+    ...ROOM_COMMANDS.player_type, ...PLAYER_TYPE.gamer, ...PLAYER_INDEX.p1, 
+    ...ROOM_COMMANDS.player_team2, ...TEAM_INDEX.t1, ...PLAYER_INDEX.p1, 
+    ...ROOM_COMMANDS.player_ready, ...PLAYER_READY.not_ready, ...PLAYER_INDEX.p1];
   const bytesParams = [
-    0x6f, 0x00, 0x00, 0x00, 0x00,
-    0x6f, 0x01, 0x00, 0x00, 0x00,
-    0x6f, 0x02, 0x00, 0x01, 0x00,
-    0x6f, 0x03, 0x00, 0x00, 0x00,
-    0x6f, 0x04, 0x00, 0x04, 0x00,
-    0x6f, 0x05, 0x00, 0x04, 0x00,
-    0x6f, 0x06, 0x00, 0x00, 0x00,
-    0x6f, 0x07, 0x00, 0xb8, 0x00,
-    0x6f, 0x08, 0x00, 0x01, 0x00,
-    0x6f, 0x09, 0x00, 0x00, 0x00,
-    0x6f, 0x0a, 0x00, 0x00, 0x00,
-    0x6f, 0x0b, 0x00, 0x00, 0x00,
-    0x6f, 0x0c, 0x00, 0x00, 0x00,
-    0x6f, 0x0d, 0x00, 0x00, 0x00,
-    0x6f, 0x0e, 0x00, 0x00, 0x00,
-    0x6f, 0x0f, 0x00, 0x00, 0x00
+    ...ROOM_COMMANDS.room_param, 0x00, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x01, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, ...ROOM_PARAM.erupting_vents, 0x00, 0x01, 0x00,
+    ...ROOM_COMMANDS.room_param, ...ROOM_PARAM.renewable_vents, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x04, 0x00, 0x04, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x05, 0x00, 0x04, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x06, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x07, 0x00, 0xb8, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x08, 0x00, 0x01, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x09, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0a, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0b, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0c, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0d, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0e, 0x00, 0x00, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x0f, 0x00, 0x00, 0x00
   ];
   const allBytes = [
     ...bytesMap,
@@ -421,8 +421,32 @@ const PLAYER_TYPE = {
   none: Buffer.from([0x03]),
 };
 const PLAYER_READY = {
-  not_ready: Buffer.from([0x00]),
-  ready: Buffer.from([0x01]),
+  not_ready: Buffer.from([0x01]),
+  ready: Buffer.from([0x00]),
+};
+const PLAYER_INDEX = {
+  p0: Buffer.from([0x00]),
+  p1: Buffer.from([0x01]),
+  p2: Buffer.from([0x02]),
+  p3: Buffer.from([0x03]),
+  p4: Buffer.from([0x04]),
+  p5: Buffer.from([0x05]),
+  p6: Buffer.from([0x06]),
+  p7: Buffer.from([0x07]),
+};
+const TEAM_INDEX = {
+  t0: Buffer.from([0x00]),
+  t1: Buffer.from([0x01]),
+  t2: Buffer.from([0x02]),
+  t3: Buffer.from([0x03]),
+  t4: Buffer.from([0x04]),
+  t5: Buffer.from([0x05]),
+  t6: Buffer.from([0x06]),
+  t7: Buffer.from([0x07]),
+};
+const ROOM_PARAM = {
+  erupting_vents: Buffer.from([0x02]),
+  renewable_vents: Buffer.from([0x03]),
 };
 const ROOM_COMMANDS = {
   initial_packet: Buffer.from([0x64]), // initial handshake packet
@@ -432,9 +456,12 @@ const ROOM_COMMANDS = {
   player_name: Buffer.from([0x67]),
   player_chat: Buffer.from([0x65]),
   player_race: Buffer.from([0x66]),  // value after command is humans=0x00, aliens=0x01 
+  player_type: Buffer.from([0x6a]),  // value after command is ai_easy=0x00, ai_hard=0x01, gamer=0x02, none=0x03
   player_color: Buffer.from([0x6b]), // value after command is in range 0x01..0x07
+  player_init: Buffer.from([0x6c]),  // value after command is [0x00, player index in range 0x00..0x07]
   player_team: Buffer.from([0x6d]),  // value after command is in range 0x01..0x07
-  room_greeting: Buffer.from([0x6f]),
+  player_team2: Buffer.from([0x6e]), // value after command is in range 0x01..0x07
+  room_param: Buffer.from([0x6f]),
   room_erupting_vents: Buffer.from([0x6f, 0x02, 0x00]), // erupting vents command following by 0x00 or 0x01 and two zero bytes
   room_renewable_vents: Buffer.from([0x6f, 0x03, 0x00]), // renewable vents command following by 0x00 or 0x01 and two zero bytes
   room_map: Buffer.from([0x69]), // two consecutive null terminated strings: map filename, map display name
