@@ -169,6 +169,38 @@ function addClientToRoom(clientId, room) {
   return { slotIndex: slot.index, hadExistingClients };
 }
 
+function resetRoomBattleState(room) {
+  // Reset battle state
+  room.inBattle = false;
+  
+  // Reset all player slots to their initial state
+  const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
+  
+  room.playerSlots.forEach((slot, index) => {
+    if (index === 0) {
+      // Player 0 is always AI and not ready
+      slot.clientId = null;
+      slot.name = 'battle_bot';
+      slot.race = getRandomRace();
+      slot.type = 'ai_hard';
+      slot.team = 0;
+      slot.ready = false;
+      slot.color = 0;
+    } else {
+      // Players 1-7 are empty slots
+      slot.clientId = null;
+      slot.name = `Player${index}`;
+      slot.race = getRandomRace();
+      slot.type = 'none';
+      slot.team = index;
+      slot.ready = true;
+      slot.color = index;
+    }
+  });
+  
+  log(`Room ${room.id} battle state reset`);
+}
+
 function removeClientFromRoom(clientId) {
   const client = clients.get(clientId);
   if (!client || !client.roomId) return;
@@ -194,10 +226,15 @@ function removeClientFromRoom(clientId) {
       log(`Broadcasting room update to remaining clients in Room ${room.id} after client departure`);
     }
     
-    // Clean up empty rooms that are not the first room
-    if (room.clients.size === 0 && room.id > 1) {
-      rooms.delete(room.id);
-      log(`Room ${room.id} deleted (empty)`);
+    // Reset battle state when all clients disconnect
+    if (room.clients.size === 0) {
+      resetRoomBattleState(room);
+      
+      // Clean up empty rooms that are not the first room
+      if (room.id > 1) {
+        rooms.delete(room.id);
+        log(`Room ${room.id} deleted (empty)`);
+      }
     }
   }
 }
