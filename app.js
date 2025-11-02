@@ -163,13 +163,7 @@ function addClientToRoom(clientId, room) {
   }
   log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index} with color ${availableColor}. Room has ${room.clients.size} connected clients`);
   
-  // Broadcast room update to existing clients when a new client joins
-  if (hadExistingClients) {
-    broadcastRoomUpdate(room, clientId);
-    log(`Broadcasting room update to existing clients in Room ${room.id}`);
-  }
-  
-  return slot.index;
+  return { slotIndex: slot.index, hadExistingClients };
 }
 
 function removeClientFromRoom(clientId) {
@@ -949,14 +943,16 @@ const server = net.createServer((socket) => {
   socket.__packetCounter = 0x00; // initialize per-client packet counter
   
   // Add client to the room and get assigned slot
-  const slotIndex = addClientToRoom(id, room);
+  const result = addClientToRoom(id, room);
   
-  if (slotIndex === null) {
+  if (result === null) {
     log(`Client ${id} could not be added to any room - no free slots`);
     socket.destroy();
     clients.delete(id);
     return;
   }
+  
+  const { slotIndex, hadExistingClients } = result;
   
   log(`Client ${id} connected from ${remote}. Active: ${clients.size}. Assigned to Room ${room.id} slot ${slotIndex}`);
 
@@ -966,11 +962,22 @@ const server = net.createServer((socket) => {
   // Check if socket is still open before sending initial packets (some automated tools disconnect immediately)
   if (!socket.destroyed && socket.writable) {
     sendRoomGreeting(socket, slotIndex);
-    sendRoomData(socket, room);
-    sendMapPacket(socket, room);
+    
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to the world of Dark Colony!`);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
     sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, ` `);
+    sendCommandPacket(socket, ROOM_COMMANDS.player_chat, ` `);
+
+    sendRoomData(socket, room);
+    sendMapPacket(socket, room);
+    
+    // Broadcast room update to existing clients after new client receives map packet
+    if (hadExistingClients) {
+      broadcastRoomUpdate(room, id);
+      log(`Broadcasting room update to existing clients in Room ${room.id} after new client received map`);
+    }
+    
   } else {
     log(`Client ${id} socket closed immediately after connection (automated scanner?)`);
     disconnect(id, 'socket closed before initialization');
