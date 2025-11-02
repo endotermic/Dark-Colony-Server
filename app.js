@@ -21,7 +21,6 @@ const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
 const MAX_CLIENTS_PER_ROOM = 8; // maximum clients per room
 
 let nextClientId = 1;
-let nextRoomId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState, roomId, battleInitiated }
 const rooms = new Map(); // roomId -> { id, clients: Set<clientId>, inBattle: boolean }
 
@@ -32,7 +31,11 @@ function log(...args) {
 
 // Room management functions
 function createRoom() {
-  const roomId = nextRoomId++;
+  // Find the lowest available room ID
+  let roomId = 1;
+  while (rooms.has(roomId)) {
+    roomId++;
+  }
   
   // Helper to get random race
   const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
