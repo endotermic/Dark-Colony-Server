@@ -16,9 +16,9 @@ const net = require('net');
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
-const BATTLE_PING_INTERVAL_MS = 66; // battle ping interval in milliseconds
+const BATTLE_PING_INTERVAL_MS = 33; // battle ping interval in milliseconds
 const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
-const MAX_CLIENTS_PER_ROOM = 8; // maximum clients per room
+const MAX_CLIENTS_PER_ROOM = 7; // maximum clients per room
 
 let nextClientId = 1;
 const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState, roomId, battleInitiated }
@@ -621,6 +621,7 @@ const ROOM_COMMANDS = {
   battle_chat: Buffer.from([0x0e]), // header [0x06, 0xff] followed by null-terminated ascii string
   unit_select_data: Buffer.from([0x11]),
   unit_select: Buffer.from([0x12]),
+  game_speed: Buffer.from([0x13]), // 4 bytes, only first one is used, speed step 10%, values from 110%=0x3c to 200%=0x21
   unit_destination_data: Buffer.from([0x14]),
   unit_destination: Buffer.from([0x15]),
   unit_attack: Buffer.from([0x18]),
@@ -831,6 +832,11 @@ function parseClientBinary(client, buf) {
           if (room && checkAllClientsInitiatedBattle(room)) {
             startRoomBattle(room);
             log(`All ${room.clients.size} clients in Room ${room.id} have initiated battle`);
+            
+            // Broadcast game speed 200% to all clients in the room
+            const gameSpeedData = Buffer.from([0x21, 0x00, 0x00, 0x00]);
+            broadcastCommandPacket(room, ROOM_COMMANDS.game_speed, gameSpeedData);
+            log(`Broadcasted game speed 200% to all clients in Room ${room.id}`);
           }
           
           // Initialize battle ping state
@@ -948,6 +954,20 @@ function parseClientBinary(client, buf) {
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.battle_chat, remaining);
+          }
+        } else if (name === 'game_speed') {
+          // Broadcast the game speed change (4 bytes: speed value + 3 bytes)
+          if (remaining.length >= 1) {
+            const speedValue = remaining[0];
+            // Map speed values to percentages for logging (0x21=200%, 0x3c=110%)
+            const speedPercent = speedValue <= 0x21 ? 200 : (speedValue >= 0x3c ? 110 : Math.round(200 - ((speedValue - 0x21) * 90 / (0x3c - 0x21))));
+            log(`Binary command from Client ${id}: ${name} (speed=${speedPercent}%, value=0x${speedValue.toString(16).padStart(2,'0')})`);
+          } else {
+            log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          }
+          const room = rooms.get(client.roomId);
+          if (room) {
+            broadcastCommandPacket(room, ROOM_COMMANDS.game_speed, remaining);
           }
         } else {
           log(`Binary command from Client ${id}: ${name}`);
