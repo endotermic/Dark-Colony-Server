@@ -17,6 +17,13 @@ All trademarks and copyrights are the property of their respective owners.
 
 ---
 
+## Reverse Engineering Methodology
+- To ensure full legal compliance and avoid copyright infringement, we employed a "Clean Room Design" methodology:
+- Network Traffic Analysis: The game's network protocol was recreated from scratch based exclusively on the analysis of captured network packets using the Wireshark software.
+- Functional Ideas, Not Code: We analyzed the functional behavior of the protocol, not the original game's source code. The game's executable files were not decompiled or disassembled.
+
+---
+
 ## Features / Goals
 - Public internet server for players worldwide  
 - Unlimited rooms (each up to 8 players)  
