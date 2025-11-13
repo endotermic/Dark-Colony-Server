@@ -3,8 +3,8 @@
 Standalone multiplayer server for the classic game *Dark Colony* (1997).  
 Reverse-engineered the original built-in TCP/IP server for interoperability and online play.
 
-Come and play with friends!
-HOWTO connect to **online server**:
+Come and play with friends!  
+HOWTO connect to **online server**:  
 Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
 
 ---
