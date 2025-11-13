@@ -8,8 +8,11 @@ Reverse-engineered the original built-in TCP/IP server for interoperability and 
 ## Features / Goals
 - Public internet server for players worldwide  
 - Unlimited rooms (each up to 8 players)  
-- Tournaments  
-- Admin commands (switch rooms, maps, options)
+- (TODO) Tournaments (fans wote online for players)
+- (TODO) Admin commands (switch rooms, maps, options)
+- (TODO) Replays
+- (TODO) Leaderboard
+- (TODO) Missions with incremental complexity (aka "open world")
 
 ---
 
