@@ -3,6 +3,10 @@
 Standalone multiplayer server for the classic game *Dark Colony* (1997).  
 Reverse-engineered the original built-in TCP/IP server for interoperability and online play.
 
+Come and play with friends!
+HOWTO connect to **online server**:
+Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
+
 ---
 
 ## Features / Goals
@@ -16,9 +20,9 @@ Reverse-engineered the original built-in TCP/IP server for interoperability and 
 
 ---
 
-## How to Run
+## For developers: How to run locally for debugging
 1. Install [Node.js](https://nodejs.org)  
-2. Download or clone this repo  
+2. Download or clone this repo
 3. Open a terminal in the project folder  
 4. Run:
    ```bash
