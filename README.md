@@ -3,6 +3,35 @@
 Standalone multiplayer server for the classic game *Dark Colony* (1997).  
 Reverse-engineered the original built-in TCP/IP server for interoperability and online play.
 
+Come and play with friends!  
+HOWTO connect to **online server**:  
+Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
+
+---
+
+## Features / Goals
+- Public internet server for players worldwide  
+- Unlimited rooms (each up to 8 players)  
+- (TODO) Tournaments (fans wote online for players)
+- (TODO) Admin commands (switch rooms, maps, options)
+- (TODO) Replays
+- (TODO) Leaderboard
+- (TODO) Missions with incremental complexity (aka "open world")
+
+---
+
+## For developers: How to run locally for debugging
+1. Install [Node.js](https://nodejs.org)  
+2. Download or clone this repo
+3. Open a terminal in the project folder  
+4. Run:
+   ```bash
+   node ./server.js
+   ```
+5. Keep the terminal open while it runs  
+6. Launch *Dark Colony* → **MULTI PLAYER WAR** → **CONNECT TO SERVER**  
+7. Enter `localhost` as the IP address
+
 ---
 
 ## Disclaimer
@@ -17,25 +46,10 @@ All trademarks and copyrights are the property of their respective owners.
 
 ---
 
-## Features / Goals
-- Public internet server for players worldwide  
-- Unlimited rooms (each up to 8 players)  
-- Tournaments  
-- Admin commands (switch rooms, maps, options)
-
----
-
-## How to Run
-1. Install [Node.js](https://nodejs.org)  
-2. Download or clone this repo  
-3. Open a terminal in the project folder  
-4. Run:
-   ```bash
-   node ./server.js
-   ```
-5. Keep the terminal open while it runs  
-6. Launch *Dark Colony* → **MULTI PLAYER WAR** → **CONNECT TO SERVER**  
-7. Enter `localhost` as the IP address
+## Reverse Engineering Methodology
+- To ensure full legal compliance and avoid copyright infringement, we employed a "Clean Room Design" methodology.
+- Network Traffic Analysis: The game's network protocol was recreated from scratch based exclusively on the analysis of captured network packets using the Wireshark software.
+- Functional Ideas, Not Code: We analyzed the functional behavior of the protocol, not the original game's source code. The game's executable files were not decompiled or disassembled.
 
 ---
 
