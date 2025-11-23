@@ -30,14 +30,21 @@ const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_
 const BATTLE_PING_INTERVAL_MS = 33; // battle ping interval in milliseconds
 const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
 const MAX_CLIENTS_PER_ROOM = 7; // maximum clients per room
+const VERBOSE_LOGGING = false; // global switch for extra noisy logs
 
 let nextClientId = 1;
-const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState, roomId, battleInitiated }
+const clients = new Map(); // id -> { id, socket, buffer, lastActivity, battlePingState, roomId, battleInitiated, mapSent }
 const rooms = new Map(); // roomId -> { id, clients: Set<clientId>, inBattle: boolean }
+const roomPingCounters = new Map(); // roomId -> incremental counter for 0x71 pings
 
 function log(...args) {
   const ts = new Date().toISOString();
   console.log(`[${ts}]`, ...args);
+}
+
+function vlog(...args) {
+  if (!VERBOSE_LOGGING) return;
+  log(...args);
 }
 
 // Room management functions
@@ -55,7 +62,7 @@ function createRoom() {
   // Player 0 is always AI Easy and not ready
   // Players 1-7 are empty slots (type: none, ready: true)
   const playerSlots = [
-    { index: 0, clientId: null, name: 'battle_bot', race: getRandomRace(), type: 'ai_hard', team: 0, ready: false, color: 0 },
+    { index: 0, clientId: null, name: 'spectator', race: getRandomRace(), type: 'gamer', team: 0, ready: false, color: 0 },
     { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true, color: 1 },
     { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true, color: 2 },
     { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true, color: 3 },
@@ -78,6 +85,7 @@ function createRoom() {
     }
   };
   rooms.set(roomId, room);
+  roomPingCounters.set(roomId, 0);
   log(`Created Room ${roomId} with 8 initialized player slots`);
   return room;
 }
@@ -183,6 +191,7 @@ function addClientToRoom(clientId, room) {
 function resetRoomBattleState(room) {
   // Reset battle state
   room.inBattle = false;
+  roomPingCounters.set(room.id, 0);
   
   // Reset all player slots to their initial state
   const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
@@ -244,6 +253,7 @@ function removeClientFromRoom(clientId) {
       // Clean up empty rooms that are not the first room
       if (room.id > 1) {
         rooms.delete(room.id);
+        roomPingCounters.delete(room.id);
         log(`Room ${room.id} deleted (empty)`);
       }
     }
@@ -282,7 +292,7 @@ function safeWrite(socket, data) {
       preview = data;
       if (preview.length > 160) preview = preview.slice(0, 160) + '...';
     }
-    log(`safeWrite -> ${isBuffer ? 'Buffer' : 'String'} len=${length} preview=${preview}`);
+    vlog(`safeWrite -> ${isBuffer ? 'Buffer' : 'String'} len=${length} preview=${preview}`);
 
     const ok = socket.write(data);
     if (!ok) {
@@ -470,7 +480,12 @@ function sendCommandPacket(socket, command, data) {
   packet[o++] = 0x00;
 
   const cmdHex = commandBuf.toString('hex');
-  log(`sendCommandPacket [clientCounter=0x${counterNibble.toString(16)}] command=${cmdHex} len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payload.length}`);
+  const commandName =
+    Object.entries(ROOM_COMMANDS).find(([, value]) => {
+      const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      return buf.equals(commandBuf);
+    })?.[0] || cmdHex;
+  vlog(`Send command [clientCounter=0x${counterNibble.toString(16)}] command=${commandName} len=${totalLen} (low=0x${lenLow.toString(16).padStart(2,'0')} high=0x${lenHigh.toString(16)}) payloadLen=${payload.length}`);
   safeWrite(socket, packet);
   // Purposefully no return value
 }
@@ -520,6 +535,7 @@ function sendNextBattlePing(client) {
   buf1.writeUInt32LE(client.battlePingState.initialPacketCounter + client.battlePingState.counter, 4);
 
   // Send battle_ping1 (original behaviour)
+  log(`Client ${client.id}: sending battle_ping1 counter=${client.battlePingState.counter}`);
   sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf1);
 
   // Start sending battle_ping2 only from the second ping onward
@@ -553,7 +569,7 @@ function handleBattlePingEcho(client) {
   }
 
   const echoDelay = Date.now() - client.battlePingState.lastPingSentAt;
-  log(`Client ${client.id}: Battle ping echo received after ${echoDelay}ms`);
+  vlog(`Client ${client.id}: Battle ping echo received after ${echoDelay}ms`);
   
   // Clear timeout
   if (client.battlePingState.timeoutId) {
@@ -592,8 +608,9 @@ function parseClientBinary(client, buf) {
     const lenLow = buf[offset];
     const lenHigh = buf[offset + 1] & 0x0f;
     const cmdLength = lenLow | (lenHigh << 8);
-    
-    log(`Client ${id}: Command at offset ${offset}, length=${cmdLength} (0x${lenLow.toString(16).padStart(2,'0')} 0x${buf[offset+1].toString(16).padStart(2,'0')})`);
+
+    // verbose: per-command offsets
+    vlog(`Client ${id}: Command at offset ${offset}, length=${cmdLength} (0x${lenLow.toString(16).padStart(2,'0')} 0x${buf[offset+1].toString(16).padStart(2,'0')})`);
 
     // Check if we have the full command available
     if (offset + cmdLength > buf.length) {
@@ -611,7 +628,8 @@ function parseClientBinary(client, buf) {
     offset += cmdLength;
   }
 
-  log(`Client ${id}: Collected ${commandList.length} command(s) from packet`);
+  // verbose: summary of parsed commands in packet
+  vlog(`Client ${id}: Collected ${commandList.length} command(s) from packet`);
 
   // STEP 2: Process commands from the list
   for (const commandData of commandList) {
@@ -634,7 +652,7 @@ function parseClientBinary(client, buf) {
             let nameEnd = remaining.indexOf(0x00, nameStart);
             if (nameEnd === -1) nameEnd = remaining.length;
             const playerName = remaining.slice(nameStart, nameEnd).toString('ascii');
-            log(`Binary command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
+            log(`Command from Client ${id}: ${name} ordinal=${playerOrdinal} ${playerName ? '(' + playerName + ')' : ''}`);
             
             // Update the room's player slot data
             const room = rooms.get(client.roomId);
@@ -654,7 +672,7 @@ function parseClientBinary(client, buf) {
           let end = remaining.indexOf(0x00);
           if (end === -1) end = remaining.length;
           const chatMsg = remaining.slice(0, end).toString('ascii');
-          log(`Binary command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
+          log(`Command from Client ${id}: ${name}${chatMsg ? ' ' + chatMsg : ''}`);
           
           // Broadcast to all clients in the room
           const room = rooms.get(client.roomId);
@@ -666,7 +684,7 @@ function parseClientBinary(client, buf) {
         } else if (name === 'player_ready') {
           // Echo back the player_ready command with the client's actual player slot index
           const playerIndex = PLAYER_INDEX[`p${client.playerSlotIndex}`];
-          log(`Binary command from Client ${id}: ${name} -> broadcasting readiness for slot ${client.playerSlotIndex}`);
+          log(`Command from Client ${id}: ${name} -> broadcasting readiness for slot ${client.playerSlotIndex}`);
           
           // Update the room's player slot ready state
           const room = rooms.get(client.roomId);
@@ -707,7 +725,7 @@ function parseClientBinary(client, buf) {
             }
           }
         } else if (name === 'player_race') {
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           
           // Update the room's player slot race
           if (remaining.length >= 2) {
@@ -726,7 +744,7 @@ function parseClientBinary(client, buf) {
             }
           }
         } else if (name === 'player_color') {
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           
           // Update the room's player slot color
           if (remaining.length >= 2) {
@@ -745,7 +763,7 @@ function parseClientBinary(client, buf) {
             }
           }
         } else if (name === 'player_team') {
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           
           // Update the room's player slot team
           if (remaining.length >= 2) {
@@ -764,9 +782,9 @@ function parseClientBinary(client, buf) {
             }
           }
         } else if (name === 'room_greeting') {
-          log(`Binary command from Client ${id}: ${name} -> room greeting`);
+          log(`Command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
-          log(`Binary command from Client ${id}: ${name} -> player initiating battle`);
+          log(`Command from Client ${id}: ${name} -> player initiating battle`);
           
           // Mark this client as having initiated battle
           client.battleInitiated = true;
@@ -799,14 +817,14 @@ function parseClientBinary(client, buf) {
           // Send the first ping
           sendNextBattlePing(client);
         } else if (name === 'battle_ping1') {
-          log(`Binary command from Client ${id}: ${name} (echo received)`);
+          log(`Command from Client ${id}: ${name} (echo received)`);
           handleBattlePingEcho(client);
         } else if (name === 'battle_ping2') {
           // battle_ping2 does not send echo by protocol definition, just log it
-          log(`Binary command from Client ${id}: ${name} (no echo expected)`);
+          log(`Command from Client ${id}: ${name} (no echo expected)`);
         } else if (name === 'unit_attack') {
           // Broadcast the full unit_attack command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_attack, remaining);
@@ -815,10 +833,10 @@ function parseClientBinary(client, buf) {
           // Broadcast the unit_move command without an optional trailing 0x00 training byte
           let moveData = remaining;
           if (moveData.length > 0 && moveData[moveData.length - 1] === 0x00) {
-            log(`Binary command from Client ${id}: ${name} (stripping trailing training 0x00)`);
+            log(`Command from Client ${id}: ${name} (stripping trailing training 0x00)`);
             moveData = moveData.slice(0, -1);
           } else {
-            log(`Binary command from Client ${id}: ${name} (broadcasting ${moveData.length} data bytes)`);
+            log(`Command from Client ${id}: ${name} (broadcasting ${moveData.length} data bytes)`);
           }
           const room = rooms.get(client.roomId);
           if (room) {
@@ -826,63 +844,63 @@ function parseClientBinary(client, buf) {
           }
         } else if (name === 'unit_select_data') {
           // Broadcast the full unit_select_data command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_select_data, remaining);
           }
         } else if (name === 'unit_select') {
           // Broadcast the full unit_select command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_select, remaining);
           }
         } else if (name === 'unit_destination_data') {
           // Broadcast the full unit_destination_data command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_destination_data, remaining);
           }
         } else if (name === 'unit_destination') {
           // Broadcast the full unit_destination command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_destination, remaining);
           }
         } else if (name === 'button_unit') {
           // Broadcast the full button_unit command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.button_unit, remaining);
           }
         } else if (name === 'button_building') {
           // Broadcast the full button_building command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.button_building, remaining);
           }
         } else if (name === 'unit_inspire') {
           // Broadcast the full unit_inspire command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_inspire, remaining);
           }
         } else if (name === 'button_upgrade') {
           // Broadcast the full button_upgrade command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.button_upgrade, remaining);
           }
         } else if (name === 'button_superweapon') {
           // Broadcast the full button_superweapon command with all data bytes
-          log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.button_superweapon, remaining);
@@ -894,7 +912,7 @@ function parseClientBinary(client, buf) {
           let end = messageData.indexOf(0x00);
           if (end === -1) end = messageData.length;
           const chatMsg = messageData.slice(0, end).toString('ascii');
-          log(`Binary command from Client ${id}: ${name}${chatMsg ? ' "' + chatMsg + '"' : ' (empty)'}`);
+          log(`Command from Client ${id}: ${name}${chatMsg ? ' "' + chatMsg + '"' : ' (empty)'}`);
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.battle_chat, remaining);
@@ -905,23 +923,23 @@ function parseClientBinary(client, buf) {
             const speedValue = remaining[0];
             // Map speed values to percentages for logging (0x21=200%, 0x3c=110%)
             const speedPercent = speedValue <= 0x21 ? 200 : (speedValue >= 0x3c ? 110 : Math.round(200 - ((speedValue - 0x21) * 90 / (0x3c - 0x21))));
-            log(`Binary command from Client ${id}: ${name} (speed=${speedPercent}%, value=0x${speedValue.toString(16).padStart(2,'0')})`);
+            log(`Command from Client ${id}: ${name} (speed=${speedPercent}%, value=0x${speedValue.toString(16).padStart(2,'0')})`);
           } else {
-            log(`Binary command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
+            log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           }
           const room = rooms.get(client.roomId);
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.game_speed, remaining);
           }
         } else {
-          log(`Binary command from Client ${id}: ${name}`);
+          log(`Command from Client ${id}: ${name}`);
         }
         break;
       }
     }
     
     if (!matched) {
-      log(`Unknown binary command from Client ${id}: ${commandData.toString('hex')}`);
+      log(`Unknown Command from Client ${id}: ${commandData.toString('hex')}`);
     }
   }
 }
@@ -941,7 +959,8 @@ const server = net.createServer((socket) => {
     battlePingState: null,
     roomId: null,
     playerSlotIndex: null,
-    battleInitiated: false
+    battleInitiated: false,
+    mapSent: false
   };
   clients.set(id, clientObj);
   socket.__packetCounter = 0x00; // initialize per-client packet counter
@@ -973,6 +992,10 @@ const server = net.createServer((socket) => {
         sendRoomData(socket, room);
         sendMapPacket(socket, room);
 
+        // Mark that this client has received the map so lobby pings can start
+        const c = clients.get(id);
+        if (c) c.mapSent = true;
+
         sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to the world of Dark Colony!`);
         sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
         sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
@@ -997,7 +1020,7 @@ const server = net.createServer((socket) => {
     const client = clients.get(id); if (!client) return;
     client.lastActivity = Date.now();
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
-    log(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
+    vlog(`Received raw packet from Client ${id}. Hex ${buf.toString('hex')}`);
     parseClientBinary(client, buf);
     const str = buf.toString('ascii');
     client.buffer += str;
@@ -1025,3 +1048,25 @@ setInterval(() => {
     }
   }
 }, 10_000);
+
+// Periodic raw 0x71 ping broadcast while rooms are in lobby (pre-battle)
+setInterval(() => {
+  for (const room of rooms.values()) {
+    if (room.clients.size === 0) continue;
+    if (room.inBattle) continue; // stop pinging once battle starts
+
+    const currentCounter = roomPingCounters.get(room.id) ?? 0;
+    roomPingCounters.set(room.id, currentCounter + 1);
+
+    for (const clientId of room.clients) {
+      const client = clients.get(clientId);
+      if (!client || !client.socket || client.socket.destroyed) continue;
+      // Only start lobby pings after the client has received the map packet
+      if (!client.mapSent) continue;
+
+      // 0x71 ping command with no payload, just terminator
+      log(`Room ${room.id}: sending ping #${currentCounter} to Client ${clientId}`);
+      sendCommandPacket(client.socket, ROOM_COMMANDS.ping, null);
+    }
+  }
+}, 300);
