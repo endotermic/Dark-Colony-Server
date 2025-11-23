@@ -513,13 +513,25 @@ function sendNextBattlePing(client) {
     return;
   }
 
-  const buf = Buffer.alloc(8);
+  const buf1 = Buffer.alloc(8);
   // First 32-bit counter (little-endian) - counts from 0
-  buf.writeUInt32LE(client.battlePingState.counter, 0);
+  buf1.writeUInt32LE(client.battlePingState.counter, 0);
   // Second 32-bit counter (little-endian) - starts from initial packet counter
-  buf.writeUInt32LE(client.battlePingState.initialPacketCounter + client.battlePingState.counter, 4);
-  
-  sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf);
+  buf1.writeUInt32LE(client.battlePingState.initialPacketCounter + client.battlePingState.counter, 4);
+
+  // Send battle_ping1 (original behaviour)
+  sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf1);
+
+  // Start sending battle_ping2 only from the second ping onward
+  // WARNING: disabled it right now until startup delay issues are resolved
+  if (client.battlePingState.counter > 0xffffffffffff) {
+    // Data format: 6 bytes -> [0x00, 0x00, 4-byte counter]
+    const buf2 = Buffer.alloc(6);
+    buf2[0] = 0xd8; // magic number
+    buf2[1] = 0xde; // magic number
+    buf2.writeUInt32LE(client.battlePingState.counter, 2);
+    sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping2, buf2);
+  }
   client.battlePingState.waitingForEcho = true;
   client.battlePingState.lastPingSentAt = Date.now();
   
