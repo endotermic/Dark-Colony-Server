@@ -535,7 +535,7 @@ function sendNextBattlePing(client) {
   buf1.writeUInt32LE(client.battlePingState.initialPacketCounter + client.battlePingState.counter, 4);
 
   // Send battle_ping1 (original behaviour)
-  log(`Client ${client.id}: sending battle_ping1 counter=${client.battlePingState.counter}`);
+  log(`Client ${client.id}: sending battle_pings 1 and 2, counter=${client.battlePingState.counter}`);
   sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping1, buf1);
 
   // Start sending battle_ping2 only from the second ping onward
@@ -543,8 +543,8 @@ function sendNextBattlePing(client) {
   if (client.battlePingState.counter > 0xffffffffffff) {
     // Data format: 6 bytes -> [0x00, 0x00, 4-byte counter]
     const buf2 = Buffer.alloc(6);
-    buf2[0] = 0xd8; // magic number
-    buf2[1] = 0xde; // magic number
+    buf2[0] = 0xff; // magic number
+    buf2[1] = 0xff; // magic number
     buf2.writeUInt32LE(client.battlePingState.counter, 2);
     sendCommandPacket(client.socket, ROOM_COMMANDS.battle_ping2, buf2);
   }
@@ -817,6 +817,13 @@ function parseClientBinary(client, buf) {
           // Send the first ping
           sendNextBattlePing(client);
         } else if (name === 'battle_ping1') {
+          // Check if first counter equals 0xFFFFFFFF and log this fact
+          if (remaining && remaining.length >= 4) {
+            const counter = remaining.readUInt32BE(0);
+            if (counter === 0xffffffff) {
+              log(`Command from Client ${id}: ${name} 0xFFFFFFFF`);
+            }
+          }
           log(`Command from Client ${id}: ${name} (echo received)`);
           handleBattlePingEcho(client);
         } else if (name === 'battle_ping2') {
