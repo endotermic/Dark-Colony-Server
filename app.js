@@ -849,19 +849,19 @@ function parseClientBinary(client, buf) {
           if (room) {
             broadcastCommandPacket(room, ROOM_COMMANDS.unit_move, moveData);
           }
-        } else if (name === 'unit_select_data') {
-          // Broadcast the full unit_select_data command with all data bytes
+        } else if (name === 'battle_ping3_data') {
+          // Broadcast the full battle_ping3_data command with all data bytes
           log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
-            broadcastCommandPacket(room, ROOM_COMMANDS.unit_select_data, remaining);
+            broadcastCommandPacket(room, ROOM_COMMANDS.battle_ping3_data, remaining);
           }
-        } else if (name === 'unit_select') {
-          // Broadcast the full unit_select command with all data bytes
+        } else if (name === 'battle_ping3') {
+          // Broadcast the full battle_ping3 command with all data bytes
           log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
           const room = rooms.get(client.roomId);
           if (room) {
-            broadcastCommandPacket(room, ROOM_COMMANDS.unit_select, remaining);
+            broadcastCommandPacket(room, ROOM_COMMANDS.battle_ping3, remaining);
           }
         } else if (name === 'unit_destination_data') {
           // Broadcast the full unit_destination_data command with all data bytes

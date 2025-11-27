@@ -85,8 +85,8 @@ const ROOM_COMMANDS = {
   button_upgrade: Buffer.from([0x0c]),
   button_superweapon: Buffer.from([0x0d]), // napalm or virus attack
   battle_chat: Buffer.from([0x0e]), // header [0x06, 0xff] followed by null-terminated ascii string
-  unit_select_data: Buffer.from([0x11]),
-  unit_select: Buffer.from([0x12]),
+  battle_ping3_data: Buffer.from([0x11]),
+  battle_ping3: Buffer.from([0x12]),
   game_speed: Buffer.from([0x13]), // 4 bytes, only first one is used, speed step 10%, values from 110%=0x3c to 200%=0x21
   unit_destination_data: Buffer.from([0x14]),
   unit_destination: Buffer.from([0x15]),
