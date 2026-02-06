@@ -989,38 +989,23 @@ const server = net.createServer((socket) => {
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true); // Disable Nagle's algorithm to send packets immediately without buffering
 
-  // Check if socket is still open before sending initial packets (some automated tools disconnect immediately)
-  if (!socket.destroyed && socket.writable) {
-    // Add 2-second delay before sending room greeting
-    setTimeout(() => {
-      if (!socket.destroyed && socket.writable) {
-        sendRoomGreeting(socket, slotIndex);
+  sendRoomGreeting(socket, slotIndex);
         
-        sendRoomData(socket, room);
-        sendMapPacket(socket, room);
+  sendRoomData(socket, room);
+  sendMapPacket(socket, room);
 
-        // Mark that this client has received the map so lobby pings can start
-        const c = clients.get(id);
-        if (c) c.mapSent = true;
+  // Mark that this client has received the map so lobby pings can start
+  const c = clients.get(id);
+  if (c) c.mapSent = true;
 
-        sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to the world of Dark Colony!`);
-        sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
-        sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to Dark Colony Online!`);
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
+  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
 
-        // Broadcast room update to existing clients after new client receives map packet
-        if (hadExistingClients) {
-          broadcastRoomUpdate(room, id);
-          log(`Broadcasting room update to existing clients in Room ${room.id} after new client received map`);
-        }
-      } else {
-        log(`Client ${id} socket closed during 2-second greeting delay`);
-        disconnect(id, 'socket closed before greeting');
-      }
-    }, 2000);
-    
-  } else {
-    log(`Client ${id} socket closed immediately after connection (automated scanner?)`);
-    disconnect(id, 'socket closed before initialization');
+  // Broadcast room update to existing clients after new client receives map packet
+  if (hadExistingClients) {
+    broadcastRoomUpdate(room, id);
+    log(`Broadcasting room update to existing clients in Room ${room.id} after new client received map`);
   }
 
   socket.on('data', (chunk) => {
