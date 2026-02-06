@@ -1,7 +1,6 @@
 # Dark Colony Server
-
-Standalone multiplayer server for the classic game *Dark Colony* (1997).  
-Reverse-engineered the original built-in TCP/IP server for interoperability and online play.
+This is a standalone multiplayer server for the classic RTS game *Dark Colony*, which was released in 1997.
+A reverse-engineered, standalone server designed for interoperability with the original *Dark Colony* game.
 
 Come and play with friends!  
 HOWTO connect to **online server**:  
@@ -20,6 +19,25 @@ Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colon
 
 ---
 
+## Disclaimer
+
+This project is a fan-made, open-source recreation of the original *Dark Colony* network server.  
+It was developed through **reverse engineering** for the sole purpose of **interoperability** and **preservation** of the original multiplayer experience.  
+
+This project **does not include or distribute any original game assets, binaries, or copyrighted material** from *Dark Colony*.  
+You must own a legitimate copy of the game to use this software.
+
+All trademarks and copyrights are the property of their respective owners.
+
+---
+
+## Reverse Engineering Methodology
+- To ensure full legal compliance and avoid copyright infringement, we employed a "Clean Room Design" methodology.
+- Network Traffic Analysis: The game's network protocol was recreated from scratch based exclusively on the analysis of captured network packets using the Wireshark software.
+- Functional Ideas, Not Code: We analyzed the functional behavior of the protocol, not the original game's source code. The game's executable files were not decompiled or disassembled.
+
+---
+
 ## For developers: How to run locally for debugging
 1. Install [Node.js](https://nodejs.org)  
 2. Download or clone this repo
@@ -34,25 +52,6 @@ Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colon
 
 ---
 
-## Disclaimer
-
-This project is a fan-made, open-source recreation of the original *Dark Colony* network server.  
-It was developed through **reverse engineering** for the sole purpose of **interoperability** and **preservation** of the original multiplayer experience.  
-
-This project **does not include or distribute any original game assets, binaries, or copyrighted material** from *Dark Colony* (1997).  
-You must own a legitimate copy of the game to use this software.
-
-All trademarks and copyrights are the property of their respective owners.
-
----
-
-## Reverse Engineering Methodology
-- To ensure full legal compliance and avoid copyright infringement, we employed a "Clean Room Design" methodology.
-- Network Traffic Analysis: The game's network protocol was recreated from scratch based exclusively on the analysis of captured network packets using the Wireshark software.
-- Functional Ideas, Not Code: We analyzed the functional behavior of the protocol, not the original game's source code. The game's executable files were not decompiled or disassembled.
-
----
-
 ## License
 Licensed under the **GNU Affero General Public License v3 (AGPLv3)**.  
 You can use, modify, and share this project — **as long as your version stays open source** under the same license.  
@@ -61,4 +60,4 @@ You can use, modify, and share this project — **as long as your version stays 
 
 ---
 
-(c) 2025 Nikolajs Agafonovs
+(c) 2026 Nikolajs Agafonovs
