@@ -117,10 +117,8 @@ function getFreeSlotInRoom(room) {
   // Get all free slots (excluding the AI slot at index 0)
   const freeSlots = room.playerSlots.filter(slot => slot.clientId === null && slot.type === 'none');
   if (freeSlots.length === 0) return null;
-  
-  // Pick a random free slot
-  const randomIndex = Math.floor(Math.random() * freeSlots.length);
-  return freeSlots[randomIndex];
+
+  return freeSlots[0];
 }
 
 function getAvailableColor(room) {
@@ -150,7 +148,7 @@ function broadcastRoomUpdate(room, excludeClientId = null) {
     
     const client = clients.get(clientId);
     if (client && client.socket && !client.socket.destroyed) {
-      sendRoomData(client.socket, room);
+      sendRoomData(client.socket, room, client.playerSlotIndex);
       sendMapPacket(client.socket, room);
       log(`Sent room update (including map) to Client ${clientId} in Room ${room.id}`);
     }
@@ -334,14 +332,15 @@ function sendRoomGreeting(socket, playerSlotIndex) {
   log(`Sent initial binary packet to client (assigned to slot ${playerSlotIndex})`);
 }
 
-function sendRoomData(socket, room) {
+function sendRoomData(socket, room, currentSlotIndex = null) {
   const bytesMap = [
     0x00, 0x00 // placeholder for the map
   ];
 
-  // Initialize all 8 player slots
+  // Initialize all player slots except the current client
   const bytesInit = [];
   for (let i = 0; i < 8; i++) {
+    if (i === currentSlotIndex) continue; // Skip the current client's slot
     bytesInit.push(...ROOM_COMMANDS.player_init, ...NULL_SEPARATOR, ...PLAYER_INDEX[`p${i}`]);
   }
   
@@ -991,16 +990,16 @@ const server = net.createServer((socket) => {
 
   sendRoomGreeting(socket, slotIndex);
         
-  sendRoomData(socket, room);
+  sendRoomData(socket, room, slotIndex);
   sendMapPacket(socket, room);
 
   // Mark that this client has received the map so lobby pings can start
   const c = clients.get(id);
   if (c) c.mapSent = true;
 
-  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to Dark Colony Online!`);
-  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
-  sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
+  //sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Welcome to Dark Colony Online!`);
+  //sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Room: ${room.id}`);
+  //sendCommandPacket(socket, ROOM_COMMANDS.player_chat, `Random slot assigned: ${slotIndex + 1}`);
 
   // Broadcast room update to existing clients after new client receives map packet
   if (hadExistingClients) {
