@@ -62,14 +62,14 @@ function createRoom() {
   // Player 0 is always AI Easy and not ready
   // Players 1-7 are empty slots (type: none, ready: true)
   const playerSlots = [
-    { index: 0, clientId: null, name: 'spectator', race: getRandomRace(), type: 'gamer', team: 0, ready: false, color: 0 },
-    { index: 1, clientId: null, name: 'Player1', race: getRandomRace(), type: 'none', team: 1, ready: true, color: 1 },
-    { index: 2, clientId: null, name: 'Player2', race: getRandomRace(), type: 'none', team: 2, ready: true, color: 2 },
-    { index: 3, clientId: null, name: 'Player3', race: getRandomRace(), type: 'none', team: 3, ready: true, color: 3 },
-    { index: 4, clientId: null, name: 'Player4', race: getRandomRace(), type: 'none', team: 4, ready: true, color: 4 },
-    { index: 5, clientId: null, name: 'Player5', race: getRandomRace(), type: 'none', team: 5, ready: true, color: 5 },
-    { index: 6, clientId: null, name: 'Player6', race: getRandomRace(), type: 'none', team: 6, ready: true, color: 6 },
-    { index: 7, clientId: null, name: 'Player7', race: getRandomRace(), type: 'none', team: 7, ready: true, color: 7 }
+    { index: 0, clientId: null, name: 'Player0', race: 'aliens', type: 'gamer', team: 0, ready: false, color: 0 },
+    { index: 1, clientId: null, name: 'Player1', race: 'humans', type: 'none', team: 1, ready: true, color: 1 },
+    { index: 2, clientId: null, name: 'Player2', race: 'aliens', type: 'none', team: 2, ready: true, color: 2 },
+    { index: 3, clientId: null, name: 'Player3', race: 'humans', type: 'none', team: 3, ready: true, color: 3 },
+    { index: 4, clientId: null, name: 'Player4', race: 'aliens', type: 'none', team: 4, ready: true, color: 4 },
+    { index: 5, clientId: null, name: 'Player5', race: 'humans', type: 'none', team: 5, ready: true, color: 5 },
+    { index: 6, clientId: null, name: 'Player6', race: 'aliens', type: 'none', team: 6, ready: true, color: 6 },
+    { index: 7, clientId: null, name: 'Player7', race: 'humans', type: 'none', team: 7, ready: true, color: 7 }
   ];
   
   const room = {
@@ -346,23 +346,34 @@ function sendRoomData(socket, room, currentSlotIndex = null) {
   
   // Build player data dynamically based on room state
   const playerBytesArray = [];
+  let currentPlayerBytes = null;
   for (const slot of room.playerSlots) {
     const playerIndex = PLAYER_INDEX[`p${slot.index}`];
     const playerRace = slot.race === 'humans' ? PLAYER_RACE.humans : PLAYER_RACE.aliens;
     const playerType = PLAYER_TYPE[slot.type];
     const playerTeam = TEAM_INDEX[`t${slot.team}`];
     const playerReady = slot.ready ? PLAYER_READY.ready : PLAYER_READY.not_ready;
-    const playerColor = slot.color;
     
     const playerBytes = [
       ...ROOM_COMMANDS.player_name, ...playerIndex, ...NULL_SEPARATOR, ...Buffer.from(slot.name + '\0', 'ascii'),
       ...ROOM_COMMANDS.player_race, ...playerRace, ...playerIndex,
       ...ROOM_COMMANDS.player_type, ...playerType, ...playerIndex,
-      ...ROOM_COMMANDS.player_color, playerColor, ...playerIndex,
+      ...(slot.index === currentSlotIndex ? [...ROOM_COMMANDS.player_init, 0x01, ...playerIndex] : []), // client must set init state for their own slot
       ...ROOM_COMMANDS.player_team2, ...playerTeam, ...playerIndex,
       ...ROOM_COMMANDS.player_ready, ...playerReady, ...playerIndex
     ];
+
+    if (slot.index === currentSlotIndex) {
+      currentPlayerBytes = playerBytes;
+      continue;
+    }
+
     playerBytesArray.push(playerBytes);
+  }
+
+  // player initialization commands must come after all players
+  if (currentPlayerBytes) {
+    playerBytesArray.push(currentPlayerBytes);
   }
   
   const bytesParams = [
@@ -373,7 +384,7 @@ function sendRoomData(socket, room, currentSlotIndex = null) {
     ...ROOM_COMMANDS.room_param, 0x04, 0x00, 0x04, 0x00,
     ...ROOM_COMMANDS.room_param, 0x05, 0x00, 0x04, 0x00,
     ...ROOM_COMMANDS.room_param, 0x06, 0x00, 0x00, 0x00,
-    ...ROOM_COMMANDS.room_param, 0x07, 0x00, 0xb8, 0x00,
+    ...ROOM_COMMANDS.room_param, 0x07, 0x00, 0x5b, 0x00,
     ...ROOM_COMMANDS.room_param, 0x08, 0x00, 0x01, 0x00,
     ...ROOM_COMMANDS.room_param, 0x09, 0x00, 0x00, 0x00,
     ...ROOM_COMMANDS.room_param, 0x0a, 0x00, 0x00, 0x00,
