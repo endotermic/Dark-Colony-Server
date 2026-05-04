@@ -27,7 +27,7 @@ const {
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8888;
 const HOST = '0.0.0.0';
 const IDLE_TIMEOUT_MS = process.env.IDLE_TIMEOUT_MS ? parseInt(process.env.IDLE_TIMEOUT_MS, 10) : 5_000; // disconnect idle clients after 5s
-const BATTLE_PING_INTERVAL_MS = 33; // battle ping interval in milliseconds
+const BATTLE_PING_INTERVAL_MS = 50; // battle ping interval in milliseconds
 const BATTLE_PING_TIMEOUT_MS = 5000; // timeout if no echo received
 const MAX_CLIENTS_PER_ROOM = 7; // maximum clients per room
 const VERBOSE_LOGGING = false; // global switch for extra noisy logs
@@ -821,9 +821,10 @@ function parseClientBinary(client, buf) {
             log(`All ${room.clients.size} clients in Room ${room.id} have initiated battle`);
             
             // Broadcast game speed 200% to all clients in the room
-            const gameSpeedData = Buffer.from([0x21, 0x00, 0x00, 0x00]);
-            broadcastCommandPacket(room, ROOM_COMMANDS.game_speed, gameSpeedData);
-            log(`Broadcasted game speed 200% to all clients in Room ${room.id}`);
+            // COMMENTED OUT TO DEBUG SYNC ISSUES AT STARTUP
+            //const gameSpeedData = Buffer.from([0x21, 0x00, 0x00, 0x00]);
+            //broadcastCommandPacket(room, ROOM_COMMANDS.game_speed, gameSpeedData);
+            //log(`Broadcasted game speed 200% to all clients in Room ${room.id}`);
           }
           
           // Initialize battle ping state
@@ -834,7 +835,7 @@ function parseClientBinary(client, buf) {
           }
           client.battlePingState = {
             counter: 0,
-            initialPacketCounter: client.socket.__packetCounter || 0,
+            initialPacketCounter: (client.socket.__packetCounter >> 4) || 0,
             waitingForEcho: false,
             timeoutId: null,
             lastPingSentAt: null
