@@ -48,19 +48,7 @@ function vlog(...args) {
 }
 
 // Room management functions
-function createRoom() {
-  // Find the lowest available room ID
-  let roomId = 1;
-  while (rooms.has(roomId)) {
-    roomId++;
-  }
-  
-  // Helper to get random race
-  const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
-  
-  // Initialize 8 player slots
-  // Player 0 is always AI Easy and not ready
-  // Players 1-7 are empty slots (type: none, ready: true)
+function buildRoom(roomId) {
   const playerSlots = [
     { index: 0, clientId: null, name: 'Player0', race: 'aliens', type: 'gamer', team: 0, ready: false, color: 0 },
     { index: 1, clientId: null, name: 'Player1', race: 'humans', type: 'none', team: 1, ready: true, color: 1 },
@@ -71,12 +59,12 @@ function createRoom() {
     { index: 6, clientId: null, name: 'Player6', race: 'aliens', type: 'none', team: 6, ready: true, color: 6 },
     { index: 7, clientId: null, name: 'Player7', race: 'humans', type: 'none', team: 7, ready: true, color: 7 }
   ];
-  
-  const room = {
+
+  return {
     id: roomId,
     clients: new Set(),
     inBattle: false,
-    playerSlots: playerSlots,
+    playerSlots,
     map: {
       type: 'D',
       playerCount: '8',
@@ -84,6 +72,16 @@ function createRoom() {
       displayName: 'Armageddon\n                                 (8 Player Desert Map )'
     }
   };
+}
+
+function createRoom() {
+  // Find the lowest available room ID
+  let roomId = 1;
+  while (rooms.has(roomId)) {
+    roomId++;
+  }
+
+  const room = buildRoom(roomId);
   rooms.set(roomId, room);
   roomPingCounters.set(roomId, 0);
   log(`Created Room ${roomId} with 8 initialized player slots`);
@@ -187,35 +185,12 @@ function addClientToRoom(clientId, room) {
 }
 
 function resetRoomBattleState(room) {
-  // Reset battle state
-  room.inBattle = false;
+  const freshRoom = buildRoom(room.id);
+  room.inBattle = freshRoom.inBattle;
+  room.playerSlots = freshRoom.playerSlots;
+  room.map = freshRoom.map;
   roomPingCounters.set(room.id, 0);
-  
-  // Reset all player slots to their initial state
-  const getRandomRace = () => Math.random() < 0.5 ? 'humans' : 'aliens';
-  
-  room.playerSlots.forEach((slot, index) => {
-    if (index === 0) {
-      // Player 0 is always AI and not ready
-      slot.clientId = null;
-      slot.name = 'battle_bot';
-      slot.race = getRandomRace();
-      slot.type = 'ai_hard';
-      slot.team = 0;
-      slot.ready = false;
-      slot.color = 0;
-    } else {
-      // Players 1-7 are empty slots
-      slot.clientId = null;
-      slot.name = `Player${index}`;
-      slot.race = getRandomRace();
-      slot.type = 'none';
-      slot.team = index;
-      slot.ready = true;
-      slot.color = index;
-    }
-  });
-  
+
   log(`Room ${room.id} battle state reset`);
 }
 
@@ -246,13 +221,15 @@ function removeClientFromRoom(clientId) {
     
     // Reset battle state when all clients disconnect
     if (room.clients.size === 0) {
-      resetRoomBattleState(room);
-      
-      // Clean up empty rooms that are not the first room
-      if (room.id > 1) {
-        rooms.delete(room.id);
-        roomPingCounters.delete(room.id);
-        log(`Room ${room.id} deleted (empty)`);
+      const roomId = room.id;
+      rooms.delete(roomId);
+      roomPingCounters.delete(roomId);
+
+      if (roomId === 1) {
+        createRoom();
+        log(`Room ${roomId} recreated after becoming empty`);
+      } else {
+        log(`Room ${roomId} deleted (empty)`);
       }
     }
   }
