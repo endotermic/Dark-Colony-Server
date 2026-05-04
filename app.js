@@ -417,11 +417,18 @@ function sendMapPacket(socket, room) {
     ...Buffer.from(mapType, 'ascii'), // map type J=0x4a or D=0x44
     ...Buffer.from(playerCount, 'ascii'), // '8'=0x38 players count
     ...Buffer.from(filename + '\0', 'ascii'), // null-terminated
-    ...Buffer.from(displayName, 'ascii'), // display name
+    ...Buffer.from(displayName + '\0', 'ascii'), // display name
   ]);
 
   sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(room_map));
   log('Sent map packet (length=' + room_map.length + ')');
+}
+
+function sendMapPacketDelayed(socket, room, delayMs = 2000) {
+  setTimeout(() => {
+    if (!socket || socket.destroyed) return;
+    sendMapPacket(socket, room);
+  }, delayMs);
 }
 
 // Generic command packet helper: builds [commandBytes...][data bytes][0x00 terminator]
@@ -791,6 +798,14 @@ function parseClientBinary(client, buf) {
               broadcastCommandPacket(room, ROOM_COMMANDS.player_team, remaining);
             }
           }
+        } else if (name === 'room_param') {
+          log(`Command from Client ${id}: ${name} (echoing ${remaining.length} data bytes)`);
+
+          const room = rooms.get(client.roomId);
+          if (room) {
+            // Broadcast to room (includes sender), effectively echoing room params.
+            broadcastCommandPacket(room, ROOM_COMMANDS.room_param, remaining);
+          }
         } else if (name === 'room_greeting') {
           log(`Command from Client ${id}: ${name} -> room greeting`);
         } else if (name === 'begin_battle') {
@@ -1002,7 +1017,7 @@ const server = net.createServer((socket) => {
   sendRoomGreeting(socket, slotIndex);
         
   sendRoomData(socket, room, slotIndex);
-  sendMapPacket(socket, room);
+  sendMapPacketDelayed(socket, room);
 
   // Mark that this client has received the map so lobby pings can start
   const c = clients.get(id);
