@@ -218,8 +218,7 @@ function broadcastRoomUpdate(room, excludeClientId = null) {
     const client = clients.get(clientId);
     if (client && client.socket && !client.socket.destroyed) {
       sendRoomData(client.socket, room, client.playerSlotIndex);
-      sendMapPacket(client.socket, room);
-      log(`Sent room update (including map) to Client ${clientId} in Room ${room.id}`);
+      log(`Sent room update (including embedded map) to Client ${clientId} in Room ${room.id}`);
     }
   }
 }
@@ -391,10 +390,24 @@ function sendRoomGreeting(socket, playerSlotIndex) {
   log(`Sent initial binary packet to client (assigned to slot ${playerSlotIndex})`);
 }
 
-function sendRoomData(socket, room, currentSlotIndex = null) {
-  const bytesMap = [
-    0x00, 0x00 // placeholder for the map
+function buildMapBytes(room) {
+  // Use map data from room if provided, otherwise use defaults
+  const mapType = room?.map?.type || 'D';
+  const playerCount = room?.map?.playerCount || '8';
+  const filename = room?.map?.filename || 'PLAY01.SCN';
+  const displayName = room?.map?.displayName || 'Armageddon\n                                 (8 Player Desert Map )';
+
+  return [
+    ...Buffer.from(mapType, 'ascii'), // map type J=0x4a or D=0x44
+    ...Buffer.from(playerCount, 'ascii'), // '8'=0x38 players count
+    ...Buffer.from(filename + '\0', 'ascii'), // null-terminated
+    ...Buffer.from(displayName + '\0', 'ascii'), // display name
   ];
+}
+
+function sendRoomData(socket, room, currentSlotIndex = null) {
+  // Embed the map data directly into the initial dataset instead of a placeholder
+  const bytesMap = buildMapBytes(room);
 
   // Initialize all player slots except the current client
   const bytesInit = [];
@@ -411,7 +424,12 @@ function sendRoomData(socket, room, currentSlotIndex = null) {
     const playerRace = slot.race === 'humans' ? PLAYER_RACE.humans : PLAYER_RACE.aliens;
     const playerType = PLAYER_TYPE[slot.type];
     const playerTeam = TEAM_INDEX[`t${slot.team}`];
-    const playerReady = slot.ready ? PLAYER_READY.ready : PLAYER_READY.not_ready;
+    // Gamer/AI slots (including slot 0) must NEVER report the bare ready (0x00) state; they are
+    // either not_ready (0x01) or ready_for_battle (0x02). The 0x00 state is reserved for empty
+    // ('none') slots. This also lets the snapshot convey battle-readiness to late joiners.
+    const playerReady = isOccupiedSlot(slot)
+      ? (slot.ready ? PLAYER_READY.ready_for_battle : PLAYER_READY.not_ready)
+      : PLAYER_READY.ready;
     
     const playerBytes = [
       ...ROOM_COMMANDS.player_name, ...playerIndex, ...NULL_SEPARATOR, ...Buffer.from(slot.name + '\0', 'ascii'),
@@ -466,18 +484,7 @@ function sendRoomData(socket, room, currentSlotIndex = null) {
 }
 
 function sendMapPacket(socket, room) {
-  // Use map data from room if provided, otherwise use defaults
-  const mapType = room?.map?.type || 'D';
-  const playerCount = room?.map?.playerCount || '8';
-  const filename = room?.map?.filename || 'PLAY01.SCN';
-  const displayName = room?.map?.displayName || 'Armageddon\n                                 (8 Player Desert Map )';
-
-  const room_map = Buffer.from([
-    ...Buffer.from(mapType, 'ascii'), // map type J=0x4a or D=0x44
-    ...Buffer.from(playerCount, 'ascii'), // '8'=0x38 players count
-    ...Buffer.from(filename + '\0', 'ascii'), // null-terminated
-    ...Buffer.from(displayName + '\0', 'ascii'), // display name
-  ]);
+  const room_map = Buffer.from(buildMapBytes(room));
 
   sendCommandPacket(socket, ROOM_COMMANDS.room_map, Buffer.from(room_map));
   log('Sent map packet (length=' + room_map.length + ')');
@@ -1096,9 +1103,8 @@ const server = net.createServer((socket) => {
   sendRoomGreeting(socket, slotIndex);
         
   sendRoomData(socket, room, slotIndex);
-  sendMapPacketDelayed(socket, room);
 
-  // Mark that this client has received the map so lobby pings can start
+  // Mark that this client has received the map (now embedded in room data) so lobby pings can start
   const c = clients.get(id);
   if (c) c.mapSent = true;
 
