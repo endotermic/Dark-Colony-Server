@@ -119,6 +119,77 @@ function getFreeSlotInRoom(room) {
   return freeSlots[0];
 }
 
+function logColorMap(room, note = '') {
+  const map = room.playerSlots
+    .map(s => `slot${s.index}=${s.color}(${s.type})`)
+    .join(' ');
+  log(`COLORMAP Room ${room.id}${note ? ' [' + note + ']' : ''}: ${map}`);
+}
+
+function isOccupiedSlot(slot) {
+  return slot.type === 'gamer' || slot.type === 'ai_easy' || slot.type === 'ai_hard';
+}
+
+// Send a single 0x6b color message. Wire format is [delta][slot_index] (confirmed in the
+// binary: emit @0x0042076C, recv handler @0x0040F110). The client applies
+// color = (color + delta) mod 8, then skips colors already used by other slots.
+function sendColorDelta(socket, slotIndex, delta) {
+  const d = (((delta % 8) + 8) % 8);
+  if (d === 0) return;
+  sendCommandPacket(socket, ROOM_COMMANDS.player_color, Buffer.from([d, slotIndex & 0xff]));
+}
+
+// Apply a color delta to the canonical (server-tracked) color of a slot, replicating the
+// client's algorithm: (color + delta) mod 8 then skip colors used by other occupied slots.
+function applyCanonicalColorDelta(room, slotIndex, delta) {
+  const slot = room.playerSlots[slotIndex];
+  const used = new Set(
+    room.playerSlots.filter(s => s.index !== slotIndex && isOccupiedSlot(s)).map(s => s.color)
+  );
+  let c = (((slot.color + delta) % 8) + 8) % 8;
+  let guard = 0;
+  while (used.has(c) && guard++ < 8) c = (((c + delta) % 8) + 8) % 8;
+  slot.color = c;
+  return c;
+}
+
+// The client is never told other players' absolute colors, so a freshly-joined client shows
+// its OWN slot in its auto-picked color (empirically 1, the lowest free color) and every
+// other player in color 0. We drive each client to the canonical per-slot colors (slot.color)
+// by emitting 0x6b deltas, processing the client's OWN slot first so its picked color is
+// freed before we assign that value to another slot (avoids the client's collision-skip).
+function syncColorsForClient(room, client) {
+  if (!client || !client.socket || client.socket.destroyed) return;
+  if (!room.colorViews) room.colorViews = new Map();
+  const own = client.playerSlotIndex;
+  let view = room.colorViews.get(own);
+  if (!view) {
+    view = new Array(8).fill(0);
+    view[own] = 1; // client auto-picks color 1 for its own slot on join
+    room.colorViews.set(own, view);
+  }
+  const order = [own, ...room.playerSlots.map(s => s.index).filter(i => i !== own)];
+  for (const s of order) {
+    const slot = room.playerSlots[s];
+    if (!isOccupiedSlot(slot)) continue;
+    const target = slot.color;
+    const delta = (((target - view[s]) % 8) + 8) % 8;
+    if (delta !== 0) {
+      sendColorDelta(client.socket, s, delta);
+      log(`syncColor -> client ${client.id} (own slot ${own}): slot ${s} ${view[s]}->${target} (delta ${delta})`);
+    }
+    view[s] = target;
+  }
+}
+
+function syncColorsAll(room) {
+  for (const clientId of room.clients) {
+    const c = clients.get(clientId);
+    if (c) syncColorsForClient(room, c);
+  }
+  logColorMap(room, 'after syncColorsAll');
+}
+
 function getAvailableColor(room) {
   // Get all colors currently in use by active players (gamer or ai types)
   const usedColors = new Set();
@@ -177,10 +248,18 @@ function addClientToRoom(clientId, room) {
     slot.clientId = clientId;
     slot.type = 'gamer';
     slot.ready = false;
-    slot.color = availableColor;
+    // Canonical color = slot index: guaranteed distinct across slots and stable. Clients are
+    // driven to this via syncColors (they never receive absolute colors over the wire).
+    slot.color = slot.index;
   }
-  log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index} with color ${availableColor}. Room has ${room.clients.size} connected clients`);
-  
+  // A freshly joined slot defaults to color 0 on every OTHER client's screen; record that in
+  // their color-view model so the next sync emits the correct corrective delta.
+  if (room.colorViews) {
+    for (const view of room.colorViews.values()) view[slot.index] = 0;
+  }
+  log(`Client ${clientId} added to Room ${room.id} at slot ${slot.index} with canonical color ${slot.index} (availableColor was ${availableColor}). Room has ${room.clients.size} connected clients`);
+  logColorMap(room, 'after join');
+
   return { slotIndex: slot.index, hadExistingClients };
 }
 
@@ -209,8 +288,11 @@ function removeClientFromRoom(clientId) {
         slot.clientId = null;
         slot.type = 'none';
         slot.ready = true;
+        slot.color = slot.index; // restore canonical default
         log(`Client ${clientId} removed from Room ${room.id} slot ${client.playerSlotIndex}. Room has ${room.clients.size} connected clients`);
       }
+      // Drop this client's color-view model.
+      if (room.colorViews) room.colorViews.delete(client.playerSlotIndex);
     }
     
     // Broadcast room update to remaining clients when a client leaves
@@ -738,22 +820,41 @@ function parseClientBinary(client, buf) {
             }
           }
         } else if (name === 'player_color') {
-          log(`Command from Client ${id}: ${name} (broadcasting all ${remaining.length} data bytes)`);
-          
-          // Update the room's player slot color
+          // 0x6b is a *relative* color delta, NOT an absolute color (recv handler @0x0040F110:
+          // color = (color + delta) mod 8, then skip colors used by other slots). Wire is
+          // [delta][slot]. The sender has ALREADY applied this delta to its own view, so we:
+          //   1. apply the same delta to our canonical color (matching the client's algorithm),
+          //   2. propagate the change to the OTHER clients via a corrective delta computed from
+          //      each client's modeled view (so everyone converges on the canonical color).
           if (remaining.length >= 2) {
-            const colorValue = remaining[0];
+            const delta = remaining[0];
             const playerOrdinal = remaining[1];
             const room = rooms.get(client.roomId);
             if (room) {
               const slot = room.playerSlots[playerOrdinal];
-              if (slot) {
-                slot.color = colorValue;
-                log(`Updated slot ${playerOrdinal} color to ${slot.color} in Room ${room.id}`);
+              if (slot && isOccupiedSlot(slot)) {
+                const before = slot.color;
+                const after = applyCanonicalColorDelta(room, playerOrdinal, delta);
+                log(`player_color: client ${id} slot ${playerOrdinal} ${before}->${after} (delta ${delta})`);
+
+                if (!room.colorViews) room.colorViews = new Map();
+                // The client does NOT apply its own color click locally — it waits for the
+                // server to echo the change. So drive EVERY client (including the sender) to
+                // the new canonical color via a corrective delta from each one's modeled view.
+                for (const cid of room.clients) {
+                  const oc = clients.get(cid);
+                  if (!oc || !oc.socket || oc.socket.destroyed) continue;
+                  const view = room.colorViews.get(oc.playerSlotIndex);
+                  if (view) {
+                    const d2 = (((after - view[playerOrdinal]) % 8) + 8) % 8;
+                    if (d2 !== 0) sendColorDelta(oc.socket, playerOrdinal, d2);
+                    view[playerOrdinal] = after;
+                  } else {
+                    sendCommandPacket(oc.socket, ROOM_COMMANDS.player_color, Buffer.from(remaining));
+                  }
+                }
+                logColorMap(room, `after manual color change slot ${playerOrdinal}`);
               }
-              
-              // Broadcast to all clients in the room
-              broadcastCommandPacket(room, ROOM_COMMANDS.player_color, remaining);
             }
           }
         } else if (name === 'player_team') {
@@ -1010,6 +1111,14 @@ const server = net.createServer((socket) => {
     broadcastRoomUpdate(room, id);
     log(`Broadcasting room update to existing clients in Room ${room.id} after new client received map`);
   }
+
+  // Colors are never carried in the room snapshot, so every client renders its own guess
+  // (self = auto-picked color 1, everyone else = 0) and they diverge. Once the lobby has
+  // settled, push 0x6b deltas to drive every client to the canonical per-slot colors.
+  setTimeout(() => {
+    const r = rooms.get(room.id);
+    if (r) syncColorsAll(r);
+  }, 1200);
 
   socket.on('data', (chunk) => {
     const client = clients.get(id); if (!client) return;
