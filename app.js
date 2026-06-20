@@ -760,9 +760,45 @@ function parseClientBinary(client, buf) {
           // Broadcast to all clients in the room
           const room = rooms.get(client.roomId);
           if (room) {
-            const clean = Buffer.from(chatMsg.replace(/\r|\n/g,'').slice(0,120),'ascii');
+            const cleanMessage = chatMsg.replace(/\r|\n/g,'');
+            const clean = Buffer.from(cleanMessage.slice(0,120),'ascii');
             const data = Buffer.concat([clean, Buffer.from([0x00])]);
             broadcastCommandPacket(room, ROOM_COMMANDS.player_chat, data);
+
+            // If the user types "ready" in the lobby chat, broadcast their ready state
+            if (/\bready\b/i.test(cleanMessage)) {
+              const slot = room.playerSlots[client.playerSlotIndex];
+              if (slot) {
+                log(`Client ${id} typed "ready" in chat -> proceeding to mark them as ready.`);
+                slot.ready = true;
+                log(`Updated slot ${client.playerSlotIndex} ready state to true in Room ${room.id}`);
+                
+                const playerIndex = PLAYER_INDEX[`p${client.playerSlotIndex}`];
+                broadcastCommandPacket(room, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...playerIndex]));
+                
+                let allClientsReady = true;
+                for (const clientId of room.clients) {
+                  const c = clients.get(clientId);
+                  if (c && c.playerSlotIndex !== undefined) {
+                    const s = room.playerSlots[c.playerSlotIndex];
+                    if (s && !s.ready && s.type !== 'none') {
+                      allClientsReady = false;
+                      break;
+                    }
+                  }
+                }
+                
+                if (allClientsReady && room.clients.size > 0) {
+                  const aiSlot = room.playerSlots[0];
+                  if (aiSlot && !aiSlot.ready) {
+                    aiSlot.ready = true;
+                    log(`All clients ready in Room ${room.id}. Marking AI slot 0 as ready.`);
+                    const aiPlayerIndex = PLAYER_INDEX.p0;
+                    broadcastCommandPacket(room, ROOM_COMMANDS.player_ready, Buffer.from([...PLAYER_READY.ready_for_battle, ...aiPlayerIndex]));
+                  }
+                }
+              }
+            }
           }
         } else if (name === 'player_ready') {
           // Echo back the player_ready command with the client's actual player slot index
