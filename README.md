@@ -6,8 +6,6 @@ Come and play with friends!
 HOWTO connect to the **online server**:  
 Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
 
-Only the classic `dc16.exe` plays over the network.
-
 ---
 
 ## What the server does
@@ -57,10 +55,11 @@ All trademarks and copyrights are the property of their respective owners.
 - The server is an independent implementation of the game's network protocol, written from scratch;
   it contains no code taken from the game.
 - The protocol was documented by analysing the game's network behaviour: captured network traffic
-  (Wireshark) and, for version 2.0, a study of the game executable's network code. That analysis is
-  published in the sister project [Dark-Colony](https://github.com/endotermic/Dark-Colony):
-  `docs/DC16_NETWORK_PROTOCOL.md` (wire protocol) and `docs/RELAY_SERVER_PLAN.md` (design of this
-  server, with a log of every finding from live tests).
+  (Wireshark) and, for version 2.0, a study of the game executable's network code. The results are in
+  this repository: [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md) (wire protocol) and
+  [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (design of this server, with a log of every
+  finding from the live tests). The game files and the disassembly they cite are kept in the sister
+  project [Dark-Colony](https://github.com/endotermic/Dark-Colony).
 - Only interoperability information (message formats, timing, lobby rules) was used, for the purpose
   of letting the original game talk to a new server.
 
