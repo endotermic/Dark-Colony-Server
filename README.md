@@ -1,18 +1,40 @@
-# Dark Colony Server
-This is a standalone multiplayer server for the classic RTS game *Dark Colony*, which was released in 1997.
-A reverse-engineered, standalone server designed for interoperability with the original *Dark Colony* game.
+# Dark Colony Server 2.0
+A standalone multiplayer server for the classic RTS game *Dark Colony* (1997), designed for
+interoperability with the original, unmodified game.
 
 Come and play with friends!  
-HOWTO connect to **online server**:  
+HOWTO connect to the **online server**:  
 Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
+
+Only the classic `dc16.exe` plays over the network.
+
+---
+
+## What the server does
+
+- It replaces the in-game host. Slot 0 is a fake human player, **Mercenary**; real players get random
+  free slots, so their start positions differ from game to game.
+- The map **Armageddon** (8-player desert) is preselected.
+- Everybody presses **READY**; when every real player is ready the game starts after a 3-second
+  countdown. Each joiner gets one private greeting line from Mercenary with the server version.
+- Strict lockstep: one frame per server step, `[UNTIL][commands...]`, byte-identical for all clients,
+  so every game runs exactly the same commands in exactly the same order.
+- Game speed is fixed at 200 % (33 ms per tick); clients cannot change it.
+- Cheats and the `0x08` checksum command are never forwarded.
+- Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
+  removed and announced to everybody else.
+- `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against idle bases.
+
+Version 2.0 (September 2026) is a rewrite; version 1.x lives in the git history.
 
 ---
 
 ## Features / Goals
-- Public internet server for players worldwide  
-- Unlimited rooms (each up to 8 players)  
-- (TODO) Tournaments (fans wote online for players)
-- (TODO) Admin commands (switch rooms, maps, options)
+- Public internet server for players worldwide
+- One room of up to 8 players (fake players fill the rest on request)
+- (TODO) Several rooms
+- (TODO) Tournaments (fans vote online for players)
+- (TODO) Admin commands (switch maps, options)
 - (TODO) Replays
 - (TODO) Leaderboard
 - (TODO) Missions with incremental complexity (aka "open world")
@@ -32,23 +54,52 @@ All trademarks and copyrights are the property of their respective owners.
 ---
 
 ## Reverse Engineering Methodology
-- To ensure full legal compliance and avoid copyright infringement, we employed a "Clean Room Design" methodology.
-- Network Traffic Analysis: The game's network protocol was recreated from scratch based exclusively on the analysis of captured network packets using the Wireshark software.
-- Functional Ideas, Not Code: We analyzed the functional behavior of the protocol, not the original game's source code. The game's executable files were not decompiled or disassembled.
+- The server is an independent implementation of the game's network protocol, written from scratch;
+  it contains no code taken from the game.
+- The protocol was documented by analysing the game's network behaviour: captured network traffic
+  (Wireshark) and, for version 2.0, a study of the game executable's network code. That analysis is
+  published in the sister project [Dark-Colony](https://github.com/endotermic/Dark-Colony):
+  `docs/DC16_NETWORK_PROTOCOL.md` (wire protocol) and `docs/RELAY_SERVER_PLAN.md` (design of this
+  server, with a log of every finding from live tests).
+- Only interoperability information (message formats, timing, lobby rules) was used, for the purpose
+  of letting the original game talk to a new server.
 
 ---
 
-## For developers: How to run locally for debugging
-1. Install [Node.js](https://nodejs.org)  
+## For developers
+
+### Run locally
+1. Install [Node.js](https://nodejs.org) 20 or newer (no dependencies to install)
 2. Download or clone this repo
-3. Open a terminal in the project folder  
+3. Open a terminal in the project folder
 4. Run:
    ```bash
-   node ./server.js
+   node src/index.js                                     # listens on 8888
+   MIN_PLAYERS=1 LOG_LEVEL=debug node src/index.js       # solo test, full map view
+   FAKE_PLAYERS=7 MIN_PLAYERS=1 node src/index.js        # solo game against seven idle fakes
    ```
-5. Keep the terminal open while it runs  
-6. Launch *Dark Colony* → **MULTI PLAYER WAR** → **CONNECT TO SERVER**  
+5. Keep the terminal open while it runs
+6. Launch *Dark Colony* → **MULTI PLAYER WAR** → **CONNECT TO SERVER**
 7. Enter `localhost` as the IP address
+
+### Tests
+```bash
+node --test test/                                         # unit and end-to-end tests with scripted clients
+node tools/fakeclient.js --count 3 --duration 10000       # scripted clients against a running server
+node tools/fakeclient.js --count 3 --behave noEcho        # the last one misbehaves
+```
+
+### Configuration
+Environment variables, see `src/config.js` for the full list and defaults: `PORT`, `MAP_FILE`,
+`MAP_TITLE`, `MAP_TERRAIN`, `TICK_MS`, `MIN_PLAYERS`, `START_COUNTDOWN_S`, `FAKE_PLAYERS`, `FAKE_NAMES`,
+`ALLOW_PAUSE`, `LAG_DROP_MS`, `STRICT_SEQ`, `DEBUG_MODE`, `LOG_LEVEL`, ...
+
+### Deploy on Fly.io
+```bash
+fly deploy
+fly logs
+```
+Raw TCP on port 8888 needs a dedicated IPv4 (`fly ips list`, `fly ips allocate-v4`).
 
 ---
 

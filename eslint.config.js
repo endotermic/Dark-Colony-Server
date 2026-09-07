@@ -1,7 +1,9 @@
-module.exports = [
-    {
-        rules: {
-            // Add rules here.
-        }
-    }
+export default [
+  {
+    files: ['**/*.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
+    rules: {
+      // Add rules here.
+    },
+  },
 ];

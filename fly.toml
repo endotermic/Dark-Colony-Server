@@ -1,4 +1,4 @@
-# Fly.io app configuration
+# Fly.io app configuration (unchanged app name and region; port 8889 added: dc16.exe retries it when 8888 fails)
 app = "dark-colony-server"
 primary_region = "iad"
 
@@ -19,3 +19,13 @@ primary_region = "iad"
 
   [[services.ports]]
     port = 8888
+  [[services.ports]]
+    port = 8889
+
+# Optional, only once the basics work. Never a check on 8888 (a probe would take a lobby slot).
+# [checks.health]
+#   type = "tcp"
+#   port = 8080                  # set HEALTH_PORT=8080 in [env]
+#   interval = "15s"
+#   timeout = "5s"
+#   grace_period = "10s"
