@@ -833,8 +833,9 @@ above, so that the plan can be followed from scratch without repeating the disco
   a study of the executable's network code, not only on captured traffic.
 - This plan and `DC16_NETWORK_PROTOCOL.md` moved into this repository's `docs/` the same day, and the
   live-test logs into `logs/` (gitignored). The Dark-Colony repository keeps the game files, the
-  disassembly and the Ghidra project; its `dc-relay/` folder is the pre-move copy of the code and is
-  to be deleted once this repository is pushed.
+  disassembly and the Ghidra project; its `dc-relay/` folder (the pre-move copy of the code) was
+  deleted after the push on 7 Sep 2026. From then on all implementation work happens in this
+  repository.
 
 **7 Sep 2026, pushed and deployed**
 
