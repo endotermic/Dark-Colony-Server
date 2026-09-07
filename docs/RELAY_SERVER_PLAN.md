@@ -691,10 +691,10 @@ Players connect with the app hostname (`<app>.fly.dev`) exactly as with the work
 Status (end of 6 Sep 2026): steps 1–7 are implemented (now this repository) and covered by 42 passing tests
 (`node --test test/`, including two end-to-end tests over real TCP with scripted clients). The LAN
 tests of §13.4 are done with real `dc16.exe` clients: one player to victory, then two players on two
-PCs with perfect sync for a full battle (§16). Step 8's files (`Dockerfile`, `fly.toml`) are in place
-but nothing has been deployed yet. Of step 9, `FILL_EMPTY_WITH_AI`, `FAKE_PLAYERS` and the debug
-full-map view exist; the shuffle replication does not. Still open: deployment, a test with three or
-more real players, and §13.5 (a capture of a genuine host) which is now optional.
+PCs with perfect sync for a full battle (§16). Step 8 is done: version 2.0 was deployed to Fly.io on
+7 Sep 2026 (§16). Of step 9, `FILL_EMPTY_WITH_AI`, `FAKE_PLAYERS` and the debug full-map view exist;
+the shuffle replication does not. Still open: a test with three or more real players over the
+internet, and §13.5 (a capture of a genuine host) which is now optional.
 
 ---
 
@@ -835,3 +835,15 @@ above, so that the plan can be followed from scratch without repeating the disco
   live-test logs into `logs/` (gitignored). The Dark-Colony repository keeps the game files, the
   disassembly and the Ghidra project; its `dc-relay/` folder is the pre-move copy of the code and is
   to be deleted once this repository is pushed.
+
+**7 Sep 2026, pushed and deployed**
+
+- `main` pushed to `github.com/endotermic/Dark-Colony-Server` (commits `dae1320`, `45ac826`).
+- `fly deploy` from this repository replaced the 1.x machine `d8927e5c5ee3d8` in `iad` (rolling update,
+  image about 53 MB, Node 22); the app keeps its dedicated IPv4 `213.188.222.154` (allocated Oct 2025)
+  and hostname `dark-colony-server.fly.dev`. Production runs the defaults: `MIN_PLAYERS=2`,
+  `FAKE_PLAYERS=1`, `LOG_LEVEL=info`, strict sequence check, standard timeouts.
+- Verified from outside: the server logged `listening` with version 2.0.0, and a scripted client
+  (`node tools/fakeclient.js --host dark-colony-server.fly.dev --ready-after -1`) joined slot 3 and
+  received `"Mercenary: Welcome, Player3. Server 2.0, map Armageddon at 200%. Press READY to start."`.
+  Real-game test over the internet still to be done by players.
