@@ -1,12 +1,13 @@
-// The single game room: slots, clients, state machine LOBBY -> STARTING -> RUNNING -> reset.
-// Routes frames to Lobby/Game, owns broadcasting and eviction (plan §5, §9.4).
+// One game room with its own map: slots, clients, state machine LOBBY -> STARTING -> RUNNING -> reset.
+// Routes frames to Lobby/Game, owns broadcasting and eviction (plan §5, §9.4). Several rooms live
+// in a RoomPool (rooms.js); connections arrive through the Hall (hall.js) or, with HALL=false,
+// directly through accept().
 
 import { randomInt } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { checkSeq } from './frame.js';
 import { splitCommands, build, decode, typeName, T } from './commands.js';
 import { STATE, SLOT_TYPE, SLOTS } from './constants.js';
-import { Client } from './client.js';
+import { Client, readCommands } from './client.js';
 import { Lobby } from './lobby.js';
 import { Game } from './game.js';
 import { Watchdog } from './watchdog.js';
@@ -22,15 +23,20 @@ export class Room {
    * @param log      logger (log.js)
    * @param now      monotonic clock in ms (injectable for tests)
    * @param random   random integer in [0, n) (injectable for tests)
+   * @param opts     { id: 1-based room number, map: entry of config.ROOM_LIST }
    */
-  constructor(config, log, now = () => performance.now(), random = (n) => randomInt(n)) {
+  constructor(config, log, now = () => performance.now(), random = (n) => randomInt(n), opts = {}) {
     this.config = config;
     this.log = log;
     this.now = now;
     this.random = random;
+    this.id = opts.id ?? 1;
+    this.map = opts.map ?? config.ROOM_LIST[0];
+    // occupied slots (fakes, AI and real players) may not exceed the map's player count (F22)
+    this.capacity = this.map.players;
+    this.minPlayers = Math.max(1, Math.min(config.MIN_PLAYERS, this.capacity - config.FAKE_PLAYERS));
     this.state = STATE.LOBBY;
     this.clients = new Set();
-    this.nextClientId = 1;
     this.startingAt = 0;
     this.gamesPlayed = 0;
     this.slots = new Array(SLOTS);
@@ -44,13 +50,15 @@ export class Room {
 
   emptySlot(s) {
     const cfg = this.config;
+    // AI fill needs all eight slots to count as occupied, which only an 8-player map allows (F22)
+    const ai = cfg.FILL_EMPTY_WITH_AI && this.capacity === SLOTS;
     return {
       slot: s,
       name: '',
       race: 0,
       colour: s,
       team: s,
-      type: cfg.FILL_EMPTY_WITH_AI ? cfg.FILL_AI_TYPE : SLOT_TYPE.EMPTY,
+      type: ai ? cfg.FILL_AI_TYPE : SLOT_TYPE.EMPTY,
       status: 0,
       client: null,
     };
@@ -95,6 +103,38 @@ export class Room {
     return this.slots.filter((sl) => !sl.fake && !sl.client);
   }
 
+  /** Seats for real players on this map. */
+  seats() {
+    return this.capacity - this.fakeSlots().length;
+  }
+
+  isFull() {
+    return this.clients.size >= this.seats();
+  }
+
+  /**
+   * Can a client whose slot number is `s` join now? Needs LOBBY, a free seat and that slot not held
+   * by a real player; a fake sitting in `s` is moved to a free slot when the client arrives (§17.5).
+   */
+  canJoin(s) {
+    if (this.state !== STATE.LOBBY || this.isFull()) return false;
+    const slot = this.slots[s];
+    if (!slot || s <= 0 || slot.client) return false;
+    return !slot.fake || this.freeSlots().length > 0;
+  }
+
+  /** Move the fake in slot `s` to a random free slot (fakes have no client, so nothing else notices). */
+  relocateFake(s) {
+    const free = this.freeSlots();
+    if (free.length === 0) return false;
+    const t = free[this.random(free.length)].slot;
+    const f = this.slots[s];
+    this.slots[t] = { ...f, slot: t, colour: t, team: t };
+    this.slots[s] = this.emptySlot(s);
+    this.log.debug('fake moved', { name: f.name, from: s, to: t });
+    return true;
+  }
+
   /** Connected, not evicted clients. */
   players() {
     const out = [];
@@ -102,52 +142,74 @@ export class Room {
     return out;
   }
 
+  /**
+   * What the hall shows about this room. `slots` is the number shown as the room's size: the map's
+   * player slots without Mercenary (fakes are idle bases, not participants); `seats` is what is
+   * really left for real players.
+   */
+  summary() {
+    return { id: this.id, map: this.map, state: this.state, players: this.clients.size, seats: this.seats(), slots: this.capacity - 1 };
+  }
+
   // ---- connections --------------------------------------------------------------------------
 
+  /** Direct join (HALL=false or tests): a new socket gets a random free slot in this room. */
   accept(socket) {
     const now = this.now();
-    const client = new Client(socket, this.nextClientId++, now);
+    const client = new Client(socket, undefined, now);
+    client.owner = this;
+    client.wire();
     if (this.log.level === 'debug') client.onSend = (c, payloads) => this.traceTx(c, payloads);
-    socket.on('error', (err) => this.evict(client, `socket error: ${err.code || err.message}`));
-    try {
-      socket.setNoDelay(true);
-      socket.setKeepAlive(true, 15000);
-    } catch {
-      // fake sockets in tests
-    }
     if (this.state !== STATE.LOBBY) return this.reject(client, 'a battle is in progress, try again later');
     const free = this.freeSlots();
-    if (free.length === 0) return this.reject(client, 'the lobby is full');
-
+    if (free.length === 0 || this.isFull()) return this.reject(client, 'the lobby is full');
     // random free slot in 1..7: this is what randomises the start positions (plan §7)
-    const slot = free[this.random(free.length)];
+    return this.adopt(client, free[this.random(free.length)].slot, true);
+  }
+
+  /**
+   * Seat `client` in slot `s` (its slot number never changes, F30) and run the join sequence.
+   * `handshake` = send 'd' first (a fresh connection); false for a client coming from the hall.
+   */
+  adopt(client, s, handshake) {
+    if (this.slots[s].fake && !this.relocateFake(s)) throw new Error(`slot ${s} is held by a fake and no slot is free`);
+    const slot = this.slots[s];
     slot.client = client;
     slot.type = SLOT_TYPE.HUMAN;
-    slot.status = 1;
-    slot.name = `Player${slot.slot}`;
+    slot.name = client.name || `Player${s}`;
     slot.race = 0;
-    slot.colour = slot.slot;
-    slot.team = slot.slot;
-    client.slot = slot.slot;
+    slot.colour = this.freeColour(s);
+    slot.team = s;
+    // Present, not ready. A client from the hall pressed READY to get here and its READY button stays
+    // pressed (no lobby message can release it, F36), so its first click in the room sends status 1,
+    // a no-op, and the second one readies it. The maintainer prefers that to an automatic start.
+    slot.status = 1;
+    client.slot = s;
+    client.name = slot.name;
+    client.owner = this;
+    if (this.log.level === 'debug') client.onSend = (c, payloads) => this.traceTx(c, payloads);
     this.clients.add(client);
-    socket.on('data', (chunk) => this.onData(client, chunk));
-    socket.on('close', () => this.evict(client, 'connection closed'));
     this.log.info('client joined', {
       id: client.id,
-      slot: slot.slot,
+      slot: s,
       address: client.address,
       players: this.clients.size,
       fakeSlots: this.fakeSlots().map((f) => f.slot),
     });
-    this.lobby.onJoin(client);
+    this.lobby.onJoin(client, handshake);
+  }
+
+  /** Colour for a newcomer in slot `s`: its slot number unless an occupied slot already shows it (F4). */
+  freeColour(s) {
+    const used = new Set(this.slots.filter((q) => q.slot !== s && (q.fake || q.client)).map((q) => q.colour));
+    if (!used.has(s)) return s;
+    for (let c = 0; c < SLOTS; c++) if (!used.has(c)) return c;
+    return s;
   }
 
   reject(client, text) {
     this.log.info('connection rejected', { address: client.address, reason: text, state: this.state });
-    client.sendBatch([
-      build.version(this.config.PROTOCOL_VERSION, SLOTS - 1),
-      build.lobbyChat(`${this.config.MERCENARY_NAME}: ${text}`),
-    ]);
+    client.sendBatch([build.version(this.config.PROTOCOL_VERSION, SLOTS - 1), build.lobbyChat(text)]);
     client.gone = true;
     try {
       client.socket.end();
@@ -156,35 +218,27 @@ export class Room {
     }
   }
 
+  onSocketClose(client) {
+    this.evict(client, 'connection closed');
+  }
+
+  onSocketError(client, err) {
+    this.evict(client, `socket error: ${err.code || err.message}`);
+  }
+
   onData(client, chunk) {
     if (client.gone) return;
     const now = this.now();
     client.lastSeen = now;
-    let frames;
-    try {
-      frames = client.decoder.feed(chunk);
-    } catch (err) {
-      return this.evict(client, `bad frame: ${err.message}`);
-    }
-    for (const frame of frames) {
+    const { batches, resyncs, error } = readCommands(client, chunk, this.config.STRICT_SEQ);
+    for (const r of resyncs) this.log.warn('sequence resync', { id: client.id, ...r });
+    for (const b of batches) {
       if (client.gone) return;
-      const verdict = checkSeq(client.seqIn, frame.seq);
-      if (verdict === 'duplicate') continue;
-      if (verdict === 'mismatch') {
-        if (this.config.STRICT_SEQ) return this.evict(client, `sequence ${frame.seq}, expected ${client.seqIn}`);
-        this.log.warn('sequence resync', { id: client.id, got: frame.seq, expected: client.seqIn });
-      }
-      client.seqIn = (frame.seq + 1) & 15;
-      let cmds;
-      try {
-        cmds = splitCommands(frame.payload);
-      } catch (err) {
-        return this.evict(client, `bad command: ${err.message}`);
-      }
       if (!client.firstMessageAt) client.firstMessageAt = now;
-      if (this.log.level === 'debug') this.trace(client, frame.seq, cmds);
-      this.dispatch(client, cmds, now);
+      if (this.log.level === 'debug') this.trace(client, b.seq, b.cmds);
+      this.dispatch(client, b.cmds, now);
     }
+    if (error) this.evict(client, error);
   }
 
   /** Debug trace of frames sent to a client outside the battle (the battle stream is uniform anyway). */
@@ -237,10 +291,19 @@ export class Room {
     for (const c of this.clients) if (c !== except && !c.gone) c.send(payload);
   }
 
-  /** Lobby chat line from Mercenary. Ignored outside the lobby (the game discards letters). */
+  /** A line from the relay itself in every player's chat window; no name in front of it (maintainer, 7 Sep 2026). Ignored outside the lobby. */
   say(text) {
     if (this.state !== STATE.LOBBY) return;
-    this.broadcast(build.lobbyChat(`${this.config.MERCENARY_NAME}: ${text}`));
+    this.chat(text);
+  }
+
+  /** Append a line to every player's chat window and repaint the windows (chat.js, §17.8). */
+  chat(text, except = null) {
+    for (const c of this.clients) {
+      if (c === except || c.gone) continue;
+      c.chat.push(text);
+      c.sendBatch(this.lobby.pack(c.chat.payloads()));
+    }
   }
 
   // ---- violations & eviction ----------------------------------------------------------------

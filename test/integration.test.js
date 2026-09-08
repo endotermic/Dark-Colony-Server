@@ -20,6 +20,7 @@ async function waitFor(pred, timeoutMs, what) {
 function fastConfig(overrides = {}) {
   return loadConfig({}, {
     PORT: 0,
+    HALL: false, // straight into room 1, as in 2.0; the hall has its own test below
     START_COUNTDOWN_S: 0,
     MIN_PLAYERS: 2,
     ECHO_TIMEOUT_MS: 400,
@@ -29,6 +30,32 @@ function fastConfig(overrides = {}) {
     ...overrides,
   });
 }
+
+test('through the hall: two clients pick room 2 with /2 and READY, then play there', async () => {
+  const srv = startServer(fastConfig({ HALL: true, MARQUEE_MS: 100 }), silentLogger);
+  const { port } = await srv.listening;
+  const clients = [0, 1].map((i) => new FakeClient({ port, name: `Bot${i}`, room: 2, readyAfterMs: 150, loadMs: 50, tickMs: 33 }));
+  try {
+    await Promise.all(clients.map((c) => c.connect()));
+    await waitFor(() => clients.every((c) => c.slot >= 1), 2000, 'handshakes');
+    assert.ok(clients.every((c) => c.hallTitle), 'both saw the hall title');
+    await waitFor(() => clients.every((c) => c.inRoom), 3000, 'both moved into a room');
+    assert.ok(clients.every((c) => c.scenarioTitle.startsWith(srv.rooms[1].map.name)), 'room 2 scenario received');
+    assert.equal(srv.hall.clients.size, 0);
+    assert.equal(srv.rooms[1].clients.size, 2);
+    assert.equal(srv.rooms[0].clients.size, 0);
+    await waitFor(() => srv.rooms[1].state === 'RUNNING', 4000, 'room 2 RUNNING');
+    await sleep(400);
+    const lists = clients.map((c) => c.syncPayloads.map((b) => b.toString('hex')));
+    const n = Math.min(...lists.map((l) => l.length));
+    assert.ok(n >= 5, `expected sync frames, got ${n}`);
+    for (let i = 0; i < n; i++) assert.equal(lists[1][i], lists[0][i], `frame ${i} differs`);
+    assert.ok(clients.every((c) => c.marqueeSteps >= 2), 'the room rows scrolled while waiting');
+  } finally {
+    for (const c of clients) c.close();
+    await srv.close();
+  }
+});
 
 test('three scripted clients play in lockstep with identical sync frames; one that stops echoing is evicted', async () => {
   const srv = startServer(fastConfig(), silentLogger);

@@ -2,8 +2,9 @@
 // countdown, and the STARTING phase (waiting for MREADY).
 
 import { T, build, decode, sanitizeName, sanitizeText, typeName } from './commands.js';
-import { STATE, SLOT_TYPE, VAR_DEFAULTS } from './constants.js';
-import { VERSION_SHORT } from './version.js';
+import { STATE, SLOT_TYPE, SLOTS, VAR_DEFAULTS } from './constants.js';
+import { packPayloads } from './client.js';
+import { ChatView } from './chat.js';
 
 export class Lobby {
   constructor(room) {
@@ -21,27 +22,47 @@ export class Lobby {
 
   // ---- join ---------------------------------------------------------------------------------
 
-  onJoin(client) {
+  /**
+   * Join sequence for a client seated in its slot. `handshake` = a fresh connection that still
+   * needs the 'd'; a client coming from the hall (plan §17) already had it and only gets the dump,
+   * exactly like the game's own meta-server join path (protocol doc §6.2).
+   */
+  onJoin(client, handshake = true) {
     const r = this.room;
     const s = client.slot;
     const dump = this.dumpPayloads(s);
-    // 'd' first, then the whole dump, in one TCP write so the client sees it all at once
-    client.sendBatch([build.version(this.cfg.PROTOCOL_VERSION, s), ...dump]);
-    for (const c of r.players()) if (c !== client) c.sendBatch(dump);
-    // one private greeting for the newcomer; the others see the slot fill in by itself
-    const speed = Math.round(6600 / this.cfg.TICK_MS);
-    client.send(
-      build.lobbyChat(
-        `${this.cfg.MERCENARY_NAME}: Welcome, ${r.slots[s].name}. Server ${VERSION_SHORT}, map ${this.cfg.MAP_TITLE} at ${speed}%. Press READY to start.`,
-      ),
-    );
+    const mine = [];
+    if (!handshake) {
+      // coming from the hall: its seven room rows were occupied humans. Empty every slot except the
+      // client's own and Mercenary's first (the DISCONNECT handler resets type, status and CD flag
+      // and keeps the client's player count right; Mercenary's row stays status 1 so that the
+      // client does not leave the lobby, F3)
+      for (let q = 1; q < SLOTS; q++) if (q !== s) mine.push(build.disconnect(q));
+    }
+    // a fresh chat window with the room greeting pinned at the top (§17.8); the hall's lines are gone
+    client.chat = new ChatView(this.greeting());
+    mine.push(...dump, ...client.chat.payloads());
+    // 'd' first (its own frame), then everything else, in one TCP write so the client sees it all at once
+    client.sendBatch(handshake ? [build.version(this.cfg.PROTOCOL_VERSION, s), ...this.pack(mine)] : this.pack(mine));
+    for (const c of r.players()) if (c !== client) c.sendBatch(this.pack(dump));
     this.cancelCountdown('a player joined');
+  }
+
+  /** Several commands per frame when allowed (F34), else one command per frame as the original host. */
+  pack(payloads) {
+    return this.cfg.PACK_LOBBY_FRAMES ? packPayloads(payloads) : payloads;
+  }
+
+  /** The static header of a player's chat window in this room: the room line only (maintainer, 7 Sep 2026). */
+  greeting() {
+    const r = this.room;
+    return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`];
   }
 
   /** The host's lobby state dump for a client in slot `s` (protocol doc §6.1), without the 'd'. */
   dumpPayloads(s) {
     const r = this.room;
-    const out = [build.scenario(this.cfg.MAP_FILE, this.cfg.MAP_TITLE_WIRE)];
+    const out = [build.scenario(r.map.file, r.map.titleWire)];
     for (const q of r.slots) if (q.slot !== s) out.push(build.colourSet(q.colour, q.slot));
     for (const q of r.slots) {
       if (q.slot === s) continue;
@@ -94,6 +115,7 @@ export class Lobby {
             break;
           }
           slot.name = sanitizeName(d.name, `Player${s}`);
+          client.name = slot.name;
           r.broadcast(build.name(s, slot.name));
           break;
         }
@@ -159,8 +181,8 @@ export class Lobby {
         }
 
         case T.LOBBY_CHAT: {
-          // plain relay; chat has no commands any more
-          r.broadcast(build.lobbyChat(sanitizeText(decode(cmd).text)));
+          // plain relay into every window (the player's own "Name: text" prefix stays); chat has no commands
+          r.chat(sanitizeText(decode(cmd).text));
           break;
         }
 
@@ -170,7 +192,7 @@ export class Lobby {
             r.strike(client, 'repeated INIT_ME');
             break;
           }
-          const dump = this.dumpPayloads(s);
+          const dump = this.pack(this.dumpPayloads(s));
           for (const c of r.players()) c.sendBatch(dump);
           break;
         }
@@ -231,7 +253,7 @@ export class Lobby {
     const r = this.room;
     if (r.state !== STATE.LOBBY) return;
     const { ready, total } = this.readyCount();
-    const allReady = total >= this.cfg.MIN_PLAYERS && ready === total;
+    const allReady = total >= r.minPlayers && ready === total;
     if (!allReady) {
       this.cancelCountdown('not everyone is ready');
       return;
@@ -259,7 +281,7 @@ export class Lobby {
     if (r.state !== STATE.LOBBY || this.countdownEndsAt < 0 || now < this.countdownEndsAt) return;
     this.countdownEndsAt = -1;
     const { ready, total } = this.readyCount();
-    if (total >= this.cfg.MIN_PLAYERS && ready === total) {
+    if (total >= r.minPlayers && ready === total) {
       r.say('starting now');
       r.beginStarting(now);
     }

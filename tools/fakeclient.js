@@ -1,14 +1,19 @@
 // A scripted dc16.exe client (plan §13.2/§13.3). Library + CLI.
 //
 //   node tools/fakeclient.js --port 8888 --count 3 [--host 127.0.0.1] [--ready-after 1000]
-//        [--tick-ms 33] [--behave noEcho,noKeepalive,...] [--duration 20000]
+//        [--tick-ms 33] [--behave noEcho,noKeepalive,...] [--duration 20000] [--room 2]
 //
 // Behaviours: silent, noKeepalive, noEcho, noProgress, noMready, badSeq, garbage, cheat, speed, foreign
+//
+// Hall (plan §17): when the first scenario title is the hall's, the client types "/<room>" (if
+// --room is given) and presses READY to join; the room's own scenario message marks the arrival,
+// after which READY is pressed again after --ready-after.
 
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import { FrameDecoder, encodeFrame } from '../src/frame.js';
 import { splitCommands, decode, build, T } from '../src/commands.js';
+import { HALL_TITLE_PREFIX } from '../src/hall.js';
 
 export class FakeClient extends EventEmitter {
   constructor(opts = {}) {
@@ -19,6 +24,7 @@ export class FakeClient extends EventEmitter {
     this.readyAfterMs = opts.readyAfterMs ?? 500;
     this.loadMs = opts.loadMs ?? 200;
     this.tickMs = opts.tickMs ?? 33;
+    this.room = opts.room ?? 0; // hall: room number to select with "/N"; 0 = keep the server's choice
     this.behave = new Set(opts.behave ?? []);
     this.log = opts.log ?? (() => {});
     this.state = 'connecting';
@@ -27,7 +33,12 @@ export class FakeClient extends EventEmitter {
     this.decoder = new FrameDecoder();
     this.statuses = new Array(8).fill(0);
     this.types = new Array(8).fill(3);
+    this.names = new Array(8).fill('');
     this.gotOwnStatus = false;
+    this.hallTitle = false; // saw the hall's scenario title
+    this.inRoom = false; // saw a room's scenario title
+    this.scenarioTitle = '';
+    this.marqueeSteps = 0; // name changes of a row while in the hall
     this.chat = [];
     this.syncPayloads = [];
     this.disconnects = [];
@@ -135,9 +146,10 @@ export class FakeClient extends EventEmitter {
     // the rest of the dump may be in the same payload? no: one command per frame, handled below
   }
 
-  /** Press the READY button. */
+  /** Press the READY button (in the hall: after typing the room command, if any). */
   pressReady() {
     if (this.state !== 'lobby') return;
+    if (this.hallTitle && !this.inRoom && this.room > 0) this.send(build.lobbyChat(`${this.name}: /${this.room}`));
     this.send(build.ready(2, this.slot));
   }
 
@@ -145,6 +157,22 @@ export class FakeClient extends EventEmitter {
     for (const c of splitCommands(payload)) {
       const d = decode(c);
       switch (c.type) {
+        case T.SCENARIO:
+          this.scenarioTitle = d.title;
+          if (d.title.startsWith(HALL_TITLE_PREFIX)) {
+            this.hallTitle = true;
+          } else if (this.hallTitle && !this.inRoom) {
+            // moved from the hall into a room: the dump that follows carries the real statuses
+            this.inRoom = true;
+            this.log(`${this.name}: in room "${d.title.split('\n')[0]}"`);
+            this.emit('room', d.title);
+            if (this.readyAfterMs >= 0) this.after(this.readyAfterMs, () => this.pressReady());
+          }
+          break;
+        case T.NAME:
+          if (this.hallTitle && !this.inRoom && this.names[d.player] && this.names[d.player] !== d.name) this.marqueeSteps++;
+          this.names[d.player] = d.name;
+          break;
         case T.READY:
           this.statuses[d.player] = d.status;
           if (d.player === this.slot) this.gotOwnStatus = true;
@@ -252,6 +280,7 @@ if (isMain) {
       name: `${args.name ?? 'Bot'}${i}`,
       readyAfterMs: Number(args['ready-after'] ?? 1000),
       tickMs: Number(args['tick-ms'] ?? 33),
+      room: Number(args.room ?? 0),
       behave: i === count - 1 ? behave : [], // only the last client misbehaves
       log: (m) => console.log(m),
     });

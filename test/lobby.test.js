@@ -26,10 +26,10 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.ok(cmds[0].id >= 1 && cmds[0].id <= 7);
   assert.equal(p.slot, cmds[0].id);
   assert.equal(cmds[1].type, T.SCENARIO);
-  assert.equal(cmds[1].file, 'D8PLAY01.SCN');
-  assert.ok(cmds[1].title.startsWith('Armageddon\n'));
+  assert.equal(cmds[1].file, 'J8PLAY01.SCN', 'room 1 is the jungle map Plink - O by default');
+  assert.ok(cmds[1].title.startsWith('Plink - O\n'));
   assert.equal(cmds[1].title[45], '8', 'player count digit where the lobby reads it');
-  assert.equal(cmds[1].title, h.cfg.MAP_TITLE_WIRE);
+  assert.equal(cmds[1].title, h.room.map.titleWire);
   // Mercenary: slot 0, human, present-not-ready, colour 0
   assert.ok(cmds.some((c) => c.type === T.NAME && c.player === 0 && c.name === 'Mercenary'));
   assert.ok(cmds.some((c) => c.type === T.TYPE && c.player === 0 && c.value === 2));
@@ -50,10 +50,13 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(vars.length, 16);
   assert.ok(vars.filter((v) => v.index >= 8).every((v) => v.value === 1));
   assert.equal(vars.find((v) => v.index === 2).value, 1);
-  // one private welcome line from Mercenary with the server version
-  const welcome = cmds.filter((c) => c.type === T.LOBBY_CHAT && c.text.startsWith('Mercenary: Welcome'));
-  assert.equal(welcome.length, 1);
-  assert.ok(welcome[0].text.includes('Server 2.0') && welcome[0].text.includes('200%') && welcome[0].text.includes('READY'));
+  // the chat window: ten lines, the room greeting pinned at the top, no name in front of relay lines (§17.8)
+  const chat = cmds.filter((c) => c.type === T.LOBBY_CHAT).map((c) => c.text);
+  assert.equal(chat.length, 10);
+  assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
+  assert.equal(chat[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room line is the whole header');
+  assert.ok(chat.slice(1).every((t) => t === ' '));
+  assert.ok(!chat.some((t) => t.startsWith('Mercenary:')));
   // the first frame of the whole write was the version
   const firstPayload = p.all[0];
   assert.equal(firstPayload[0], T.VERSION);
@@ -310,4 +313,32 @@ test('a joiner while a battle runs is told so and dropped', () => {
   assert.equal(cmds[0].type, T.VERSION);
   assert.ok(cmds.some((c) => c.type === T.LOBBY_CHAT && c.text.includes('battle is in progress')));
   assert.equal(h.room.clients.size, 2);
+});
+
+test('toggling READY during the countdown stops it, and readying again restarts it from the full duration', () => {
+  const h = new Harness({ START_COUNTDOWN_S: 3, MIN_PLAYERS: 1 });
+  const a = h.join('A');
+  a.take();
+  a.cdReport();
+  a.pressReady();
+  assert.ok(h.room.lobby.countdownEndsAt > 0, 'the countdown runs');
+  assert.ok(a.takeCmds().some((c) => c.type === T.LOBBY_CHAT && c.text.includes('starting in 3 s')));
+  // two seconds later the player un-readies: the countdown is gone, nothing starts at the old deadline
+  h.advance(2000);
+  h.tick();
+  a.send(build.ready(1, a.slot));
+  assert.equal(h.room.lobby.countdownEndsAt, -1, 'stopped');
+  assert.ok(a.takeCmds().some((c) => c.type === T.LOBBY_CHAT && c.text.includes('start cancelled')));
+  h.advance(1500);
+  h.tick();
+  assert.equal(h.room.state, STATE.LOBBY, 'the old deadline passed without a start');
+  // ready again: a fresh three-second countdown, not the remainder of the old one
+  a.pressReady();
+  assert.equal(h.room.lobby.countdownEndsAt, h.t + 3000, 'reset to the full duration');
+  h.advance(2999);
+  h.tick();
+  assert.equal(h.room.state, STATE.LOBBY);
+  h.advance(1);
+  h.tick();
+  assert.equal(h.room.state, STATE.STARTING);
 });

@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import { FrameDecoder, encodeFrame } from '../src/frame.js';
 import { splitCommands, decode, build, T } from '../src/commands.js';
 import { Room } from '../src/room.js';
+import { RoomPool } from '../src/rooms.js';
+import { Hall } from '../src/hall.js';
 import { loadConfig } from '../src/config.js';
 import { silentLogger } from '../src/log.js';
 
@@ -55,14 +57,15 @@ export function cmdsOf(payload) {
 }
 
 export class Peer {
-  constructor(h, name = 'Tester') {
+  /** `entry` = the object whose accept(socket) receives the connection (a Room or the Hall). */
+  constructor(h, name = 'Tester', entry = h.room) {
     this.h = h;
     this.name = name;
     this.sock = new FakeSocket();
     this.seq = 0;
     this.unread = [];
     this.all = [];
-    h.room.accept(this.sock);
+    entry.accept(this.sock);
     const first = this.take();
     const d = first.flatMap(cmdsOf).find((c) => c.type === T.VERSION);
     this.slot = d ? d.id : -1;
@@ -94,6 +97,16 @@ export class Peer {
 
   get client() {
     return this.h.room.slots[this.slot]?.client ?? null;
+  }
+
+  /** Chat line as the game sends it: "Name: text". */
+  chat(text) {
+    this.send(build.lobbyChat(`${this.name}: ${text}`));
+  }
+
+  /** Room (of a pool) whose slot table holds this peer's client, or null while in the hall. */
+  roomOf(pool) {
+    return pool.rooms.find((r) => r.slots[this.slot]?.client?.socket === this.sock) ?? null;
   }
 
   get gone() {
@@ -149,6 +162,33 @@ export class Harness {
 
   join(name) {
     const p = new Peer(this, name);
+    this.peers.push(p);
+    return p;
+  }
+}
+
+/** Several rooms plus the hall (plan §17), with the same fake clock and random sequence. */
+export class HallHarness extends Harness {
+  constructor(overrides = {}) {
+    super(overrides);
+    this.pool = new RoomPool(this.cfg, silentLogger, this.now, (n) => this.random(n));
+    this.hall = new Hall(this.pool, this.cfg, silentLogger, this.now, (n) => this.random(n));
+    this.room = this.pool.rooms[0];
+  }
+
+  tick() {
+    this.pool.watchdogTick(this.t);
+    this.hall.tick(this.t);
+  }
+
+  step() {
+    this.pool.step(this.t);
+    this.hall.step(this.t);
+  }
+
+  /** A peer that connects through the hall. */
+  enter(name) {
+    const p = new Peer(this, name, this.hall);
     this.peers.push(p);
     return p;
   }

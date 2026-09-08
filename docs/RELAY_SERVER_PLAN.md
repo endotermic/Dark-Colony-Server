@@ -28,6 +28,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x0F`, `0x03` are dropped |
 | R11 | 200 % game speed, clients cannot change it | Server sends `TICK_SPEED(33)` itself and drops `0x11/0x12/0x13` from clients |
 | R12 | Clients may drop out or misbehave; a client that does not answer every message correctly is removed and everybody is told it left the lobby or the battle | Per-phase expected answers, deadlines and violation rules (§9); the eviction broadcasts `'h' 0` + `DISCONNECT` in the lobby and a `DISCONNECT` inside the next sync frame in battle |
+| R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room; chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
 
 ---
 
@@ -63,6 +64,14 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F26 | The lobby chat handler appends a line to a 2 KiB buffer and word-wraps at the 41-column chat window (`0x40ECE4`); long lines are safe. The chat input allows 255 characters (`intrface/MULTIE`). | `0x40ECE4` | Mercenary's lines may exceed 41 characters |
 | F27 | Only Classic `dc16.exe` plays over the network; the Council Wars executable has no working network play. | maintainer | All clients are the same build; the "mixed builds" risk does not arise |
 | F28 | `CHEAT(a, b)` with `a ∉ {1,2}` toggles the client flag `gs+0x46F50+b` (`b` 0..3, handler `0x41CE9C`); the chat cheat "slag net" toggles flag 0 the same way (`0x41DB9E`). Flag 1 is the pause flag, flag 2 has no readers, flags 0 and 3 are tested at the end of the fog-of-war mask routine (`0x445A77`, `0x445A89`), which then reveals everything (`0x4457D0`): **flag 0 = full map view**. All four flags are cleared at game init (`0x40C40F`) and stored in save games. | disassembly, confirmed live 7 Sep 2026 | Debug mode puts `CHEAT(0, 0)` into the first sync frame, so every client sees the whole map from the first tick (the maintainer confirmed the full map was visible from the start) |
+| F29 | The lobby screen (`INTRFACE/MULTIE`): the eight player-name fields are `in_text` controls of **16 characters** (`x=247`, rows 19 px apart) with the `immediate` flag (the own field is editable, every keystroke goes out as `'g'`); the type and race columns are 6-character read-only fields derived from the slot's type and race values, not free text; the map line (`in_text 26`) is 55 characters wide; the chat window is 41 columns × 10 lines, the chat input holds 255 characters. | `INTRFACE/MULTIE` lines 35–51, 113–123, 181–217 | The only free text per row is the 16-character name. Longer texts scroll through it (marquee, §17.2). In the hall the own row is a room row too, so name edits are dropped there (R13) |
+| F30 | `'d'` is **not** in the lobby dispatch table (`0x488E54`: `0x01 'e' 'f' 'h' 'g' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'y' 0x10 'q'`); it is read only by the join wait (`0x4108DB`). An unknown type in the lobby terminates the game (F21). The meta-server join path receives the state dump **without** `'d'` after `'y' INIT_ME` (protocol doc §6.2), and every existing player receives the full dump again on each join (live, 6–7 Sep 2026). | table `0x488E54`, protocol doc §4.2/§6.2, live logs | A client's slot number is fixed for the whole connection: it can only join a room where that slot is free (§17.5). A second full dump (new `'i'`, new rows) in the middle of the lobby is exactly what the game was built to accept |
+| F31 | Every multiplayer map file `SCENARIO/MPLAYER/*.SCN` starts with three strings: the terrain file (`desert.bts`, `jungle.bts`, `atlantis.bts`), the base name and the **display name** the game's own host puts into the `'i'` title. Classic ships 56 of them: 10 desert and 9 jungle 2-player, 10 desert and 7 jungle 4-player, 2 jungle 6-player, 10 desert and 7 jungle 8-player, plus one 2-player Atlantis map. | the game folder, 7 Sep 2026 | `src/maps.js` holds the table (generated from the files); `ROOMS` lists maps by file name and the server builds the title from the table (F15) |
+| F32 | The client has a dormant meta-lobby: when the first frame is `'r'(9, id)` instead of `'d'` it enters a screen defined by `INTRFACE/METAE` (a 392×258 scrollable list, an 11-character name field, MENU and READY buttons) and speaks the `'r' 's' 't' 'g' 'u' 'v' 'w'` protocol (protocol doc §4.2); the server half never existed in the game. | `INTRFACE/METAE`, protocol doc §4.2 | Considered as a native room browser and **not used**: never exercised, unknown UI state. The hall (§17) reuses the normal lobby screen instead |
+| F33 | The lobby `'g'` NAME handler (`0x40F398`, dispatch table `0x488E54`) copies the name into the slot record (17 bytes, `0x406948`) and then repaints the row's text field (`0x423E74`) **only if the player is not the client itself** (`ss+0xA254`). The own name field is an editable `in_text` with the `immediate` flag (F29): every keystroke goes out as `'g'` and the field shows what was typed regardless of what the server answers. | disassembly `0x40F3FC`–`0x40F415`; live 7 Sep 2026: the own row never showed the hall's room text, typing changed it | The server cannot paint the client's own row and cannot stop the player from typing there. The hall therefore shows the player's name in that row and accepts name changes (they follow the player into the room); seven rows remain for rooms, hence `MAX_ROOMS = 7` |
+| F34 | The lobby loop reads **at most one frame per iteration** (`0x411132`: one call of the frame reader, not a loop; on data it calls the dispatcher `0x40F918` and goes on with the iteration), and the dispatcher runs **every command of the frame** (loop at `0x40F929`–`0x40F975`: type byte → table `0x488E54` → handler, until the `0x00` terminator; an unknown type is "SETUP_COMMANDS BAD"), then calls `0x40F6AC` once per frame. The iteration rate is that of the UI loop. | disassembly; live 7 Sep 2026: seven one-command frames per 200 ms scrolled fast for a moment and then slower and slower (the client fell behind and queued frames) | Send one **frame** per update with all its commands inside: the marquee step, the hall dump, the room dump. Multi-command lobby frames are also what the original server relays when a client packs `'o'`+`'q'` (F23). `PACK_LOBBY_FRAMES=false` restores one command per frame |
+| F35 | The lobby chat handler (`'e'`, `0x40ECE4`) copies the chat control's current text (control 24, up to `0x800` bytes) into a local buffer, appends `"\n"` + the received string, word-wraps by inserting `'\n'` at the last space once a line reaches **width − 1 = 40** columns (control width from `0x423F24`), and then, while the text does not fit the control (`0x424608`), **drops the first line**. The control shows the last ten visual lines; nothing else is kept. The received string is appended as it is: the `"Name: "` in front of a player's line is the sending client's own convention, not something the handler needs. | disassembly `0x40ED15`–`0x40EDE5`; F26, F29 | The server can paint the whole window: ten lines of at most 40 characters replace what is shown. Lines from the relay carry no name (maintainer, 7 Sep 2026). The greeting is kept at the top by repainting the window on every chat event (§17.8) |
+| F36 | The big READY button is `checkb 133` (`INTRFACE/MULTIE` line 351), a checkbox with its own pressed state. Its click handler (`0x4115A9`–`0x411636`) sends `'h'(2, own)` on the "checked" event and `'h'(1, own)` on any other event; the only code that changes the button's state is the click itself and the client-side refusal when the own colour is locked (`0x4272A8(ui, 0x85, 0)` at `0x411608`). The `'h'` message handler drives the **row** checkbox `16 + player` only (`0x4272A8(ui, 0x10 + player, status == 2)` at `0x40F38B`); the lobby refresh only enables or disables control 133 (`0x424514` at `0x40FF96`/`0x40FFC5`). No lobby message reaches the button's state. | disassembly; all five logged room entries of 7 Sep 2026: the first READY press inside the room sent status 1, the second status 2 | After READY in the hall the button stays pressed and the server cannot release it. The room therefore seats a client from the hall **ready** (status 2, F20 lock check applied), so that the pressed button is true; one click un-readies for colour or race changes. A direct join (`HALL=false`) is present-not-ready as before |
 
 ---
 
@@ -72,20 +81,23 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 Dark-Colony-Server/     (repository root)
   package.json          "type": "module", "engines": { "node": ">=20" }, scripts: start, test, fakeclient, lint
   src/
-    index.js            entry: config → Room → net.createServer, step/watchdog timers, optional health listener
-    config.js           env-var parsing with defaults (§11)
+    index.js            entry: config → RoomPool + Hall → net.createServer, step/watchdog timers, optional health listener
+    config.js           env-var parsing with defaults (§11), ROOMS → ROOM_LIST
+    maps.js             the 56 multiplayer maps of Classic (file → name, terrain, players), ROOMS entry resolver (F31)
     constants.js        STATE, SLOT_TYPE, VAR defaults, cheat texts
     frame.js            encode/decode frames, sequence check (§4)
     commands.js         command size table, parsers and builders for every message (§10)
-    client.js           one TCP connection: socket, sequence counters, watchdog bookkeeping, send()
-    room.js             the single game room: slots, state machine LOBBY→STARTING→RUNNING→reset, eviction
+    client.js           one TCP connection: socket wired to its current owner (Hall or Room), sequence counters, watchdog bookkeeping, send()
+    hall.js             the room-selection lobby: private per-client view, room rows with marquee, chat commands, READY = join (§17)
+    rooms.js            RoomPool: one Room per ROOMS entry, shared timers
+    room.js             one game room with its own map: slots, state machine LOBBY→STARTING→RUNNING→reset, eviction, adopt()
     lobby.js            fake-host behaviour: join dump, message policy, READY handling, MREADY wait (§6)
     game.js             lockstep: command queue, step loop, sync frame builder, filters (§8)
     watchdog.js         per-client deadlines and lag eviction (§9)
-    log.js              one-line JSON logs to stdout (fly logs)
+    log.js              one-line JSON logs to stdout (fly logs); childLogger stamps the room number
   test/
-    helpers.js          Room with a fake clock, fake sockets, scripted peers
-    frame.test.js, commands.test.js, lobby.test.js, game.test.js, eviction.test.js, integration.test.js
+    helpers.js          Room / RoomPool + Hall with a fake clock, fake sockets, scripted peers
+    frame.test.js, commands.test.js, lobby.test.js, game.test.js, eviction.test.js, fakes.test.js, hall.test.js, integration.test.js
   tools/
     fakeclient.js       scripted dc16 client: library for the integration test and a CLI (§13)
   docs/
@@ -99,8 +111,11 @@ inside the Dark-Colony repository and moved here as version 2.0 on 7 Sep 2026, �
 
 Design rules:
 
-- One room, one game at a time. Multi-room is out of scope (it is what made the previous server
-  complex); it can be added later by instantiating `Room` per connection group.
+- One `Room` = one map = one game at a time; up to eight rooms run side by side (`RoomPool`, §17.6),
+  each with the state machine below. A connection reaches a room through the room-selection lobby
+  (`Hall`, §17), or directly into room 1 with `HALL=false` (the 2.0 behaviour). Version 2.0 had a
+  single room; its design rule said multi-room would be added by instantiating `Room` per group,
+  which is what 2.1 does.
 - Everything is single-threaded and event-driven; the only timer that matters is the game step.
 - The server never simulates the game. It only relays, orders and paces.
 - Every byte sent to a client goes through `Client.send(payloadBuffer)`, which stamps that client's
@@ -159,17 +174,26 @@ would reject it too, F7).
 
 ---
 
-## 5. Connection lifecycle (`client.js`, `room.js`)
+## 5. Connection lifecycle (`client.js`, `hall.js`, `room.js`)
+
+With `HALL=true` (default since 2.1) a new connection is first handled by the room-selection lobby
+(§17): it gets its `'d'`, its slot number and the private room view there, and enters a `Room` only
+when it presses READY on a joinable room (`Room.adopt`, §17.5). The socket events are wired once
+(`Client.wire`) and dispatched to whatever object currently owns the connection. The steps below
+describe the room side; with `HALL=false` they apply to the connection directly.
 
 1. `accept` → `socket.setNoDelay(true)`, `socket.setKeepAlive(true, 15000)`.
 2. If `room.state !== LOBBY` or no free slot: send `'d'(15, 7)`, one chat line
    `'e' "Mercenary: game in progress, try again later"`, then `socket.end()` after 1 s. (The client
    shows the lobby for a moment and then "SERVER LOST". Closing without `'d'` would make it wait 25 s
-   for "no init msg".)
+   for "no init msg".) Through the hall this cannot happen: the hall only hands over clients the room
+   can seat, and everybody else waits in the hall.
 3. Otherwise pick a **random free slot in 1..7** (`crypto.randomInt`), create the player record
    `{ slot, name: "Player"+slot, race 0, colour slot, team slot, type 2, status 1, ready false,
    lastSeen, seqIn 0, seqOut 0 }`, send the join dump (§6.1) and one private greeting line to the
-   newcomer (nobody else is greeted or notified, the slot fills in by itself).
+   newcomer (nobody else is greeted or notified, the slot fills in by itself). A client coming from
+   the hall keeps the slot it already has (F30) and gets the dump without the `'d'`. Its colour is
+   the slot number unless an occupied slot already shows that colour, then the first unused one (F4).
 4. Data → decoder → frames → commands → policy (§6 in LOBBY/STARTING, §8 in RUNNING).
 5. Liveness and correctness: every phase has answers the client must produce (`'q'` every 700 ms in
    the lobby, `MREADY` while starting, an echo for every `UNTIL` in battle) and deadlines for them; a
@@ -197,7 +221,7 @@ for multi-command frames). Order as the original host (§6.1 of the protocol doc
 | 4 | everyone | for every other slot q: `'g' q,name_q` · `'f' race_q,q` · `'j' type_q,q` · `'n' team_q,q` · `'h' status_q,q` |
 | 5 | everyone | for p: `'g' p,name_p` · `'f' 0,p` · `'j' 2,p` · `'l' colour_p,p` · `'n' team_p,p` · `'h' 1,p` |
 | 6 | everyone | `'o' v,value` for v = 0..15 with `[0,0,1,0,4,4,0,0, 1,1,1,1,1,1,1,1]` (VAR 8+p = "has CD" = 1 for all) |
-| 7 | newcomer only | `'e' "Mercenary: Welcome, <name>. Map Armageddon at 200%. Press READY to start."`, exactly once per player |
+| 7 | newcomer only | the chat window (§17.8): ten `'e'` lines, the room header at the top (one line: `Room <n>: <map>, <terrain>, <k> players.`), blanks below; no name in front of relay lines |
 
 Slot 0 is constant: name `Mercenary`, type 2 (human), race `MERCENARY_RACE` (default 0), colour 0,
 team 0, status 1. With `FAKE_PLAYERS > 1` further fake humans (names from `FAKE_NAMES`, same race,
@@ -233,9 +257,9 @@ and so that "everyone ready" can be evaluated.
 
 - Each real player presses READY; the client sends `'h'(2, s)` itself (after its own colour check,
   F4), the server relays it, every client applies the same colour rule, and the server posts
-  `'e' "Mercenary: <name> is ready (k/n)"`. A player whose colour is locked by a ready player must
+  `'e' "<name> is ready (k/n)"` (no name in front of relay lines since 7 Sep 2026, §17.8). A player whose colour is locked by a ready player must
   pick another colour first; the client refuses to send otherwise.
-- Start condition: every occupied slot 1..7 has status 2, count ≥ `MIN_PLAYERS` (default 2).
+- Start condition: every occupied slot 1..7 has status 2, count ≥ `MIN_PLAYERS` (default 1 since 7 Sep 2026, 2 before).
 - Countdown `START_COUNTDOWN_S` (default 3) with chat lines; any join, leave or `'h' 1` cancels it.
 - Then: `state = STARTING`, broadcast `'h'(0, q)` for every fake slot `q` (slot 0 and the other
   fakes). Because those were the only status-1 slots left, every client exits the lobby at once (F3)
@@ -458,7 +482,7 @@ ordinary clicks rather than misbehaviour.
 3. Announce, depending on the phase:
    - **LOBBY**: if the player was ready, `'h'(0, slot)` first so every client releases its colour lock
      (F20); then `DISCONNECT(slot)` as a standalone frame (clients empty the slot: type 3, status 0);
-     then `'e' "Mercenary: <name> left the lobby (<reason>)"`. A running start countdown is cancelled
+     then `'e' "<name> left the lobby (<reason>)"` (no name in front of relay lines, §17.8). A running start countdown is cancelled
      and the ready check is re-evaluated, because the remaining players may now all be ready.
    - **STARTING**: `DISCONNECT(slot)` is queued for the first sync frame. The others are loading and
      no longer read lobby messages, and the in-game loop would hold a `0x10` frame until the first
@@ -539,11 +563,14 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 |---|---|---|
 | `PORT` | `8888` | listen port (Fly maps 8888 and 8889 to it) |
 | `HEALTH_PORT` | unset | optional bare TCP liveness port for a Fly check; the game never talks to it |
-| `MAP_FILE` / `MAP_TITLE` / `MAP_TERRAIN` | `D8PLAY01.SCN` / `Armageddon` / `desert` | `'i'` message; 2nd char of the file must be the player count; the wire title is built from name, players and terrain in the game's format (F15), name ≤ 42 chars |
+| `ROOMS` | `J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07` | 1..7 rooms, one map each (§17.6): `SCENARIO/MPLAYER` file names, looked up in `src/maps.js` (F31); a map not in the table is written `FILE:Name[:terrain]`, name ≤ 42 chars. The 2nd character of the file is the player count and caps the room (F22). Seven at most: one lobby row per room, the eighth row is the player's own (F33). Room 1, the default selection, is a jungle map (maintainer, 7 Sep 2026). Replaces `MAP_FILE`/`MAP_TITLE`/`MAP_TERRAIN` of 2.0 |
+| `HALL` | `true` | the room-selection lobby (§17); `false` = every connection goes straight into room 1 as in 2.0 |
+| `MARQUEE_MS` | `200` | hall: the room rows scroll one character per this many ms (≥ 50); 300 was too slow for the maintainer (7 Sep 2026) |
+| `PACK_LOBBY_FRAMES` | `true` | several commands per lobby frame (F34): one frame per marquee step and per dump; `false` = one command per frame as the original host and 2.0 |
 | `STATS_INTERVAL_S` | `30` | in-battle stats log line (latency, ticks behind, pending echoes, stalls); `0` = off |
 | `TICK_MS` | `33` | 200 % speed (F11) |
 | `LOOKAHEAD` / `MAX_LAG` | `8` / `200` | lockstep constants (F17) |
-| `MIN_PLAYERS` | `2` | real players needed before the countdown may start (set 1 for solo testing) |
+| `MIN_PLAYERS` | `1` | real players needed before the countdown may start (default 2 until 7 Sep 2026; the maintainer set it to 1, so a lone player can start against the idle Mercenary) |
 | `START_COUNTDOWN_S` | `3` | seconds between "everyone ready" and `'h' 2,0` |
 | `MREADY_TIMEOUT_MS` | `30000` | drop clients that never finish loading |
 | `IDLE_TIMEOUT_MS` | `10000` | phase-independent fallback: no byte at all for this long → evict |
@@ -735,8 +762,19 @@ internet, and §13.5 (a capture of a genuine host) which is now optional.
 - **Mixed builds**: not an issue in practice, only Classic `dc16.exe` plays over the network (F27).
 - **Anti-cheat depth**: the server drops known cheat messages but does not validate the `player`
   byte inside commands against the sender (needs the shuffle replication of §7).
-- **Single room**: a second group of players has to wait until the running game ends. Multi-room is
-  a straightforward extension (one `Room` per group, `'d'` slot numbering per room).
+- **Room selection (§17), seen on a real client twice on 7 Sep 2026**: the hall, the scrolling
+  rows, `/N`, READY into a room and the battle all worked. Corrections from the two tests (§16): the
+  own row cannot be painted by the server (F33), so it shows the player's name and the selected room
+  moved into the map line so that eight rooms fit; the client handles one frame per loop iteration
+  (F34), so every update is one packed frame; the room size shown is the map's slots without
+  Mercenary; the chat is scrolled clean with a fresh greeting when a room is entered. Still to be
+  seen live: the packed frames and the map-line display (third test pending), two real players
+  entering the same room through the hall, and a client whose slot is 7.
+- **Fixed slot per connection** (F30): a player can only join a room where the slot picked at
+  connect time is not held by another real player. The hall picks the slot free in the most rooms,
+  and a fake sitting in that slot is moved aside (§17.5), so with few players this never bites; when
+  it does, the row says `slot taken`, Mercenary explains, and reconnecting gives another slot. A
+  room-side fix would need the game to accept a second `'d'`, which it does not.
 
 ---
 
@@ -848,3 +886,332 @@ above, so that the plan can be followed from scratch without repeating the disco
   (`node tools/fakeclient.js --host dark-colony-server.fly.dev --ready-after -1`) joined slot 3 and
   received `"Mercenary: Welcome, Player3. Server 2.0, map Armageddon at 200%. Press READY to start."`.
   Real-game test over the internet still to be done by players.
+
+**7 Sep 2026, multi-room: eight rooms and the room-selection lobby (version 2.1, scripted clients only)**
+
+- Design discussion. Three ways to give players several rooms were weighed: (a) a pool of rooms with
+  automatic placement (no choice, only removes "battle in progress, try again later"); (b) chat
+  commands that move a player between live rooms (needs the colour-lock release order of F20 and a
+  live test); (c) the game's dormant meta-lobby as a native room browser (F32, never exercised). The
+  maintainer proposed a fourth: **the lobby screen itself is the room browser**. Every row is a room,
+  the row's name field carries the room description, chat commands select, READY joins, and the
+  room's own dump then rewrites the rows to the real players. Refinements agreed the same day: all
+  eight rows are rooms (the client's own row and Mercenary's row included; only names are
+  manipulated), every room has its own map, texts longer than the 16-character field scroll
+  ("marquee"), and **name, race, colour and team cannot be changed in the hall**. The design is §17.
+- Facts established for it: the lobby screen layout (F29), the fixed slot number and the
+  dump-without-`'d'` join path (F30), the map names inside the `.SCN` files (F31), the meta-lobby
+  screen (F32).
+- Implementation: `src/hall.js` (hall), `src/rooms.js` (RoomPool), `src/maps.js` (56 maps),
+  `Room.adopt()` (seat a client that already has its slot, no `'d'`), `Client.wire()`/`owner`
+  (socket events follow the connection from hall to room), `childLogger` (every room log line
+  carries `room: n`), config `ROOMS`/`HALL`/`MARQUEE_MS` (the 2.0 `MAP_*` variables are gone),
+  version 2.1.0, greeting `"Welcome, <name>. Server 2.1, room <n>: <map> at 200%. Press READY to
+  start."`. Per-room capacity follows the map's player digit (F22): seats = players − fakes,
+  `MIN_PLAYERS` is capped per room, `FILL_EMPTY_WITH_AI` acts only on 8-player maps, `FAKE_PLAYERS`
+  must leave a seat on every map.
+- Tests: 60 (48 before): `test/hall.test.js` covers the marquee, the hall dump, dropped edits,
+  `/N` + READY into a room with the slot unchanged and no second `'d'`, scrolling, rooms in battle,
+  slot conflicts, deadlines, hall chat and commands, a 4-player room; the integration test drives two
+  scripted clients through the hall into room 2 and a lockstep battle there; the older end-to-end
+  tests run with `HALL=false`. `tools/fakeclient.js --room N` types `/N` and presses READY twice.
+- Smoke test on this PC (`logs/2026-09-07-hall-smoke.log`, outside git): two scripted clients
+  connected (slots 7 and 2), saw the hall title, typed `/2`, landed in room 2 (Black Widow) with
+  their slots unchanged, both READY, countdown, MREADY, a battle with 68 identical sync frames each.
+  Not yet tried with the real game; the items to look at are in §15 and §17.7.
+
+**7 Sep 2026, the hall on a real client: works; three corrections**
+
+- The maintainer connected Classic `dc16.exe` to the local 2.1 server twice (log
+  `logs/2026-09-07-hall-live.log`, outside git): the hall appeared with the scrolling room rows,
+  READY took the first session into room 1 (Armageddon) and the second, after `/7`, into room 7
+  (Hoops of Fury); both played a battle. Verdict: "it works". No flicker complaint.
+- **Scroll speed**: 300 ms per character was too slow; `MARQUEE_MS` default is now 200 (+50 %).
+- **The own row**: it never showed the hall's room text, and typing into it changed it on screen
+  although the server dropped every `'g'` (the log shows the client's keystrokes `Player` →
+  `Playsdsds` → `fdsf`). The disassembly explains it (F33): the client's `'g'` handler stores the
+  name but repaints the row only for other players, and the own field is a local edit control. The
+  server cannot own that row. Design change: the own row shows the player's name, name changes in
+  the hall are accepted and echoed (as in a room) and follow the player into the room; race,
+  colour and team stay blocked. Rooms occupy the other seven rows in order, skipping the own row,
+  so `MAX_ROOMS = 7` and the default list lost Big Crater. The hall title says `/1../<n>`.
+- **Fake players' names**: the maintainer saw only Mercenary in the room. That instance ran with
+  `FAKE_PLAYERS=1` (the log's `fakeSlots:[0]`), so no other fake existed; the scripted check with
+  `FAKE_PLAYERS=7` shows all seven names in the room dump. Found while checking: with seven fakes
+  each room had a single free slot and the hall client's fixed slot matched it in about one room in
+  seven, the rest said `slot taken`. Fix: a fake sitting in the joiner's slot is moved to a free
+  slot when the client arrives (`Room.relocateFake`, §17.5); fakes have no client, so nothing else
+  notices, and the dump that follows repaints every row for everybody. The local server was
+  restarted with `FAKE_PLAYERS=7 MIN_PLAYERS=1 LOG_LEVEL=debug` for the next look.
+- Tests: 61, all passing; the hall tests now cover the own-row name, the seven-row mapping and the
+  seven-fakes case.
+
+**7 Sep 2026, second real-client test of the hall: four more corrections**
+
+- The maintainer's report: "8 rooms needed"; the room size read `(0/1)` with seven fakes but must
+  read `(0/7)`; the chat should be cleared and a new greeting shown when entering a room; the scroll
+  was fast right after entering the hall and then dropped to a slow roll.
+- **Slow roll**: the server sent seven one-command frames per step (35 frames/s at 200 ms), measured
+  steady with a raw client. The disassembly shows why the client slowed down (F34): its lobby loop
+  reads one frame per iteration and its dispatcher runs all commands of a frame. The frames queued up
+  on the client; the visible speed was the client's iteration rate divided by seven, and `MARQUEE_MS`
+  had no visible effect. Fix: every update is one frame with all its commands (`packPayloads`,
+  `PACK_LOBBY_FRAMES`), for the marquee step (one frame of about 150 bytes per 200 ms), the hall dump
+  and the room dump (one frame of about 450 bytes instead of about 65 frames). The dispatcher loop
+  and the original server's verbatim relay of packed client frames (F23) are the evidence that
+  multi-command lobby frames are safe.
+- **Eight rooms**: the own row is out of reach (F33), so the selected room now lives in the **map
+  line** (`'i'` title, 42 free characters, F15): `>3 Circle of Friends (0/7) open`, re-sent whenever
+  the selection or that room's state changes; the seven other rooms fill the rows that are not the
+  player's own, in order. `MAX_ROOMS` is 8 again and Big Crater is back in the default list. The
+  hall's instruction text moved to the chat greeting; scripted clients recognise the hall by the
+  leading `>` of the title.
+- **Room size**: the rows and the map line show `players / (map players − 1)`, i.e. the map's slots
+  without Mercenary; fakes are idle bases, not participants. Whether a seat is really free is still
+  decided by the real seat count (`full`).
+- **Chat and greeting on entering a room**: the room dump for a client coming from the hall is
+  preceded by ten blank chat lines, which scroll the hall's chat out of the 10-line window (F26), and
+  followed by two new lines: `"Welcome, <name>, to room <n>: <map> (<terrain>, <k>-player map).
+  Server 2.1."` and `"Here: <names>. Press READY when you want to fight; the battle starts at 200%
+  when everybody is ready."` (or `"You are the first one here."`). Direct joins get the same two
+  lines without the blank ones. All of it travels in the one packed frame with the dump.
+- Tests: 62, all passing (`packPayloads`, the map-line title, the seven-row mapping without the
+  selected room, the chat clear and greeting, `(0/7)` with seven fakes). The local server was
+  restarted with `FAKE_PLAYERS=7 MIN_PLAYERS=1 LOG_LEVEL=debug`.
+- Later the same evening: a rule "debug mode keeps only Mercenary as a fake" was added and, on the
+  maintainer's request, **reverted** within the hour. Instead the defaults changed: `FAKE_PLAYERS=1`
+  (unchanged) and `MIN_PLAYERS=1` (was 2), so a lone player can start a battle without extra
+  settings. Local server restarted with `LOG_LEVEL=debug` only.
+
+**7 Sep 2026, third real-client test of the hall: packed frames and the map line work; three tweaks**
+
+- The maintainer tested the packed frames, the map-line room display, the new greeting and the
+  cleared chat; no complaint about any of them. Three tweaks asked for and done the same evening:
+  (1) the client's player count was still off after entering a room, so the room dump is now
+  preceded by `DISCONNECT(q)` for every slot except the client's own and Mercenary's (§17.5);
+  (2) the hall greeting and `/help` say that a room number typed in chat must be sent with ENTER;
+  (3) the room texts are padded to a common length so that all rows scroll with the same period and
+  wrap together (§17.2). Tests: 63, all passing.
+- Fourth round the same evening: with the selected room moved into the map line, room 1 disappeared
+  from the rows and the maintainer reported it "lost". Decision: **seven rooms, rows 1..7 stay in
+  place**, the number and the space after it never scroll, only the 14 characters behind them do;
+  the map line keeps repeating the selected room. `MAX_ROOMS` is 7 again (default list without Big
+  Crater). Tests: 63, all passing.
+- Fifth round: the default room 1 (the preselected one) is now the jungle map Plink - O, with
+  Armageddon as room 2, and every room text names its terrain (`1 Plink - O jungle (0/7) open` in the
+  rows, the map line and `/rooms`; `Room 3 (Black Widow, desert, 0/7) selected` in chat). Tests: 63.
+- Sixth round: **no name in front of relay lines** and **the greetings pinned at the top of the chat**
+  (§17.8). The chat handler was read (F35): a ten-line log, wrap at column 40, oldest line dropped
+  first. `src/chat.js` paints the window (header + recent lines, ten lines per event); the blank-line
+  chat clear is gone since a repaint replaces the window. Greetings rewritten as short header lines
+  (hall: welcome/version/room count, `/1../7 + ENTER`, READY; room: room/map/terrain/players,
+  welcome/version/speed, READY, battle start). Tests: 65, all passing.
+- Seventh round: **no player name in the greetings** (`Welcome. Server 2.1, 7 rooms.` / `Welcome.
+  Server 2.1 at 200%.`): `Player<n>` is generated and means nothing (maintainer). Names still appear
+  in event lines (`<name> is ready`, `<name> left the lobby`) and in the rows.
+- Eighth round: the room header starts with the welcome line (`Welcome. Server 2.1.`), the room line
+  comes second, and the speed is no longer mentioned.
+- Ninth round: the room header is the single line `Room <n>: <map>, <terrain>, <k> players.`, and
+  the hall header opens with `Welcome to Dark Colony server 2.1.`.
+- Tenth round (live): under a flood of comments the three instruction lines below the hall header
+  scrolled away while the header stayed. Fix: the whole six-line hall greeting is the static header,
+  and its last line (`Room <n> (<map>) is selected.`) is rewritten in place on selection instead of a
+  "selected" message; a blocked selection still gets a `Room N: <reason>.` message. Four rows remain
+  for messages in the hall; `/help` was shortened to three lines that fit there.
+- Eleventh round: the maintainer asked to un-ready the client when it enters a room, since its READY
+  button stayed pressed. The disassembly shows that no lobby message can do that (F36): the button is
+  a checkbox that only the click or a client-side colour-lock refusal changes, while `'h'` only drives
+  the small row checkbox. All five logged room entries confirm it (first press inside the room sent
+  status 1). Chosen fix: a client from the hall is seated **ready**, so the button state is true, with
+  the `<name> is ready (k/n)` line and the start check right away (§17.5). Tests: 65, all passing.
+
+**8 Sep 2026, twelfth round: no automatic start**
+
+- The join-ready seating of the eleventh round was undone on the maintainer's request ("we don't need
+  autostart"): a client from the hall is present-not-ready again, and the stale READY button costs one
+  extra click (F36). The maintainer also asked that a READY toggle stop and reset the "begin battle"
+  countdown; the lobby already did that (`checkStart` cancels when not everyone is ready, a new READY
+  starts a fresh countdown), now pinned by a test. Tests: 66, all passing.
+
+---
+
+## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
+
+Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
+room: the connect dialog takes a host name only, the port is fixed (8888, then 8889), plain TCP
+carries no host name, and the slot number arrives once in `'d'` (F30). Inside the lobby the player
+has two input channels the server sees, chat text and the own name field, and the server controls
+everything that is displayed. So the lobby itself becomes the room browser.
+
+### 17.1 Overview
+
+```
+connect ──'d'(15,p) + hall dump──► HALL (private view: 7 rows = rooms 1..7 in place, own name row, map line = selected room)
+   │  '/N' selects a room (row N gets the '>' marker, Mercenary confirms)
+   │  READY ('h' 2,p) on a joinable room
+   ▼
+ROOM N ──room dump without 'd' (rows become the real players, 'i' = the room's map)──► normal §6 lobby
+   │  READY again = ready to fight, as before
+   ▼
+STARTING → RUNNING → reset (§3), independently per room
+```
+
+- One process, `RoomPool` with up to seven `Room`s (`ROOMS`, §11), each with its own map and the
+  §3 state machine, all driven by the same 5 ms step timer and 500 ms watchdog. Rooms are fixed;
+  a room resets to LOBBY when its last player leaves.
+- The `Hall` handles a connection until it joins a room. Its view is private per client: the other
+  waiting clients are not visible as rows (their chat is relayed, §17.4).
+- `HALL=false` restores the 2.0 behaviour: every connection goes straight into room 1.
+
+### 17.2 The hall view
+
+Sent right after `accept`, in one write: the `'d'` as its own frame, then everything else in one
+packed frame (F34; `PACK_LOBBY_FRAMES=false` gives one command per frame as in §6.1):
+
+| Step | Message | Notes |
+|---|---|---|
+| 1 | `'d' 15, p` | `p` = the slot the client keeps for the whole connection (§17.5) |
+| 2 | `'i' "D8PLAY01.SCN", title` | the **selected room** in the map line: title = `formatScenarioTitle(">3 Circle of Friends (0/7) open", 8, terrain)`. The digit at index 45 must be 8 because eight rows are occupied (F22); the file is never loaded, no game starts from the hall. Re-sent whenever the selection or that room's count or state changes |
+| 3 | for every row q ≠ p: `'l' q,q` | colours = row |
+| 4 | for every row q ≠ p: `'g' q,text_q` · `'f' 0,q` · `'j' 2,q` · `'n' q,q` · `'h' 1,q` | every row is a present-not-ready human, so the client stays in the lobby (F3) and no colour is ever locked (F20) |
+| 5 | for p: `'g' p,<player name>` · `'f' 0,p` · `'j' 2,p` · `'l' p,p` · `'n' p,p` · `'h' 1,p` | the own row shows the player's name: the client never repaints its own field from an incoming `'g'` (F33), so this row cannot carry room text |
+| 6 | `'o' v,default` for v = 0..7, then `'o' 8+q, joinable_q` for q = 0..7 | the per-row CD icon (cosmetic, F5) marks the rooms this client can join right now |
+| 7 | the chat window | ten `'e'` lines (§17.8): the six-row header `Welcome to Dark Colony server 2.1.` · `Type /1../7 + ENTER to select a room,` · `then press READY to join it.` · `The map line shows the selected room.` · `You may type your name in your row.` · `Room <n> (<map>) is selected.`, then blanks |
+
+Rows and map line: the rooms fill the rows in order, skipping the client's own row `p`, so row 0
+(Mercenary's slot) is always room 1 and the rooms after the own row sit one row lower than their
+number. Every room row starts with `"<n> "`, which never moves; the remaining 14 characters scroll.
+The map line repeats the selected room in full (42 characters are free, F15, so nothing scrolls
+there) and is re-sent when the selection or that room's state changes; selecting does not touch the
+rows. With fewer than seven rooms the remaining rows are empty (type 3, status 0). (An interim
+version of 7 Sep 2026 showed eight rooms by moving the selected one out of the rows into the map
+line; the maintainer found room 1 "lost" that way and asked for rows 1..7 that stay in place.)
+
+Row text: `"<n> "` + `"<map name> <terrain> (<players>/<slots>) <state>"` (e.g. `1 Plink - O jungle (0/7) open`; the terrain was asked for after the fourth live test) with `slots` = the map's player count
+minus one (Mercenary's slot; fakes are idle bases, not participants), state ∈ `open`, `full`,
+`in battle`, `slot taken` (this client's slot is held by a real player there); never a `':'` (the
+chat prefix is split at the first colon). The scrolling parts are padded with spaces to the length
+of the longest one, so that all rows scroll with the same period and wrap around together (third
+live test: unequal lengths made the rows drift apart). A part longer than the 14 characters scrolls
+one character per `MARQUEE_MS` (200 ms) with three spaces between the end and the wrap-around; a
+short one stands still. Every step recomputes the map line, the rows and the icons from the live room
+states and sends only what changed, **in one frame** (F34), so state changes (a room starts, fills
+or empties) show up within one step. Default selection: the lowest-numbered room the client can
+join, else room 1.
+
+Cost: one frame of at most about 150 bytes per step per waiting client, roughly 0.7 KB/s at
+200 ms, far below the battle stream.
+
+### 17.3 Messages from a client in the hall
+
+| Message | Policy |
+|---|---|
+| `'q'` keep-alive | consume (liveness) |
+| `'o'` CD report | drop: the icons mean "joinable" here |
+| `'g'` name | own slot only: sanitised, stored as the player's name and echoed like a room does; it follows the player into the room. The own field is the client's anyway (F33) |
+| `'f' 'k' 'm'` race, colour, team | **drop, no echo** (R13). The client applies changes only when they come back, so nothing changes on screen |
+| `'j' 'l' 'n' 'i' 'p'` | drop (host-owned, as in §6.2) |
+| `'h' 2,p` READY | join the selected room (§17.5); `'h' 1,p` is dropped |
+| `'e'` chat | text after the first `':'` (the client's prefix is its row text): a command (§17.4) or hall chat |
+| `'y'` INIT_ME | re-send the hall dump; a second one is a strike |
+| numeric in-game types, unknown letters | strike (§9.3) |
+| deadlines | `JOIN_TIMEOUT_MS` for the first message, `KEEPALIVE_TIMEOUT_MS` afterwards (§9.1) |
+
+### 17.4 Chat commands
+
+| Typed | Effect |
+|---|---|
+| `/1` … `/7`, a bare digit, `/join N` | select room N: the map line shows it, the rows stay, the header's last line becomes `Room N (<map>) is selected.`; if the room cannot be joined right now a message `Room N: <reason>.` follows |
+| `/rooms`, `/list` | one line per room: `"N <map> (k/s) <state>"` |
+| `/help` | three lines of at most 40 characters: `/1../7 + ENTER selects a room.` · `/rooms lists the rooms.` · `READY joins the selected room.` |
+| other `/word` | `"Unknown command /word, try /help."` |
+| anything else | relayed to every client waiting in the hall as `"Player<p>: text"` (the sender's real name replaces the row-text prefix) |
+
+### 17.5 Joining a room
+
+Conditions: the room is in LOBBY, has a free seat (`players < map players − fakes`) and the
+client's slot `p` is not held by a real player there. A fake sitting in `p` is no obstacle: fakes
+have no client, so `Room.relocateFake` moves it to a random free slot (colour and team follow the
+new slot) before the client is seated, and the dump sent to everybody afterwards repaints the rows.
+Without this, `FAKE_PLAYERS=7` left exactly one free slot per room and a client could join only the
+rooms whose free slot happened to be its own. Otherwise Mercenary says why (`a battle is in
+progress there`, `it is full`, `your slot p is taken there; reconnect to get another slot`) and the
+client stays.
+
+Procedure (`Hall.join` → `Room.adopt(client, p, false)`): the hall forgets the client; the room
+fills slot `p` (name `Player<p>`, race 0, colour `p` or the first unused colour, team `p`, status 1),
+sends the client the room dump **without** `'d'` (the game's meta-server join path, F30), sends the
+dump to the other players as at any join, greets the newcomer, and cancels a running countdown. The
+frame decoder and both sequence counters live in the `Client` and continue unchanged; commands that
+followed the READY in the same TCP chunk are handed to the room. The player is present-not-ready in
+the room present-not-ready, so READY has to be pressed again. Its READY button is still pressed from
+the hall and no message can release it (F36), so the first click inside the room sends `'h'(1)`, a
+no-op for the server, and the second one readies the player. An interim version (eleventh round)
+seated the client ready to make the button state true; the maintainer does not want the automatic
+start that comes with it (`MIN_PLAYERS=1`), so it was undone the next day. A READY toggle during the
+countdown cancels it (`start cancelled: not everyone is ready`) and readying again restarts a full
+countdown; both are covered by a test.
+
+The room dump for a client coming from the hall is one packed frame (F34) that starts with a
+`DISCONNECT(q)` for every slot except the client's own and Mercenary's (the hall's seven room rows were
+occupied humans; the lobby DISCONNECT handler resets type, status and CD flag and keeps the client's
+player count right, while Mercenary's row keeps status 1 so that the client stays in the lobby, F3;
+asked for after the third live test, where the count was off), continues with the dump, and ends with
+the ten lines of a **fresh chat window** (§17.8) whose header is the room greeting; the hall's chat
+is gone with it. A direct join (`HALL=false`) gets the same after its `'d'`.
+
+Slot choice at connect time (`Hall.pickSlot`): for every slot 1..7 count the rooms where it could
+join now, subtract the waiting clients that already hold it, and pick randomly among the best. With
+the current player numbers a conflict is rare; it is reported as `slot taken`.
+
+### 17.6 Rooms and maps
+
+- `ROOMS` names 1..8 maps (`src/maps.js`, F31). Each room has `map = { file, name, terrain,
+  players, titleWire }`; the `'i'` title is built per room in the game's format (F15).
+- Capacity: `players` occupied slots at most (F22). Seats for real players = players − `FAKE_PLAYERS`;
+  `MIN_PLAYERS` is capped per room at the seat count; `FILL_EMPTY_WITH_AI` acts only on 8-player maps
+  (with a smaller map, eight occupied slots would make every client clear the scenario); the config
+  refuses a `FAKE_PLAYERS` that leaves no seat on any map. Slot numbers of a 4-player room may still
+  be any of 1..7: the game counts occupied slots, it does not require low numbers (F12, F22).
+- Size shown: `(players/slots)` with `slots = map players − 1`, the seats a real host would offer
+  next to itself. With `FAKE_PLAYERS=7` a room still reads `(0/7)` although one real player fits;
+  the second one is told `it is full`.
+- Defaults, in room order: Plink - O (jungle), Armageddon, Black Widow, Circle of Friends, Olympus
+  Mons (desert), Hoops of Fury, Rings of fire (jungle), all 8-player maps; the jungle map comes
+  first so that the default selection is a jungle map.
+  fake host in slot 0.
+- Every room logs with `room: n`; the hall logs `hall joined`, `hall -> room`, `hall left`.
+
+### 17.7 Real-client tests (7 Sep 2026)
+
+### 17.8 The chat window: no name for the relay, a header that stays
+
+Two rules from the maintainer (7 Sep 2026, after the fifth round): a line the relay itself writes
+carries **no name** in front (no `"Mercenary: "`), and the hall and room greetings sit **at the top of
+the chat and stay there** while messages arrive.
+
+The client's chat control is a plain ten-line log that wraps at 40 columns and drops lines from the
+top (F35), so the server paints it: `ChatView` (`src/chat.js`) keeps, per client, a static header
+and the most recent messages, wraps every text server-side at 40 columns (so the client never wraps
+anything itself) and renders exactly ten lines, header first, messages below, blanks at the end. Every
+chat event (a relay line, a player's line, a room's announcement, `/rooms`) appends to the affected
+clients' views and sends each of them its ten lines in one packed frame. What the client shows is
+therefore always the render, with the header on top. Entering a room replaces the view (new header,
+no old lines). Headers: hall **six rows** (`Welcome to Dark Colony server 2.1.`, the two command
+lines, `The map line shows the selected room.`, `You may type your name in your row.`, `Room <n>
+(<map>) is selected.`; the last one is rewritten in place on every selection), room one row (`Room
+<n>: <map>, <terrain>, <k> players.`); the rest is for messages: four rows in the hall (so `/rooms`
+shows its last four lines and `/help` is three short lines), nine in a room. The tenth live test
+showed the three instruction lines scrolling away under a flood of comments while the three header
+lines stayed; the maintainer wanted all six to stay, hence the six-row header.
+`"Name: text"` form, since that is what the player typed; the hall replaces that prefix with the
+name the server knows.
+
+Two the same day (§16). First: the hall, the scrolling rows, `/N`, READY into a room and the battle
+worked; the own row behaved as F33 predicts (kept the player's name, accepted typing), which became
+the design; the speed went to 200 ms. Second: eight rooms wanted, so the selected room moved into the
+map line; the size shown became the map's slots without Mercenary; the chat is scrolled clean with a
+new greeting on entering a room; and the "fast, then slow" roll turned out to be the client queuing
+one-command frames (F34), fixed by one packed frame per update. Still to be seen with real clients:
+the packed frames and the map-line display (third test), two players entering the same room through
+the hall, and a client whose slot is 7 (its own row is the last one).

@@ -17,4 +17,10 @@ export function createLogger(level = 'info', out = process.stdout) {
   };
 }
 
+/** The same logger with `fields` (e.g. { room: 2 }) merged into every line. */
+export function childLogger(log, fields) {
+  const wrap = (fn) => (msg, extra) => fn(msg, { ...fields, ...extra });
+  return { level: log.level, debug: wrap(log.debug), info: wrap(log.info), warn: wrap(log.warn), error: wrap(log.error) };
+}
+
 export const silentLogger = createLogger('silent');
