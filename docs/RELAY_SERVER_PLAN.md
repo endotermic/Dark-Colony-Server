@@ -1033,6 +1033,17 @@ above, so that the plan can be followed from scratch without repeating the disco
   countdown; the lobby already did that (`checkStart` cancels when not everyone is ready, a new READY
   starts a fresh countdown), now pinned by a test. Tests: 66, all passing.
 
+**8 Sep 2026, version 2.1 committed, pushed and deployed**
+
+- Commit a411023 "Version 2.1: seven rooms and a room-selection lobby" on main, pushed to
+  github.com/endotermic/Dark-Colony-Server (the logs folder was added to .dockerignore first).
+- fly deploy replaced the machine d8927e5c5ee3d8 in iad in place (image 53 MB, rolling update, health
+  good). The live server logged listening with version 2.1.0, hall on, seven rooms starting with
+  J8PLAY01 Plink - O; a scripted client from this PC got slot 5, the map line
+  >1 Plink - O jungle (0/7) open, the scrolling row for room 1 and the header line
+  Welcome to Dark Colony server 2.1. Production runs the defaults (MIN_PLAYERS=1, FAKE_PLAYERS=1,
+  MARQUEE_MS=200, LOG_LEVEL=info). Real-game test over the internet by players still to come.
+
 ---
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
