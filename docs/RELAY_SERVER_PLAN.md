@@ -89,6 +89,7 @@ Dark-Colony-Server/     (repository root)
     commands.js         command size table, parsers and builders for every message (§10)
     client.js           one TCP connection: socket wired to its current owner (Hall or Room), sequence counters, watchdog bookkeeping, send()
     hall.js             the room-selection lobby: private per-client view, room rows with marquee, chat commands, READY = join (§17)
+    chat.js             the server-painted 10-line chat window: static header, recent lines, wrap at 40 columns (§17.8, F35)
     rooms.js            RoomPool: one Room per ROOMS entry, shared timers
     room.js             one game room with its own map: slots, state machine LOBBY→STARTING→RUNNING→reset, eviction, adopt()
     lobby.js            fake-host behaviour: join dump, message policy, READY handling, MREADY wait (§6)
@@ -97,13 +98,13 @@ Dark-Colony-Server/     (repository root)
     log.js              one-line JSON logs to stdout (fly logs); childLogger stamps the room number
   test/
     helpers.js          Room / RoomPool + Hall with a fake clock, fake sockets, scripted peers
-    frame.test.js, commands.test.js, lobby.test.js, game.test.js, eviction.test.js, fakes.test.js, hall.test.js, integration.test.js
+    frame.test.js, commands.test.js, lobby.test.js, game.test.js, eviction.test.js, fakes.test.js, hall.test.js, chat.test.js, integration.test.js
   tools/
     fakeclient.js       scripted dc16 client: library for the integration test and a CLI (§13)
   docs/
     RELAY_SERVER_PLAN.md, DC16_NETWORK_PROTOCOL.md   (this plan and the protocol reference)
   logs/                 live-test logs, kept out of git
-  Dockerfile, fly.toml, .dockerignore, eslint.config.js, README.md, LICENSE
+  Dockerfile, fly.toml, .dockerignore, eslint.config.js, README.md, CHANGELOG.md, LICENSE
 ```
 
 Node 20 is enough to run it; the Docker image uses Node 22. (The code was developed as `dc-relay/`

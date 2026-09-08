@@ -34,7 +34,7 @@ row shows your name; you can type it there.
 - `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against idle bases.
 
 Version 2.0 (September 2026) is a rewrite; version 1.x lives in the git history. Version 2.1 adds
-the rooms and the room-selection lobby.
+the rooms and the room-selection lobby. The history of releases is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 

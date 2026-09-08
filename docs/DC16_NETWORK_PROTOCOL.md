@@ -329,6 +329,17 @@ Lobby chat: `'e' "Name: text"`. In-game chat: `0x0E from, to_mask, text` (bit *i
 
 ---
 
+### 6.8 Lobby client internals a server must respect
+Found while building the room-selection lobby of server 2.1 (Sep 2026; server plan F29–F36):
+
+* **One frame per loop iteration.** The lobby loop calls the frame reader once per iteration (`0x411132`) and hands the frame to the dispatcher `0x40F918`, which runs every command in it (type byte → table `0x488E54` → handler, until the `0x00` terminator; an unknown type is "SETUP_COMMANDS BAD") and then calls `0x40F6AC` once. Many small frames queue up on the client, so a server should pack the commands of one update into one frame (the original server relays a client's packed `'o'`+`'q'` frames verbatim, so multi-command lobby frames are part of normal play).
+* **The own name field is local.** The `'g'` handler (`0x40F398`) copies the name into the slot record (17 bytes) but repaints the row (`0x423E74`) only when the player is not the client itself (`ss+0xA254`). The own field is an editable `in_text` with the `immediate` flag (`INTRFACE/MULTIE`): every keystroke goes out as `'g'` and the field shows what was typed whatever the server answers.
+* **The slot number is fixed for the connection.** `'d'` is not in the lobby dispatch table; only the join wait (`0x4108DB`) reads it. The meta-server join path (§6.2) receives the state dump without `'d'`, and existing players receive the full dump again at every join, so a second dump in mid-lobby is normal.
+* **The chat control is a ten-line log.** The `'e'` handler (`0x40ECE4`) appends `"\n"` + text to the control's own buffer (up to `0x800` bytes), word-wraps by inserting `'\n'` at the last space when a line reaches width − 1 = 40 columns, then drops the first line while the text does not fit (`0x424608`). Ten lines of at most 40 characters therefore replace what is shown. The `"Name: "` in front of a player's line is the sending client's convention, not something the handler needs.
+* **The READY button is a checkbox.** Control 133 (`checkb 133` in MULTIE). Its click handler (`0x4115A9`–`0x411636`) sends `'h'(2, own)` on the checked event and `'h'(1, own)` on any other event, after a client-side refusal when the own colour is locked (`0x4272A8(ui, 0x85, 0)` at `0x411608`). Only the click and that refusal change the button's state. The `'h'` handler (`0x40F23C`) stores the status, maintains the colour-lock table (`ss+0x248`, `0x40F315`) and drives the **row** checkbox `16 + player` (`0x4272A8` at `0x40F38B`); the lobby refresh only enables or disables control 133 (`0x424514` at `0x40FF96`/`0x40FFC5`). No message can un-press the button.
+* **Screen layout** (`INTRFACE/MULTIE`): eight 16-character name fields (`in_text`, `immediate`), 6-character read-only type and race columns derived from the slot values, a 55-character map line (the `'i'` title, whose free part is 42 characters, §4.1), a 41 × 10 chat window and a 255-character chat input.
+* **Map names.** Every `SCENARIO/MPLAYER/*.SCN` starts with the terrain file, the base name and the display name that the host puts into the `'i'` title; Classic ships 56 maps (the table is `src/maps.js` of the server).
+
 ## 7. Constants
 
 | Constant | Value | Where |
