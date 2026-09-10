@@ -1704,7 +1704,7 @@ the game. **Not yet seen in the game.** The `unmask` blit path was inferred from
 backdrop, not read; if the game masks index 0 after all, the rebaked sprites still work (their
 stars then coincide with the background's).
 
-#### 10.12 The Windows pointer: an uninitialised class cursor and a `WM_SETCURSOR` that falls through **(verified in code; game test pending)**
+#### 10.12 The Windows pointer: an uninitialised class cursor and a `WM_SETCURSOR` that falls through **(verified; confirmed in game 10 Sep 2026)**
 
 Symptom on a modern Windows: the system pointer shows over the game — a plain arrow on the first
 loading screen, and later, on the main menu and in battle, an icon-sized block that flickers
@@ -1757,11 +1757,12 @@ tail is 471 zero bytes), only the class-name pointer differs (`0x0048591C` vs `0
 relative displacements are therefore the same in both builds. Applied to both repository exes on
 10 Sep 2026 on top of the 165 resolution edits; `patch_cursor.py verify` tells stock from patched
 by the window-procedure bytes, so it does not depend on MD5s. Both patched binaries were
-re-disassembled and the eight regions decode as intended. **Not yet seen in the game.** If the
-arrow still shows on the loading screen after this, the remaining suspect is window ghosting
+re-disassembled and the eight regions decode as intended. **Confirmed in the game by the maintainer
+on 10 Sep 2026: no system pointer on the loading screen, the main menu or in battle.** Had the
+arrow still shown on the loading screen, the remaining suspect would have been window ghosting
 (the thread does not pump messages while loading; the ghost window Windows substitutes after
-~5 s has an arrow class cursor) — the remedy would be `DisableProcessWindowsGhosting` via
-`LoadLibraryA`/`GetProcAddress` at start-up, not another cursor call.
+~5 s has an arrow class cursor) — the remedy would have been `DisableProcessWindowsGhosting` via
+`LoadLibraryA`/`GetProcAddress` at start-up, not another cursor call; it was not needed.
 
 ### Stage 4 — cursors and movies
 
