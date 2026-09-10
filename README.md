@@ -88,12 +88,20 @@ only a stock Python 3 (no third-party packages).
   projectiles, damage, upgrades, day/night.
 - `docs/DC16_DISPLAY_AND_RESOLUTION.md` - display pipeline (DirectDraw, software blitters, HUD
   geometry, mouse, movies), every resolution-dependent code site, the staged 1024x768 upgrade
-  (sections 8-10) and the Windows-pointer fix (section 10.12).
+  (sections 8-10), the Windows-pointer fix (section 10.12) and the OZI MISSIONS campaign mode
+  (section 10.13).
 - `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `DCEXP16.EXE`
   (verify / plan / apply, staged, byte-checked, keeps a `.bak`).
 - `tools/patch_cursor.py` - keeps the Windows mouse pointer hidden over the game window (the stock
   exe registers its window class with an uninitialised cursor handle and lets `DefWindowProc`
   restore it on every `WM_SETCURSOR`); verify / plan / apply, keeps a `.cursor.bak`.
+- `tools/patch_ozi_menu.py` - adds the "OZI MISSIONS" campaign mode to Council Wars' `DCEXP16.EXE`
+  (the ozi_ns mission pack, 22 missions, selectable from the main menu in place of PLAY INTRO;
+  verify / plan / apply, keeps a `.ozi.bak`); `tools/build_ozi_overlay.py` installs the pack's data
+  (dry run / `--apply`). Section 10.13 of the display document explains both.
+- `tools/patch_pool.py` - enlarges the game's single memory arena (`smalloc.c` local pool) from
+  11.5 MB to 32 MB in both exes; the 1024x768 screens and the pack's extra unit banks had used up
+  the stock headroom (verify / plan / apply, keeps a `.pool.bak`).
 - `tools/hud_layout.py` - redraws the in-game HUD frame for the new resolution (region geometry,
   tracing layers, the `MAINE` widget transform).
 - `tools/pad_background.py` - letterboxes the interface screens into a larger framebuffer (plan /
@@ -105,6 +113,9 @@ only a stock Python 3 (no third-party packages).
 ```bash
 python tools/patch_cursor.py verify "../Dark-Colony/DC - Classic/dc16.exe"
 python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
+python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
+python tools/patch_pool.py verify "../Dark-Colony/DC - Classic/dc16.exe"
+python tools/build_ozi_overlay.py "../Dark-Colony/DC - Council wars"          # dry run
 ```
 
 ---

@@ -1764,6 +1764,121 @@ arrow still shown on the loading screen, the remaining suspect would have been w
 ~5 s has an arrow class cursor) — the remedy would have been `DisableProcessWindowsGhosting` via
 `LoadLibraryA`/`GetProcAddress` at start-up, not another cursor call; it was not needed.
 
+#### 10.13 A second campaign in the main menu: the ozi_ns mission pack as a *mode* of four strings **(verified by re-disassembly; game test pending)**
+
+The ozi_ns mission pack (2010, 22 missions in two campaigns: Globo `hxscene` and Taar Council
+`gxscene`) was shipped as a hex-edited Polish Council Wars exe plus an overlay folder. What its exe
+changed shows how Council Wars finds its data, and that is the whole basis of the integration:
+
+* **One overlay helper opens every data file.** `0x004063E4` copies the prefix string stored at
+  `0x004826D0` (stock `exp/`, an 8-byte slot in `DGROUP`), appends the name, tries to open it,
+  and on failure opens the bare name — i.e. the file in the game root. `exp/` is therefore not a
+  folder the code knows about, it is a string. The wave loader `0x00452AB0` (`OpenFile` based,
+  used for the `sound2.dat` table, ambience and briefings) has its own copy of the prefix at
+  `0x00487DC8`, and the save folder `esave` sits in two more 8-byte slots: `0x00482344` (the LOAD
+  GAME screen `0x0040388C`) and `0x00485E5C` (the in-game save/load dialog). All four are writable.
+  ozi_ns's exe simply held `M1PACK/` and `msave` there (plus `missiee/` for briefings and `.kor`
+  for scene lists — the Polish edition's own extension); no code was changed.
+* **What is loaded when.** Balance tables (`0x0043C4AC` ← `0x0041BB50` ← the game start
+  `0x0040122C`; also from the save loader `0x0040E1F4`), `sound/slist.dat`, scene lists, missions,
+  terrains and the interface scripts are read per game or per screen. But `anim.dat` is read once
+  at start-up (`0x00405264` → `0x004051CC`), and for every line `0x0042565C` loads the FIN
+  (`animate/%s`) and each sprite bank it names (`sprites/%s`, `0x0042538C`); `sound2.dat`
+  (`0x004309C8`, a fixed 200-entry table — `cmp edx,0C8h` at `0x00430A62`) is read at start-up too.
+  Whatever a campaign mode needs from those has to be in the base set.
+
+**Design (maintainer decisions, 10 Sep 2026):** Council Wars keeps its single-column menu; the
+useless PLAY INTRO button becomes **OZI MISSIONS** and the unused SINGLE PLAYER WAR button (id 4)
+comes back as **OZI LOAD** below it (column x=422: NEW CAMPAIGN 541, LOAD GAME 567, OZI MISSIONS
+593, OZI LOAD 619, QUIT 645 — the backdrop there is plain erase colour); the pack's new models go
+into the shared `exp/` so both campaigns see them; the pack's briefing speech is included after all
+(the first decision against it was reversed once the missing files proved fatal, see below). A
+*mode* is the content of the four slots:
+
+| slot | VA | Council Wars | OZI missions |
+|---|---|---|---|
+| overlay prefix (`0x004063E4`) | `0x004826D0` | `exp/` | `ozi_ns/` |
+| wave-loader prefix (`0x00452AB0`) | `0x00487DC8` | `exp/` | `ozi_ns/` |
+| save folder, LOAD GAME screen | `0x00482344` | `esave` | `ozisave` |
+| save folder, in-game dialog | `0x00485E5C` | `esave` | `ozisave` |
+
+**Code (`tools/patch_ozi_menu.py`, `DCEXP16.EXE` only — the pack is Council Wars content):**
+
+| Site | VA (file) | Change |
+|---|---|---|
+| PLAY INTRO handler, button id 0x10 | `0x004050DD` (`0x44DD`), 96 bytes | now the OZI handler: `gs+0x14F4 = 1` (expansion scenes), `gs+0x14F0 = 0` (campaign) exactly as NEW CAMPAIGN sets them, `call stub_pack`, `call 0x00401C08` (campaign runner), `jmp 0x0040513D` (the shared between-mission loop); rest NOP |
+| NEW CAMPAIGN / TRAINING → campaign runner | `0x00405065`, `0x00405083` | `call 0x00401C08` → `call tramp_cw_campaign` |
+| LOAD GAME (button id 2) | `0x004050BF` | `call 0x00403AA4` → `call tramp_cw_load`: always the Council Wars saves |
+| SINGLE PLAYER WAR (button id 4) → **OZI LOAD** | `0x004050AB` | `call 0x00405AE4` (its only caller) → `call tramp_pack_load`: always the pack's saves |
+| `stub_pack` | `0x0047F240` (`0x7E640`), 73 bytes | `push eax/edi`; four × (`mov edi,slot; mov eax,imm; stosd; mov eax,imm; stosd`) writing `ozi_ns/` / `ozisave`; `pop; ret` |
+| `stub_cw_set` | `0x0047F290` (`0x7E690`), 73 bytes | same with `exp/` / `esave`; `pop; ret` (v1 of the patch tail-jumped into `0x00401C08` from here) |
+| `tramp_cw_campaign` / `tramp_cw_load` / `tramp_pack_load` | `0x0047F2E0` / `0x0047F2F0` / `0x0047F300`, 10 bytes each | `call stub; jmp target` — targets `0x00401C08`, `0x00403AA4`, `0x00403AA4`; relative only, no relocations |
+| `.reloc` block `0x5000` | | the two operands of the old handler (`0x004050DE` → `.bss`, `0x00405103` → `DGROUP`) become `IMAGE_REL_BASED_ABSOLUTE` padding |
+| `.reloc` block `0x7F000` | file `0xA002C` | eight new HIGHLOW entries for the `mov edi,imm32` operands (`0x243 0x254 0x265 0x276 0x293 0x2A4 0x2B5 0x2C6`); the block grows `0xC0` → `0xD0`, every later block shifts by 16 bytes (52 bytes of slack in the section), the base-relocation directory size becomes `0x93DC` |
+
+The other two callers of the campaign runner — mission continuation at `0x00405165` and the
+post-load call at `0x00403B29` — stay direct, so the mode is *sticky* for everything that is not
+a menu button: after OZI MISSIONS or OZI LOAD the game stays in pack mode (main menu included —
+the overlay carries a copy of the 1024×768 `bintroe`) until NEW CAMPAIGN, TRAINING or LOAD GAME
+is pressed. The two load buttons are deterministic: LOAD GAME lists `esave/` and continues the
+Council Wars campaign, OZI LOAD lists `ozisave/` and continues the pack's; in-game saving goes to
+the folder of the current mode, so a save is always listed by the button that can load it. At
+start-up the slots hold their stock strings, i.e. Council Wars. Both stubs preserve `eax` (screen
+object) and `edx` (game state), the arguments of `0x00401C08` and `0x00403AA4`; the handlers of
+buttons 2 and 4 load them identically (`mov edx,eax; mov eax,[ebp-4]`).
+Patched exe re-disassembled: the handler, both stubs and the two calls decode as intended, the
+relocation table parses with 142 blocks and no other byte differs from the input.
+
+**Data (`tools/build_ozi_overlay.py`, from the pack folder `OZI_NS/M1PACK` kept beside the game repository in `Documents` — local material, never committed (the game repo's `.gitignore` also blocks a copy inside it)):**
+
+* base set `exp/`: `dalg`/`spyo`/`reae` FIN + SPR (the pack's new units — Reaper II also uses ten
+  effect banks that Council Wars already has), three lines appended to `anim.dat`, the pack's
+  `tran.fin` + `tran.spr` replacing the stock transport (a smoke animation and a real 42 KB sprite
+  for the pack's "transmitter"/"Generator"; no Council Wars or Classic balance table has a TRAN
+  row), and `textmsg 8` in `exp/intrface/bintroe` = `OZI MISSIONS`;
+* overlay `ozi_ns/` (363 files, 23 MB): both campaigns' 22 mission sets, the pack's `gamestat/`
+  (unit types 118–125, `unitid`, `mbullet` column 13, weapon tweaks; scene lists renamed
+  `.kor` → `.txt` because our exe appends `.txt`, `0x00482204`, and their `frame x y` globe-marker
+  lines shifted by (192,144) like the stock lists — third game test: the location circle sat at
+  its 640×480 place), `sound/` (its `slist.dat`,
+  ambience, the new WAVs), terrains `gatlan`/`gjungle`/`special` and the Council Wars terrains
+  the pack copied (the fallback is the *root*, not `exp/`, so the overlay must be complete relative
+  to the root — it is: the only `exp/` files invisible in pack mode are Council Wars' own missions,
+  briefings and scene lists), the English story/credits texts, and copies of our 1024×768
+  `bintroe`/`shumane`/`introe` in place of the pack's 640×480 screens; `ozisave/` is created.
+* **Not merged:** `sound2.dat`. The pack overwrote slots 6, 15, 16, 17 with Dalgar voices and a
+  commando weapon; 15 and 17 are the gun sounds of Council Wars units 39/55/56 and the table has
+  no free slot (all 200 entries point at existing files), so in pack mode the Dalgar and commandos
+  borrow gray-alien sounds. A later patch of the table size would lift this. The pack's
+  `horn`/`pimp`/`snak` FIN variants turned out to be the Polish CW originals, not edits, so our
+  English ones stay. Briefings: the pack's Polish speech stays out (decision), but the WAVs cannot
+  simply be absent — the first game test (10 Sep 2026) ended on the story screen with "Please
+  insert The Dark Colony Expansion Pak CD" and an exit. That is the wave loader `0x00452AB0`:
+  after the prefixed and the bare name fail it builds the CD path (`0x00405E80`, `%c:\dc\`), and
+  when that `OpenFile` fails too it logs `unable to open file`, tears the display down
+  (`0x0042E310`, `0x00430928`), shows the prompt (`MessageBoxA`, string `0x00487DF8`) and exits
+  (`0x0047C157`) — the CD-check patches never touched this path. So the overlay tool writes 22
+  silent 0.1 s WAVs (`ozi_ns/mission/h1..h11.wav`, `g1..g11.wav`, stock briefing format 44.1 kHz
+  stereo 16 bit), one per scene-list entry. The same rule holds for any other WAV a pack mission
+  might name: missing in overlay *and* root means the CD prompt, not silence.
+* **The local pool (second game test, 10 Sep 2026).** With the briefing WAVs in place the run
+  ended one screen later in `error.log`: `SMalloc: Out of memory in local pool` / `assert failure,
+  file smalloc.c line 97`. `smalloc.c` is a single arena created once at start-up —
+  `mov eax,0AF79E0h; call 0x0040C0BC` at `0x00405319` (Classic `0x00405334`), 11 500 000 bytes —
+  from which `SMalloc(pool, size, name)` (`0x0040C0FC`) hands out stack-like blocks (16-byte header,
+  magic `1234ABCDh`, released back to a named mark by `0x0040C22C`/`0x0040C26C`). Its tenants,
+  from the 96 call sites: every sprite bank the start-up animation list names (`0x0042538C`, ~7.2 MB
+  of SPR cells in Council Wars, +0.74 MB with the pack's `dalg`/`spyo`/`reae`/`tran`), one
+  framebuffer per interface screen ("Background memory" `0x0042C199` — 786 KB at 1024×768 instead
+  of 307 KB), the mission's lightplane (`0x00453800`), tiles and remappings (`0x0045306B`),
+  "kev: mapinfo" 633 KB, "kev/marc: coloursetup" 393 KB, "gifbuffer" 256 KB, "Gamestate" 291 KB,
+  the flat maps, "Krusty AI", the widgets. So the 1024×768 build had already used most of the
+  stock headroom and the pack's extra banks pushed the briefing screen over the edge. WAV data is
+  *not* a tenant (`0x004529C0`: `GlobalAlloc`), so neither the 17 KB placeholders nor the pack's
+  4.4 MB briefings mattered. Fix: `tools/patch_pool.py` sets the constant to 32 MiB
+  (`0x02000000`) in **both** exes — one `imm32`, found by its byte pattern, no relocation involved;
+  the size check is unsigned and block offsets are 32-bit, so nothing else depends on the value.
+
 ### Stage 4 — cursors and movies
 
 * Cursors are `IDirectDrawSurface` blits at 1:1, so they simply look small. Redrawing
@@ -1938,6 +2053,11 @@ parse), which de-risks them completely.
 | `0x0042E688` | `create_window`: `WNDCLASSA` at `[ebp-0x28]`, `hCursor` `[ebp-0x10]` uninitialised in stock (§10.12); `CreateWindowExA` `0x0042E710`, `ShowWindow`/`UpdateWindow` `0x0042E783`/`0x0042E794` |
 | `0x0042F1C8` / `0x0042F2B0` | message pump (`PeekMessageA` for `WM_SYSCOMMAND`, `WM_SETCURSOR`, `WM_DESTROY`) / per-frame `SetCursor(NULL)` + pump |
 | `0x0047EF8A`ff | import thunks (`jmp dword ptr [IAT]`), `SetCursor` `0x0047EFF0`; zero tail `0x0047F1CA`–`0x0047F1FF` holds the §10.12 stub at `0x0047F1D0` |
+| `0x004063E4` | **overlay file open**: prefix slot `0x004826D0` (`exp/`, 8 bytes) + name, fallback bare name in the game root (§10.13); wave-loader copy of the prefix `0x00487DC8`; save folder slots `0x00482344` / `0x00485E5C` |
+| `0x00404DC8` | main menu: `bintro` load `0x00404EC4`, button dispatch `0x0040502C`ff (0 NEW CAMPAIGN → `gs+0x14F4=1`, 1 TRAINING → `gs+0x14F0=3`, 2 LOAD GAME `0x00403AA4`, 3 MULTI `0x00405C20`, 4 SINGLE `0x00405AE4`, 5 ENCYCLO `0x00402614`, 0x0C QUIT, 0x10 PLAY INTRO → OZI MISSIONS §10.13), between-mission loop `0x0040513D`; campaign runner `0x00401C08` |
+| `0x004051CC` / `0x0042565C` | start-up `anim.dat` reader / FIN + sprite-bank loader (`animate/%s`, `sprites/%s` `0x0042538C`); `0x004309C8` `sound2.dat` (200 entries); balance tables per game `0x0043C4AC` |
+| `0x0047F240` / `0x0047F290` / `0x0047F2E0`ff | §10.13 `stub_pack` / `stub_cw_set` and the three trampolines in the AUTO zero tail (DCEXP16); `0x00405AE4` SINGLE PLAYER WAR (dead since OZI LOAD took its button) |
+| `0x0040C0BC` / `0x0040C0FC` / `0x0040C22C` | `smalloc.c`: create the local pool (size `imm32` at `0x00405319`, Classic `0x00405334`; stock 11.5 MB, patched 32 MiB, §10.13) / allocate / release; tenants listed in §10.13 |
 | `0x0042C29C` | `driver_create` — builds `ctx` (0xEC) + `screen`, sets clip/bounds |
 | `0x0042C405`ff | copies `screen+0x100…` method slots into `ctx+0x30…` |
 | `0x0042E688` | `create_window` (reads the globals) |
