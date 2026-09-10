@@ -1879,6 +1879,34 @@ relocation table parses with 142 blocks and no other byte differs from the input
   (`0x02000000`) in **both** exes — one `imm32`, found by its byte pattern, no relocation involved;
   the size check is unsigned and block offsets are 32-bit, so nothing else depends on the value.
 
+#### 10.14 Default game speed 150 % **(verified by disassembly; first game test showed the second site was needed)**
+
+The simulation runs one tick every `gs->tick_ms` milliseconds (game state `+0x970`); the frame
+loop at `0x0041E2FC` compares the elapsed time with it. Two values feed that field:
+
+* the game-state initialiser (`0x0041BB50`, run at the start of every mission) sets it to
+  **66 ms** at `0x0041BBFC` (`mov dword ptr [esi+970h],42h`; Council Wars `0x0041BC5C`), followed
+  by the eight per-player `max_speed` slots at 33 ms (the engine's floor, 200 %);
+* four **persistent settings** live in `DGROUP` globals — Classic `0x00488DE0..0x00488DEC`,
+  Council Wars `0x00488E08..0x00488E14`, stock values `2,5,5,66` in both — which the main
+  menu copies into the campaign object at `+0x1984..+0x1990` on entry (`0x00404E27`ff) and back on
+  exit (`0x0040517E`ff; the options screen writes them there via `0x0040B38D`ff). The fourth is the
+  desired tick length. The per-game start-up `0x0041EA43` copies it into `gs->desired_ms`
+  (`+0x96C`, `0x0041EB29`), and the speed negotiation `0x00419830` — which runs in single player
+  too — sends `TICK_SPEED(max(desired, slowest player))`, whose handler `0x0041DD6C` writes
+  `tick_ms`. Patching only the initialiser is therefore undone within the first second of a
+  mission: the first game test still showed 100 %.
+
+The options screen (`intrface/lopt`, constructor `0x00432ECB`) shows `percent = 6600 / tick_ms`
+rounded down to tens (`0x00432F10`; the slider runs 100..200 in steps of 10) and writes a change
+as `TICK_DESSPEED(6600 / percent)` (`0x00432CD3`, plan F11). There is no settings file.
+
+`tools/patch_speed.py` sets both dwords to **44 ms = 150 %** in both exes (sites found by byte
+pattern: `C7 86 70 09 00 00 imm32`, and `A1 <global> 89 82 90 19 00 00` for the settings copy,
+each unique in both builds). The slider keeps working, multiplayer is unaffected because the relay
+server dictates `TICK_SPEED(33)` (plan R11), and a save game carries the speed it was saved with.
+Applied to both repository exes on 10 Sep 2026.
+
 ### Stage 4 — cursors and movies
 
 * Cursors are `IDirectDrawSurface` blits at 1:1, so they simply look small. Redrawing
@@ -2058,6 +2086,7 @@ parse), which de-risks them completely.
 | `0x004051CC` / `0x0042565C` | start-up `anim.dat` reader / FIN + sprite-bank loader (`animate/%s`, `sprites/%s` `0x0042538C`); `0x004309C8` `sound2.dat` (200 entries); balance tables per game `0x0043C4AC` |
 | `0x0047F240` / `0x0047F290` / `0x0047F2E0`ff | §10.13 `stub_pack` / `stub_cw_set` and the three trampolines in the AUTO zero tail (DCEXP16); `0x00405AE4` SINGLE PLAYER WAR (dead since OZI LOAD took its button) |
 | `0x0040C0BC` / `0x0040C0FC` / `0x0040C22C` | `smalloc.c`: create the local pool (size `imm32` at `0x00405319`, Classic `0x00405334`; stock 11.5 MB, patched 32 MiB, §10.13) / allocate / release; tenants listed in §10.13 |
+| `0x0041BBFC` (CW `0x0041BC5C`) / `0x00488DEC` (CW `0x00488E14`) | `gs->tick_ms` (`+0x970`) initialiser and the persistent desired-tick setting (4th of the globals `0x00488DE0..` / `0x00488E08..`), both stock 66 ms = 100 %, patched 44 ms = 150 % (§10.14); copied into `gs->desired_ms` (`+0x96C`) at `0x0041EB29`, applied by the negotiation `0x00419830`; options-screen maths `0x00432F10` / `0x00432CD3` |
 | `0x0042C29C` | `driver_create` — builds `ctx` (0xEC) + `screen`, sets clip/bounds |
 | `0x0042C405`ff | copies `screen+0x100…` method slots into `ctx+0x30…` |
 | `0x0042E688` | `create_window` (reads the globals) |

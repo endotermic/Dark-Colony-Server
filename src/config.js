@@ -14,7 +14,7 @@ export const DEFAULTS = Object.freeze({
   MARQUEE_MS: 200, // hall: one character of scrolling per step in the room rows
   PACK_LOBBY_FRAMES: true, // several commands per lobby frame (F34); false = one command per frame as in 2.0
   PROTOCOL_VERSION: 15,
-  TICK_MS: 33, // 200 % (options screen: ms = 6600 / percent)
+  TICK_MS: 44, // 150 % (options screen: ms = 6600 / percent), the single-player default since 10 Sep 2026
   LOOKAHEAD: 8,
   MAX_LAG: 200,
   MIN_PLAYERS: 1, // real players needed before the countdown may start (maintainer, 7 Sep 2026: 1)

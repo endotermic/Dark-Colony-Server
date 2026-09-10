@@ -26,7 +26,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R8 | Default map **ARMAGEDDON** (8-player desert) | `'i' "D8PLAY01.SCN", "Armageddon"` |
 | R9 | Random placement for every new game | Joiners get a random free lobby slot; see §7 for why this is the only lever |
 | R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x0F`, `0x03` are dropped |
-| R11 | 200 % game speed, clients cannot change it | Server sends `TICK_SPEED(33)` itself and drops `0x11/0x12/0x13` from clients |
+| R11 | 150 % game speed (200 % until 10 Sep 2026), clients cannot change it | Server sends `TICK_SPEED(44)` itself and drops `0x11/0x12/0x13` from clients |
 | R12 | Clients may drop out or misbehave; a client that does not answer every message correctly is removed and everybody is told it left the lobby or the battle | Per-phase expected answers, deadlines and violation rules (§9); the eviction broadcasts `'h' 0` + `DISCONNECT` in the lobby and a `DISCONNECT` inside the next sync frame in battle |
 | R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room; chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
 
@@ -46,13 +46,13 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F8 | The `UNTIL` reader needs ≥ 8 bytes and asserts it consumed exactly 8; trailing bytes are ignored. | `0x420F34` | Trailing commands in the same frame are safe |
 | F9 | Executor runs whole frames and stops after the frame whose `UNTIL` handler cleared `gs->until` (that handler asserts `until == gs->until`, sends `UNTIL(-1, until)`, sets `gs->until = -1`). Pacing then re-arms from the next held frame whose first byte is `0x02`. | `0x41E0D8`, `0x41CD34`, `0x41E36E`–`0x41E3E3` | Exactly one `UNTIL` per frame; `until` values strictly increasing; several sync frames may be in flight |
 | F10 | On receipt of `UNTIL(a, until)` the client sends back a **rebuilt** 9-byte `UNTIL(a, until)` frame (echo); when it reaches `until` it sends `UNTIL(-1, until)`. | `0x41E4B4`–`0x41E544`, `0x41CDC7` | Consume both; `a ≠ -1` = latency sample, `a = -1` = `clientTime[slot] = until` |
-| F11 | Options screen speed percent → `TICK_DESSPEED(6600 / percent)`; only `0x11 TICK_SPEED` changes `gs->tick_ms`; clients compute `TICK_SPEED` from the `TICK_MAXSPEED` reports they receive. | `0x432CD3`, `0x41DD6C`, `0x419830` | **200 % = 33 ms** per tick (the game's own minimum, `0x419883`). Server sends `TICK_SPEED(33)`; client `0x11/0x12/0x13` are dropped |
+| F11 | Options screen speed percent → `TICK_DESSPEED(6600 / percent)`; only `0x11 TICK_SPEED` changes `gs->tick_ms`; clients compute `TICK_SPEED` from the `TICK_MAXSPEED` reports they receive. | `0x432CD3`, `0x41DD6C`, `0x419830` | **150 % = 44 ms** per tick since 10 Sep 2026 (the single-player default of the patched exes; 200 % = 33 ms, the game's own minimum `0x419883`, until then). Server sends `TICK_SPEED(TICK_MS)`; client `0x11/0x12/0x13` are dropped |
 | F12 | Start positions: at game start each client seeds the game RNG from a global that is never written (always 0), lists lobby slots with type ≠ 3 in ascending order into 8 entries padded with −1, Fisher–Yates-shuffles `N = filename[1] - '0'` entries, and the position of a slot in the shuffled list is its game player index (= start location). | `0x4014F8`–`0x40159F`; RNG `0x4120E0/0x4120F0`, table `0x488F20` | The shuffle is the same every game. Randomness can only come from **which lobby slots are occupied**. With `k` occupied slots the same `k` start locations are always used and only the assignment of players to them varies, unless all 8 slots are occupied (§7) |
 | F13 | Cheats: in-game chat `0x0E` text after `':'` equal to `we need equipment`, `I'm fighting for that equipment`, `slag net`; `0x04` with `a ∉ {1,2}` toggles debug flags; `0x0F` = +1000 P7; `0x03` spawns objects and has no legitimate sender. | `0x41DA2C`, `0x41CE9C`, `0x41DBB0`, `0x41CF08` | Drop them |
 | F14 | `0x08` sync check; sent every tick by the connected human with the **lowest network slot that is not marked lost** (`0x419F1B`–`0x419F54`). With Mercenary in slot 0 that is always Mercenary, which has no client, so **nobody sends checksums** and the game's own desync detection is inert. A receiver that detects a mismatch prints "sync error" and fails an assertion, i.e. terminates (`0x44AC94`). | `0x41CE74`, `0x419F4B` | Drop (R5), always. Decision of 7 Sep 2026: checksums are neither generated (fake human in slot 0) nor forwarded, the game runs fine without them; the temporary diagnostic flags used for the two-player sync test were removed |
 | F15 | `'i'` carries the scenario file name relative to `scenario/mplayer/` (client formats `"scenario/mplayer/%s"`) and the title. **The title is not free text**: the host builds it with `sprintf("%-43s (%d Player %s)", name + "\n", players, "Desert Map ")` (format string `0x48319C`, terrain strings `0x483190`), and every lobby client reads `title[45]` as the map's player count (`0x41141F`): when that digit is smaller than the number of occupied slots the client clears the scenario and un-readies everybody (`0x41143B`–`0x41144C`). The file name's 2nd character is read as the player count at game start (`0x401504`). | `0x40FB5C`, `0x410733`, `0x41141F` | File `"D8PLAY01.SCN"`, title `"Armageddon\n" + 32 spaces + " (8 Player Desert Map )"` (66 chars, `(` at index 44). A plain "Armageddon" made every real client send `'i' "", ""` plus un-ready messages a second after joining (live test) |
 | F16 | Names: 16 chars + NUL. Buffers: lobby receive 1416, in-game receive 1024, held commands 7168. | `0x41F701`, `0x41E65B` | Frame budget in §8 |
-| F17 | Original server constants: tick 66 ms, look-ahead 8 ticks, stall when `until − min(clientTime) ≥ 200`, ≤ 255 ticks per step, `DISCONNECT(slot)` in-game → AI takes over. | `0x40B7CC` | Reused, with tick 33 ms |
+| F17 | Original server constants: tick 66 ms, look-ahead 8 ticks, stall when `until − min(clientTime) ≥ 200`, ≤ 255 ticks per step, `DISCONNECT(slot)` in-game → AI takes over. | `0x40B7CC` | Reused, with tick 44 ms (33 ms until 10 Sep 2026) |
 | F18 | Client sockets are blocking with Nagle on; lobby clients send `'q'` every 700 ms; in-game they echo every `UNTIL`. | §2.1/§6.1 of the protocol doc | `setNoDelay(true)` on the server; liveness = "bytes seen recently" |
 | F19 | The in-game `DISCONNECT`, `TICK_SPEED` etc. are ordinary held commands (first byte ≠ 1/2/4), i.e. they execute at the next `UNTIL` boundary. | F6 | Put them inside sync frames like any other command |
 | F20 | Leaving the lobby does not release the colour lock: the lobby `DISCONNECT` (`0x40F5B0`) and `NUKE` (`0x40EF84`) handlers reset type, status and CD flag but never touch the lock table `ss+0x248`. Only an `'h'` with status 0/1 for a slot that was ready clears its colour's lock (`0x40F315`); the whole table is cleared only when the lobby screen is entered (`0x410D4A`). | all writes to `+0x248` in setup.c | If a ready player disconnects, its colour stays locked on every remaining client and nobody with that colour can become ready. The server must broadcast `'h'(0, slot)` **before** `DISCONNECT(slot)` |
@@ -79,7 +79,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 
 ```
 Dark-Colony-Server/     (repository root)
-  package.json          "type": "module", "engines": { "node": ">=20" }, scripts: start, test, fakeclient, lint
+  package.json          "type": "module", "engines": { "node": ">=20" }, scripts: start, test, fakeclient, smoketest, lint
   src/
     index.js            entry: config → RoomPool + Hall → net.createServer, step/watchdog timers, optional health listener
     config.js           env-var parsing with defaults (§11), ROOMS → ROOM_LIST
@@ -100,7 +100,8 @@ Dark-Colony-Server/     (repository root)
     helpers.js          Room / RoomPool + Hall with a fake clock, fake sockets, scripted peers
     frame.test.js, commands.test.js, lobby.test.js, game.test.js, eviction.test.js, fakes.test.js, hall.test.js, chat.test.js, integration.test.js
   tools/
-    fakeclient.js       scripted dc16 client: library for the integration test and a CLI (§13)
+    fakeclient.js       scripted dc16 client: library for the integration test and a CLI (§13); READY policies auto/hold/follow
+    smoketest.js        seats scripted clients in rooms of a running server (default: 7 in room 1, 3 in room 2) for tests with the real game (§13.7)
   docs/
     RELAY_SERVER_PLAN.md, DC16_NETWORK_PROTOCOL.md   (this plan and the protocol reference)
   logs/                 live-test logs, kept out of git
@@ -379,7 +380,7 @@ function step(now) {
 
 - `until` is strictly increasing (n ≥ 1), satisfying F9's assertion `until > game_time` on re-arm.
 - `minClientTime()` is over connected real clients only. With no client left the room resets.
-- `TICK_SPEED(33)` is queued again every `SPEED_REFRESH_S` (default 30 s) and after every resume;
+- `TICK_SPEED(TICK_MS)` is queued again every `SPEED_REFRESH_S` (default 30 s) and after every resume;
   it is idempotent for the client (F11) and guards against a missed first frame.
 - Every broadcast sync frame registers a pending echo for each client (`pendingEchoes.set(time, now)`);
   the echo deadline and the stall handling are described in §9.
@@ -500,7 +501,7 @@ they can reconnect once the room is back in LOBBY.
 
 ### 9.5 Lag eviction
 
-The lockstep stalls when `until − minClientTime() ≥ MAX_LAG` (200 ticks, 6.6 s at 33 ms). The
+The lockstep stalls when `until − minClientTime() ≥ MAX_LAG` (200 ticks, 8.8 s at 44 ms; 6.6 s at 33 ms). The
 original server stalls forever. Here the step loop records when a stall began and which slot has the
 smallest `clientTime`. If the stall persists for `LAG_DROP_MS` (10 s) that slot is evicted (one per
 check, then re-evaluate); the record is cleared as soon as the condition clears. `LAG_DROP_MS=0`
@@ -569,7 +570,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `MARQUEE_MS` | `200` | hall: the room rows scroll one character per this many ms (≥ 50); 300 was too slow for the maintainer (7 Sep 2026) |
 | `PACK_LOBBY_FRAMES` | `true` | several commands per lobby frame (F34): one frame per marquee step and per dump; `false` = one command per frame as the original host and 2.0 |
 | `STATS_INTERVAL_S` | `30` | in-battle stats log line (latency, ticks behind, pending echoes, stalls); `0` = off |
-| `TICK_MS` | `33` | 200 % speed (F11) |
+| `TICK_MS` | `44` | 150 % speed (F11); `33` = 200 % until 10 Sep 2026 |
 | `LOOKAHEAD` / `MAX_LAG` | `8` / `200` | lockstep constants (F17) |
 | `MIN_PLAYERS` | `1` | real players needed before the countdown may start (default 2 until 7 Sep 2026; the maintainer set it to 1, so a lone player can start against the idle Mercenary) |
 | `START_COUNTDOWN_S` | `3` | seconds between "everyone ready" and `'h' 2,0` |
@@ -615,7 +616,7 @@ Facts that matter:
   so two machines would be two different servers.
 - **Concurrency limits** (`hard_limit 50`, `soft_limit 30`) from the working config are more than the
   8 connections a game needs; keep them.
-- **Size.** Traffic is tiny (keep-alives every 700 ms, sync frames every 33 ms of at most 1 KiB);
+- **Size.** Traffic is tiny (keep-alives every 700 ms, sync frames every 44 ms of at most 1 KiB);
   the default `shared-cpu-1x` / 256 MB machine is enough. Fly proxy idle timeouts are not a concern
   because the game never goes silent.
 
@@ -699,6 +700,18 @@ Players connect with the app hostname (`<app>.fly.dev`) exactly as with the work
 5. **Fly**: same with the public address, watch `fly logs` for latency samples, stalls and evictions.
 6. **Reference capture (optional)**: Wireshark a genuine host session (host + one client on LAN) to
    confirm the exact join dump order and the `'i'` file-name casing before finalising §6.1.
+7. **Smoke test with the real game** (`tools/smoketest.js`, 8 Sep 2026): scripted clients enter the
+   rooms of a running server through the hall (`/N` + READY) and stay there while a person connects
+   with `dc16.exe`. The plan `room:count:policy` (default `1:7:hold,2:3:follow`) fills room 1 to
+   `(7/7) full` with bots that never press READY and seats three bots in room 2 that press READY only
+   when a real player in the room does (and release it when that player does), so the person can start
+   a battle with them; `auto` bots ready up at once and put a room `in battle`. An observer stays in
+   the hall, selects every room in turn to read the map line the server paints (`N <map> <terrain>
+   (k/s) <state>`) and once presses READY on every room that is not open, expecting `Cannot join room
+   N: ...`. Status lines every 30 s; when the last real player leaves a battle the bots leave too (the
+   room resets) and enter the room again for the next round. Exit code 1 if a bot could not be seated
+   or was dropped in the lobby, or a refusal did not come. The bots tick at 20 ms so they are never
+   the laggards of a battle. The READY policies of the scripted client are pinned by an integration test.
 
 ---
 
@@ -751,8 +764,8 @@ internet, and §13.5 (a capture of a genuine host) which is now optional.
 - **Colour-0 lock on the second joiner** is fixed by the `'h'(0, 0)` start signal but not explained
   (F3, §16). If a client ever refuses a human player's ready message the same way, the `tx` trace
   will show what it received.
-- **33 ms ticks on slow machines**: the lockstep stalls when a client is 200 ticks behind, which at
-  33 ms is only 6.6 s of lag. A very slow PC will make the game stutter for everyone. Keep `TICK_MS`
+- **Short ticks on slow machines**: the lockstep stalls when a client is 200 ticks behind, which at
+  44 ms is 8.8 s of lag (6.6 s at the earlier 33 ms). A very slow PC will make the game stutter for everyone. Keep `TICK_MS`
   configurable; an adaptive fallback (accept `TICK_MAXSPEED` reports and lower the speed when a
   client cannot keep up) is a possible later addition, deliberately not in the default.
 - **Idle fakes**: Mercenary and the other fake humans are slots without a client and just sit there.
@@ -1045,7 +1058,41 @@ above, so that the plan can be followed from scratch without repeating the disco
   Welcome to Dark Colony server 2.1. Production runs the defaults (MIN_PLAYERS=1, FAKE_PLAYERS=1,
   MARQUEE_MS=200, LOG_LEVEL=info). Real-game test over the internet by players still to come.
 
+**8 Sep 2026, smoke test of the live server with scripted clients (`tools/smoketest.js`, §13.7)**
+
+- Purpose: let the maintainer check with the real game, against production, that the hall counts
+  players per room, marks a room that cannot be joined, refuses the join, and that a battle with
+  other players starts. Ten scripted clients were seated one after the other through the hall
+  (`/N` + READY, ~0.3 s each over the internet): seven in room 1 with the `hold` policy (never READY),
+  three in room 2 with the `follow` policy (READY exactly when a real player in the room is ready,
+  released when that player releases it), plus an observer in the hall.
+- Observed on `dark-colony-server.fly.dev` at 13:00 local time: the seven bots got the distinct slots
+  6, 1, 7, 5, 3, 4, 2 in room 1 (`Hall.pickSlot` prefers slots still free in most rooms, so no
+  `slot taken` occurred), the three in room 2 got 6, 4, 2; the observer (slot 3) read the map lines
+  `1 Plink - O jungle (7/7) full` and `2 Armageddon desert (3/7) open`, rooms 3–7 `(0/7) open`;
+  selecting room 1 answered `Room 1: it is full.` and READY on it `Cannot join room 1: it is full.`
+  The bots' names typed in the hall (`Smoke1`..`Smoke10`) arrived in the rooms.
+- Rehearsed locally beforehand with a scripted "human" in room 2: its READY made the three bots
+  ready (`Nika is ready (1/4)` .. `Smoke3 is ready (4/4)`, `all players ready, starting in 3 s`),
+  releasing READY gave `start cancelled: not everyone is ready` and the bots released too, READY
+  again started the battle (4 players RUNNING, 120 sync frames in 4 s), and when the human quit the
+  bots left as well, the room reset and three fresh bots re-entered it within 2 s. So a room of
+  scripted clients can never start without the person, and a finished round leaves the room ready
+  for the next one.
+- The scripted client (`tools/fakeclient.js`) got the READY policies `auto`/`hold`/`follow`,
+  `announceName`, and the events `title`, `lobby`, `chatWindow`; one integration test pins the
+  policies (67 tests, all passing). Server code unchanged. Manual results with `dc16.exe` to be
+  recorded here.
+
 ---
+
+**10 Sep 2026, game speed 150 % (maintainer decision)**
+
+- `TICK_MS` default `33` → `44` ms (150 %), matching the new single-player default of both patched
+  exes (`tools/patch_speed.py`, display doc §10.14). The game's options slider shows the tick as
+  `6600 / ms` rounded down to tens, so 44 ms reads 150 %. R11, F11, F17 and §13 updated; the tick
+  unit tests keep stepping in 33 ms (`test/helpers.js` pins `TICK_MS: 33`), the end-to-end test
+  asserts the new default. Not yet deployed to Fly at the time of writing.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

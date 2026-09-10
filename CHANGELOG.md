@@ -4,6 +4,17 @@ Dates are the commit dates on `main`. Details of every finding and decision are 
 [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (section 16 is the dated change log of the
 live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md).
 
+## Unreleased
+
+- Game speed 150 % (`TICK_MS` 44 ms) instead of 200 %, matching the single-player default of the
+  patched exes (maintainer decision, 10 Sep 2026); tests pin the tick tests to 33 ms.
+- `tools/smoketest.js`: smoke test of a running server with the real game. Scripted clients enter the
+  rooms through the hall by a plan (`room:count:policy`, default seven bots that fill room 1 and three
+  in room 2 that press READY only when a real player does) and stay until Ctrl+C; an observer in the
+  hall reads the map line for every room and checks that READY on a full room is refused. The
+  scripted client (`tools/fakeclient.js`) learnt the READY policies `auto`, `hold`, `follow` and
+  announces its name; one more integration test pins them (67 tests). Server code unchanged.
+
 ## 2.1 — 8 September 2026 (commit `a411023`)
 
 Rooms, and a room browser inside the game's own lobby screen.

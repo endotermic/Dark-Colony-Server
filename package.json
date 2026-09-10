@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "test": "node --test test/",
     "fakeclient": "node tools/fakeclient.js",
+    "smoketest": "node tools/smoketest.js",
     "lint": "eslint ."
   },
   "keywords": ["game", "tcp", "server", "dark-colony"],

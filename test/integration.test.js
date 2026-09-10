@@ -6,6 +6,7 @@ import { startServer } from '../src/index.js';
 import { loadConfig } from '../src/config.js';
 import { silentLogger } from '../src/log.js';
 import { FakeClient } from '../tools/fakeclient.js';
+import { build } from '../src/commands.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,7 +75,7 @@ test('three scripted clients play in lockstep with identical sync frames; one th
       assert.equal(lists[1][i], lists[0][i], `frame ${i} differs for Bot1`);
       assert.equal(lists[2][i], lists[0][i], `frame ${i} differs for Bot2`);
     }
-    assert.ok(clients.every((c) => c.tickSpeed === 33), 'speed locked to 33 ms');
+    assert.ok(clients.every((c) => c.tickSpeed === 44), 'speed locked to 44 ms (150 %)');
     assert.ok(clients.every((c) => c.reached.length > 0), 'progress reports were made');
     assert.ok(clients.every((c) => c.gameTime > 0));
     assert.ok(srv.room.game.stallSince === 0, 'no stall with healthy clients');
@@ -110,6 +111,46 @@ test('a client that never sends anything after the handshake is dropped from the
   } finally {
     good.close();
     mute.close();
+    await srv.close();
+  }
+});
+
+test('ready policies (smoke test): hold never starts a room, follow mirrors a real player and the room starts only through them', async () => {
+  const srv = startServer(fastConfig({ HALL: true, MIN_PLAYERS: 1, START_COUNTDOWN_S: 1 }), silentLogger);
+  const { port } = await srv.listening;
+  const peers = new Set();
+  const bots = [0, 1].map((i) => new FakeClient({ port, name: `Follow${i}`, room: 3, readyPolicy: 'follow', peerSlots: peers, announceName: true, readyAfterMs: 100, loadMs: 50 }));
+  for (const b of bots) b.on('joined', (s) => peers.add(s));
+  const holder = new FakeClient({ port, name: 'Hold', room: 4, readyPolicy: 'hold', readyAfterMs: 100 });
+  const human = new FakeClient({ port, name: 'Human', room: 3, readyPolicy: 'hold', announceName: true, readyAfterMs: 100, loadMs: 50 });
+  const all = [...bots, holder, human];
+  try {
+    for (const c of all) await c.connect(); // one after the other: distinct slots, as the smoke test seats them
+    await waitFor(() => all.every((c) => c.inRoom), 4000, 'everybody in a room');
+    assert.equal(srv.rooms[2].clients.size, 3);
+    assert.equal(srv.rooms[3].clients.size, 1);
+    assert.equal(srv.rooms[2].slots[human.slot].name, 'Human', 'the announced name followed the player into the room');
+    await sleep(300);
+    assert.equal(srv.rooms[2].state, 'LOBBY', 'follow bots do not start on their own');
+    assert.equal(srv.rooms[3].state, 'LOBBY', 'a hold bot never readies');
+    assert.ok(bots.every((b) => b.readyWanted === 1));
+
+    human.send(build.ready(2, human.slot));
+    await waitFor(() => bots.every((b) => b.readyWanted === 2), 2000, 'bots followed the human');
+    await waitFor(() => srv.rooms[2].lobby.countdownEndsAt >= 0, 2000, 'countdown running');
+    human.send(build.ready(1, human.slot)); // the human changes their mind: the bots release READY too
+    await waitFor(() => bots.every((b) => b.readyWanted === 1), 2000, 'bots released READY');
+    await sleep(1200);
+    assert.equal(srv.rooms[2].state, 'LOBBY', 'no start without the human');
+    assert.ok(human.chat.some((t) => t.includes('start cancelled')));
+
+    human.send(build.ready(2, human.slot));
+    await waitFor(() => srv.rooms[2].state === 'RUNNING', 4000, 'room 3 running');
+    assert.equal(srv.rooms[3].state, 'LOBBY');
+    await sleep(300);
+    assert.ok(bots.every((b) => b.syncPayloads.length > 0), 'the bots play along');
+  } finally {
+    for (const c of all) c.close();
     await srv.close();
   }
 });

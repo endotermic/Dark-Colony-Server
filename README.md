@@ -27,7 +27,7 @@ row shows your name; you can type it there.
   room list, the room and its map inside a room); the server's own lines carry no name.
 - Strict lockstep: one frame per server step, `[UNTIL][commands...]`, byte-identical for all clients,
   so every game runs exactly the same commands in exactly the same order.
-- Game speed is fixed at 200 % (33 ms per tick); clients cannot change it.
+- Game speed is fixed at 150 % (44 ms per tick, the single-player default of the patched exes); clients cannot change it.
 - Cheats and the `0x08` checksum command are never forwarded.
 - Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
   removed and announced to everybody else.
@@ -102,6 +102,8 @@ only a stock Python 3 (no third-party packages).
 - `tools/patch_pool.py` - enlarges the game's single memory arena (`smalloc.c` local pool) from
   11.5 MB to 32 MB in both exes; the 1024x768 screens and the pack's extra unit banks had used up
   the stock headroom (verify / plan / apply, keeps a `.pool.bak`).
+- `tools/patch_speed.py` - sets the default game speed (the tick length the game-state initialiser
+  writes; 100 % -> 150 %) in both exes; the options slider still works (verify / plan / apply).
 - `tools/hud_layout.py` - redraws the in-game HUD frame for the new resolution (region geometry,
   tracing layers, the `MAINE` widget transform).
 - `tools/pad_background.py` - letterboxes the interface screens into a larger framebuffer (plan /
@@ -115,6 +117,7 @@ python tools/patch_cursor.py verify "../Dark-Colony/DC - Classic/dc16.exe"
 python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
 python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
 python tools/patch_pool.py verify "../Dark-Colony/DC - Classic/dc16.exe"
+python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
 python tools/build_ozi_overlay.py "../Dark-Colony/DC - Council wars"          # dry run
 ```
 
@@ -145,7 +148,12 @@ node --test test/                                         # unit and end-to-end 
 node tools/fakeclient.js --count 3 --duration 10000       # scripted clients against a running server
 node tools/fakeclient.js --count 3 --behave noEcho        # the last one misbehaves
 node tools/fakeclient.js --count 2 --room 2               # both pick room 2 in the hall and play there
+node tools/smoketest.js                                   # smoke test of the live server: 7 bots fill room 1, 3 wait in room 2 for you
+node tools/smoketest.js --host 127.0.0.1 --plan 1:7:hold,2:3:follow,3:2:auto   # local server; room 3 gets a battle among bots
 ```
+The smoke test keeps its bots connected until Ctrl+C: connect with the game meanwhile and check the
+room list (`1 ... (7/7) full`, `2 ... (3/7) open`), that `/1` + READY is refused, and that READY in
+room 2 starts a battle with the three bots (they press READY when you do).
 
 ### Configuration
 Environment variables, see `src/config.js` for the full list and defaults: `PORT`, `ROOMS`, `HALL`,

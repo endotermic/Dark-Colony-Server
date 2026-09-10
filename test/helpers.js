@@ -131,7 +131,8 @@ export class Harness {
   constructor(overrides = {}) {
     this.t = 1000;
     this.now = () => this.t;
-    this.cfg = loadConfig({}, { START_COUNTDOWN_S: 0, MIN_PLAYERS: 2, ...overrides });
+    // TICK_MS 33: the tick tests step in 33 ms units; the deployed default is 44 ms (150 %)
+    this.cfg = loadConfig({}, { START_COUNTDOWN_S: 0, MIN_PLAYERS: 2, TICK_MS: 33, ...overrides });
     this.randomSeq = null;
     this.room = new Room(this.cfg, silentLogger, this.now, (n) => this.random(n));
     this.peers = [];
