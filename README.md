@@ -76,6 +76,39 @@ All trademarks and copyrights are the property of their respective owners.
 
 ---
 
+## Game patches and reverse-engineering notes
+
+Since 10 Sep 2026 this repository also holds the single-player side of the project, moved here from
+[Dark-Colony](https://github.com/endotermic/Dark-Colony) so that every note and tool about the game
+executable is in one place. The game files themselves (`DC - Classic/`, `DC - Council wars/`, the map
+editor) stay in Dark-Colony; the tools take a game directory or executable as an argument and need
+only a stock Python 3 (no third-party packages).
+
+- `docs/DC16_BATTLE_ENGINE.md` - combat core of `dc16.exe`: balance tables, targeting, firing,
+  projectiles, damage, upgrades, day/night.
+- `docs/DC16_DISPLAY_AND_RESOLUTION.md` - display pipeline (DirectDraw, software blitters, HUD
+  geometry, mouse, movies), every resolution-dependent code site, the staged 1024x768 upgrade
+  (sections 8-10) and the Windows-pointer fix (section 10.12).
+- `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `DCEXP16.EXE`
+  (verify / plan / apply, staged, byte-checked, keeps a `.bak`).
+- `tools/patch_cursor.py` - keeps the Windows mouse pointer hidden over the game window (the stock
+  exe registers its window class with an uninitialised cursor handle and lets `DefWindowProc`
+  restore it on every `WM_SETCURSOR`); verify / plan / apply, keeps a `.cursor.bak`.
+- `tools/hud_layout.py` - redraws the in-game HUD frame for the new resolution (region geometry,
+  tracing layers, the `MAINE` widget transform).
+- `tools/pad_background.py` - letterboxes the interface screens into a larger framebuffer (plan /
+  apply / revert).
+- `tools/paint_intro.py` - repaints the main-menu backdrops at any framebuffer size and re-bakes
+  them into the logo animations; `tools/logo_art.py` re-sets the title; `tools/spr.py` is the
+  `.SPR` sprite codec they share.
+
+```bash
+python tools/patch_cursor.py verify "../Dark-Colony/DC - Classic/dc16.exe"
+python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
+```
+
+---
+
 ## For developers
 
 ### Run locally
