@@ -6,7 +6,7 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
-- **Battle engine beside the relay** (11 Sep 2026, plan §18): the server can run a port of the
+- **Battle engine beside the relay** (11 Sep 2026, plan §18; deployed to Fly with `SYNC_CHECK=send` the same day): the server can run a port of the
   game's simulation core (`src/engine/`, bit-exact memory layout of `dc16.exe`'s game state) and
   put the lockstep checksum command `0x08 (checksum, tick)` into its sync frames, which no client
   ever sends on this server (the fake host is the lowest network id). New settings: `SYNC_CHECK`

@@ -1225,6 +1225,19 @@ above, so that the plan can be followed from scratch without repeating the disco
 - Committed the same day (`SYNC_CHECK` default still `off`; enabling it in production is one
   environment variable on Fly).
 
+**11 Sep 2026, pushed and deployed: the live server sends Mercenary's checksums**
+
+- Commits `4f510ad` (the engine, its data, the server integration, recorder, replay tool, docs) and
+  `8d3c8e2` (`SYNC_CHECK = "send"` in `fly.toml`) pushed to `github.com/endotermic/Dark-Colony-Server`
+  (the first push attempt hung on a credential prompt for minutes; killed and retried with
+  `GIT_TERMINAL_PROMPT=0`). `fly deploy --remote-only` rebuilt the image (54 MB) and updated machine
+  `d8927e5c5ee3d8` in place; the live start-up line at 13:13 UTC reads `"syncCheck":"send",
+  "mercenarySlot":0`, version still 2.1.0. Recording is off in production (no persistent disk);
+  `fly logs` shows `engine started` per battle and the `stats` line carries `engine.sentTicks`.
+- Maintainer decision (11 Sep 2026): Mercenary is the only party that sends `0x08`; client
+  checksums are never relayed (they only exist in diagnostic `MERCENARY_SLOT>0` sessions and are
+  compared, not forwarded).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
