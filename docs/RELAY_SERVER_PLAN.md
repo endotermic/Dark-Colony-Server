@@ -72,6 +72,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F34 | The lobby loop reads **at most one frame per iteration** (`0x411132`: one call of the frame reader, not a loop; on data it calls the dispatcher `0x40F918` and goes on with the iteration), and the dispatcher runs **every command of the frame** (loop at `0x40F929`–`0x40F975`: type byte → table `0x488E54` → handler, until the `0x00` terminator; an unknown type is "SETUP_COMMANDS BAD"), then calls `0x40F6AC` once per frame. The iteration rate is that of the UI loop. | disassembly; live 7 Sep 2026: seven one-command frames per 200 ms scrolled fast for a moment and then slower and slower (the client fell behind and queued frames) | Send one **frame** per update with all its commands inside: the marquee step, the hall dump, the room dump. Multi-command lobby frames are also what the original server relays when a client packs `'o'`+`'q'` (F23). `PACK_LOBBY_FRAMES=false` restores one command per frame |
 | F35 | The lobby chat handler (`'e'`, `0x40ECE4`) copies the chat control's current text (control 24, up to `0x800` bytes) into a local buffer, appends `"\n"` + the received string, word-wraps by inserting `'\n'` at the last space once a line reaches **width − 1 = 40** columns (control width from `0x423F24`), and then, while the text does not fit the control (`0x424608`), **drops the first line**. The control shows the last ten visual lines; nothing else is kept. The received string is appended as it is: the `"Name: "` in front of a player's line is the sending client's own convention, not something the handler needs. | disassembly `0x40ED15`–`0x40EDE5`; F26, F29 | The server can paint the whole window: ten lines of at most 40 characters replace what is shown. Lines from the relay carry no name (maintainer, 7 Sep 2026). The greeting is kept at the top by repainting the window on every chat event (§17.8) |
 | F36 | The big READY button is `checkb 133` (`INTRFACE/MULTIE` line 351), a checkbox with its own pressed state. Its click handler (`0x4115A9`–`0x411636`) sends `'h'(2, own)` on the "checked" event and `'h'(1, own)` on any other event; the only code that changes the button's state is the click itself and the client-side refusal when the own colour is locked (`0x4272A8(ui, 0x85, 0)` at `0x411608`). The `'h'` message handler drives the **row** checkbox `16 + player` only (`0x4272A8(ui, 0x10 + player, status == 2)` at `0x40F38B`); the lobby refresh only enables or disables control 133 (`0x424514` at `0x40FF96`/`0x40FFC5`). No lobby message reaches the button's state. | disassembly; all five logged room entries of 7 Sep 2026: the first READY press inside the room sent status 1, the second status 2 | After READY in the hall the button stays pressed and the server cannot release it. The room therefore seats a client from the hall **ready** (status 2, F20 lock check applied), so that the pressed button is true; one click un-readies for colour or race changes. A direct join (`HALL=false`) is present-not-ready as before |
+| F37 | A scenario is `.SCN` (text: terrain, base name, display name, day/night, eight TEAM blocks with start position and city origin, object list `x z type player a b`), `.MAP` (u32 w, u32 h, w×h × {u16 bg, u16 fg}, w×h × u16 attribute; bit 9 = blocking terrain, rows stored `z = h-1-r`), `.MTG` (trigger ids), `.PTH` (256×256 family routing matrix + w×h family bytes in z order, 0 = impassable), `.TRO` (trigger script), `.POP` (editor-only eruption data), `.OVH`/`.O16` (96×84 minimap cache the game regenerates). Tile numbers are editor indices remapped through the terrain's `.BTS`. The lobby only ever needs lines 1–3 of the `.SCN` (F31). | `mapit.c 0x4530C0`, `path.c 0x442D8C`, `mobiles.c 0x41BAF0`, `renat.c 0x43FD1C`; all 198 shipped scenarios of both games parse; `docs/DC16_MAP_FILES.md` | `tools/map2json.js` converts scenarios to JSON, `maps/*.json` + `maps/index.json` hold the seven maps of the default `ROOMS` (others on request; grids indexed `[z][x]`, same coordinates as the game's commands), so a later server feature (position validation, start-location logic §7, a map browser) reads JSON instead of the binaries |
 
 ---
 
@@ -1093,6 +1094,25 @@ above, so that the plan can be followed from scratch without repeating the disco
   `6600 / ms` rounded down to tens, so 44 ms reads 150 %. R11, F11, F17 and §13 updated; the tick
   unit tests keep stepping in 33 ms (`test/helpers.js` pins `TICK_MS: 33`), the end-to-end test
   asserts the new default. Not yet deployed to Fly at the time of writing.
+
+**11 Sep 2026, scenario files documented and converted to JSON (F37)**
+
+- New investigation, no live test: the loaders of `dc16.exe` for `.MAP` (`mapit.c` `0x4530C0`), `.MTG`,
+  `.PTH` (`path.c` `0x442D8C`), `.SCN` (`mobiles.c` `0x41BAF0`) and `.TRO` (`renat.c` `0x43FD1C`) were
+  read and every shipped file of both games checked against them (`docs/DC16_MAP_FILES.md`). Findings
+  that matter for the server: the `.MAP`/`.MTG` rows are stored in the opposite order of the game's
+  `z` axis while `.PTH`, `.SCN`, `.TRO`, `.POP` use `z` directly (verified with the vent tiles and the
+  blocking bit); attribute bit 9 of a `.MAP` cell is blocking terrain and always path family 0; the
+  `.POP` is never read by the game (the editor compiles it into `.TRO` vent triggers); the overview
+  caches are two 96×84 planes the game rewrites when missing; the object list's 4th column is the
+  vent rate for type 40, the player otherwise.
+- `tools/map2json.js` (Node, library + CLI) converts a scenario or a folder; `maps/` has the **seven
+  maps of the default `ROOMS`** (`--rooms`, 3.6 MB, grids one row per line, the routing matrix as
+  base64) and `maps/index.json`. The first version converted all 56 multiplayer maps (20.6 MB); the
+  maintainer decided the same day to keep only the rooms' maps in the repository and generate any
+  other map on request. `test/map2json.test.js`: a hand-built 4×3 scenario, the `maps/` contents
+  against `ROOMS`, and checks on Armageddon when the game repository is present. Tests: 76, all
+  passing; server code unchanged.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

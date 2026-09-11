@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- Scenario files documented and converted to JSON (11 Sep 2026): `docs/DC16_MAP_FILES.md` describes
+  the `.SCN`/`.MAP`/`.MTG`/`.PTH`/`.TRO`/`.POP`/`.OVH` formats from the game's loaders (row order,
+  tile numbering through the `.BTS` remap, the attribute word's blocking bit, the TEAM block, the
+  object list, the trigger grammar); `tools/map2json.js` converts any scenario (Classic, Council
+  Wars, OZI pack all parse) and `maps/` holds the seven maps of the default `ROOMS` as JSON with an
+  `index.json` (`--rooms`; every other map is generated on request, maintainer decision). Nine new
+  tests (76). Server code unchanged.
 - Game speed 150 % (`TICK_MS` 44 ms) instead of 200 %, matching the single-player default of the
   patched exes (maintainer decision, 10 Sep 2026); tests pin the tick tests to 33 ms.
 - `tools/smoketest.js`: smoke test of a running server with the real game. Scripted clients enter the

@@ -1,0 +1,76 @@
+{
+  "format": "dc16-scenario",
+  "version": 1,
+  "maps": [
+    {
+      "file": "D8PLAY01.SCN",
+      "json": "D8PLAY01.json",
+      "name": "Armageddon",
+      "terrain": "desert",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    },
+    {
+      "file": "D8PLAY02.SCN",
+      "json": "D8PLAY02.json",
+      "name": "Black Widow",
+      "terrain": "desert",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    },
+    {
+      "file": "D8PLAY03.SCN",
+      "json": "D8PLAY03.json",
+      "name": "Circle of Friends",
+      "terrain": "desert",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    },
+    {
+      "file": "D8PLAY05.SCN",
+      "json": "D8PLAY05.json",
+      "name": "Olympus Mons",
+      "terrain": "desert",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    },
+    {
+      "file": "J8PLAY01.SCN",
+      "json": "J8PLAY01.json",
+      "name": "Plink - O",
+      "terrain": "jungle",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    },
+    {
+      "file": "J8PLAY02.SCN",
+      "json": "J8PLAY02.json",
+      "name": "Hoops of Fury",
+      "terrain": "jungle",
+      "players": 8,
+      "width": 128,
+      "height": 112,
+      "teams": 8
+    },
+    {
+      "file": "J8PLAY07.SCN",
+      "json": "J8PLAY07.json",
+      "name": "Rings of fire",
+      "terrain": "jungle",
+      "players": 8,
+      "width": 160,
+      "height": 140,
+      "teams": 8
+    }
+  ]
+}

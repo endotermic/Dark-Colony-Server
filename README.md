@@ -90,6 +90,13 @@ only a stock Python 3 (no third-party packages).
   geometry, mouse, movies), every resolution-dependent code site, the staged 1024x768 upgrade
   (sections 8-10), the Windows-pointer fix (section 10.12) and the OZI MISSIONS campaign mode
   (section 10.13).
+- `docs/DC16_MAP_FILES.md` - the scenario file set (`.SCN`, `.MAP`, `.MTG`, `.PTH`, `.TRO`, `.POP`,
+  `.OVH`/`.O16`, the `.BTS` tile sets): binary layouts, the text grammars, the coordinate system,
+  what the game does with every field, and the JSON the server uses instead (section 12).
+- `tools/map2json.js` - converts scenarios to that JSON (`node tools/map2json.js <folder | .SCN>
+  [--out DIR] [--rooms] [--images] [--pretty]`; library + CLI, no dependencies). `maps/` holds the
+  output for the seven maps of the default `ROOMS` only (plus `maps/index.json`); any other map is
+  generated on request with the same command (maintainer decision, 11 Sep 2026).
 - `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `DCEXP16.EXE`
   (verify / plan / apply, staged, byte-checked, keeps a `.bak`).
 - `tools/patch_cursor.py` - keeps the Windows mouse pointer hidden over the game window (the stock
@@ -119,6 +126,8 @@ python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/DCEXP16.
 python tools/patch_pool.py verify "../Dark-Colony/DC - Classic/dc16.exe"
 python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
 python tools/build_ozi_overlay.py "../Dark-Colony/DC - Council wars"          # dry run
+node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER" --rooms --out maps   # regenerate maps/ (default rooms)
+node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER/D4PLAY01.SCN" > four_corners.json   # any other map, on request
 ```
 
 ---

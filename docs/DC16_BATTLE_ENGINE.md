@@ -687,7 +687,10 @@ AI personalities `0x489488[4]`, krusty rule table `0x499158[18]`, building-kind 
   matrix** `next[a][b]` = the family to enter next when travelling from region `a` to region `b`
   (0 = unreachable), then `width × height` family bytes (checked: `D8PLAY01.PTH` = 65536 + 160×140).
   Families are the connected walkable regions of the map as produced by the map editor. At load the
-  engine derives per-family neighbour lists (`CLIST2`, at most 32 entries each, `0x442F28`).
+  engine derives per-family neighbour lists (`CLIST2`, at most 32 entries each, `0x442F28`). The
+  family rows are in `z` order, unlike the `.MAP`/`.MTG` grids (row `r` = `z = height-1-r`); bit 9
+  of a `.MAP` cell's attribute word marks blocking terrain and is always family 0. The file formats
+  and the JSON conversion are in `DC16_MAP_FILES.md`.
 * `find_path(path, xd, zd, xs, zs, fly)` `0x444B34`: for ground units the allowed-family set
   (`0x51D8BC[256]`) is the chain `fam(dest) → next[fam][fam(start)] → …` until the start family
   is reached (asserts `current_family!=0`, `destination_family!=0`, "There is no path" when a hop is
