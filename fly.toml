@@ -7,6 +7,9 @@ primary_region = "iad"
 
 [env]
   PORT = "8888"
+  # the battle engine beside the relay puts Mercenary's 0x08 checksum into every sync frame (plan §18);
+  # verified with the real game on 11 Sep 2026
+  SYNC_CHECK = "send"
 
 [[services]]
   internal_port = 8888

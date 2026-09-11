@@ -597,7 +597,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
 | `SPEED_REFRESH_S` | `30` | re-send `TICK_SPEED` |
 | `LOG_LEVEL` | `info` | `debug` logs every frame |
-| `SYNC_CHECK` | `off` | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
+| `SYNC_CHECK` | `off` (`send` in `fly.toml` since 11 Sep 2026) | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
 | `RECORD_DIR` | unset | record every battle as JSON lines (sync frames, client checksums, engine checksums, MREADY, disconnects) for `tools/replay.js` (§18.4); independent of `SYNC_CHECK` |
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 
