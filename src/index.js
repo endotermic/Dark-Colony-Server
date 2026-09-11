@@ -9,6 +9,7 @@ import { createLogger } from './log.js';
 import { RoomPool } from './rooms.js';
 import { Hall } from './hall.js';
 import { VERSION } from './version.js';
+import { loadEngine } from './enginebridge.js';
 
 const STEP_INTERVAL_MS = 5;
 const WATCHDOG_INTERVAL_MS = 500;
@@ -16,6 +17,8 @@ const WATCHDOG_INTERVAL_MS = 500;
 export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
   const pool = new RoomPool(config, log);
   const hall = new Hall(pool, config, log);
+  // the battle engine (plan §18) is loaded in the background; rooms start as plain relays until then
+  const engineReady = config.SYNC_CHECK !== 'off' ? loadEngine(log).then((e) => pool.setEngine(e)) : Promise.resolve();
   // HALL=false: the 2.0 behaviour, straight into room 1
   const server = net.createServer((socket) => (config.HALL ? hall.accept(socket) : pool.rooms[0].accept(socket)));
   server.on('error', (err) => log.error('listen error', { err: err.message }));
@@ -48,6 +51,7 @@ export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
     room: pool.rooms[0],
     server,
     listening,
+    engineReady,
     async close() {
       clearInterval(stepTimer);
       clearInterval(watchdogTimer);
@@ -75,6 +79,9 @@ if (isMain) {
       minPlayers: config.MIN_PLAYERS,
       fakePlayers: config.FAKE_PLAYERS,
       debug: config.DEBUG,
+      syncCheck: config.SYNC_CHECK,
+      recordDir: config.RECORD_DIR || undefined,
+      mercenarySlot: config.MERCENARY_SLOT,
     }),
   );
   const shutdown = (signal) => {

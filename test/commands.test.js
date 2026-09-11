@@ -23,7 +23,7 @@ test('fixed-size builders round-trip through split and decode', () => {
     [build.disconnect(6), T.DISCONNECT, 2, { player: 6 }],
     [build.tickSpeed(33), T.TICK_SPEED, 5, { ms: 33 }],
     [build.tickMaxSpeed(2, 66), T.TICK_MAXSPEED, 6, { player: 2, ms: 66 }],
-    [build.sync(0x1234, 99), T.SYNC, 7, {}],
+    [build.sync(0x1234, 99), T.SYNC, 7, { checksum: 0x1234, time: 99 }],
     [build.keepalive(), T.KEEPALIVE, 1, {}],
     [build.initMe(3), T.INIT_ME, 2, { player: 3 }],
     [build.orderSelected(1, 0x12), T.ORDER_SEL, 3, {}],

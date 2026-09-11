@@ -28,7 +28,10 @@ row shows your name; you can type it there.
 - Strict lockstep: one frame per server step, `[UNTIL][commands...]`, byte-identical for all clients,
   so every game runs exactly the same commands in exactly the same order.
 - Game speed is fixed at 150 % (44 ms per tick, the single-player default of the patched exes); clients cannot change it.
-- Cheats and the `0x08` checksum command are never forwarded.
+- Cheats and the `0x08` checksum command are never forwarded. Since the fake host is the lowest
+  network id no client sends checksums; the server can compute them itself with its own port of the
+  game's battle engine (`SYNC_CHECK=send`, off by default while the port is being verified against
+  recorded games, see plan §18).
 - Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
   removed and announced to everybody else.
 - `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against idle bases.

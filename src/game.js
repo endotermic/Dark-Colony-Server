@@ -116,6 +116,14 @@ export class Game {
     }
     const parts = [build.until(this.time, until)];
     let used = 0;
+    // the engine's checksum of the last simulated tick (SYNC_CHECK=send, plan §18): 0x08 first,
+    // unless it would keep a full-size command group from ever going out (it then waits a frame)
+    const syncCmd = this.room.sync.syncCommand();
+    if (syncCmd && !(this.queue.length && syncCmd.length + this.queue[0].length > COMMAND_BUDGET)) {
+      parts.push(syncCmd);
+      used += syncCmd.length;
+      this.room.sync.markSent();
+    }
     while (this.queue.length && used + this.queue[0].length <= COMMAND_BUDGET) {
       const group = this.queue.shift();
       parts.push(group);
@@ -124,6 +132,7 @@ export class Game {
     const payload = Buffer.concat(parts);
     for (const c of this.room.players()) c.pendingEchoes.set(this.time, now);
     this.room.broadcast(payload);
+    this.room.sync.onFrameIssued(this.time, until, parts.slice(1));
     this.issued.add(until);
     this.lastIssuedUntil = until;
     this.time += n;
@@ -179,6 +188,7 @@ export class Game {
                 for (const c of r.players()) for (const a of c.pendingEchoes.keys()) c.pendingEchoes.set(a, now);
               }
               r.log.info(pause ? 'paused' : 'resumed', { by: client.slot });
+              r.sync.onPause(pause, client.slot);
             }
             // out-of-band for the client (F6): relayed at once as a standalone frame
             r.broadcast(Buffer.from(cmd.raw));
@@ -188,7 +198,12 @@ export class Game {
           break;
         }
 
-        case T.SYNC: // never forwarded (R5); with a fake player in slot 0 nobody sends it anyway (F14)
+        case T.SYNC:
+          // never forwarded (R5); with the fake host in slot 0 nobody sends it anyway (F14). With
+          // MERCENARY_SLOT > 0 the lowest real player does, and the engine compares (plan §18)
+          r.sync.onClientSync(client, cmd);
+          break;
+
         case T.TICK_SPEED:
         case T.TICK_MAXSPEED:
         case T.TICK_DESSPEED:

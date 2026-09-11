@@ -414,8 +414,9 @@ filters, excludes the shooter's own team and team 8, tests the candidate's sprit
 ### 6.1 Fire at ground / targeted specials (order 0x12 → `0x418160`, state 0x12 → `0x4182C0`)
 
 Artillery (BARR, ATRIL) uses its normal weapon; every other type uses its special weapon
-`type.+0x110` (cyborg napalm requires research byte `[0x510188 + player] == 2`, psy-raider plasma
-`[0x510A48 + player] == 2`, commanders require `gs+0 == 0`). If the target is beyond weapon range the
+`type.+0x110` (cyborg napalm requires weapon upgrade level 2 of type 4 for that player — `[0x510188 + player]`
+is `object_types[4].weapon_level`, see §20 — psy-raider plasma level 2 of type 12, commanders
+require `gs+0 == 0`). If the target is beyond weapon range the
 unit first moves closer (`begin_move` mode 4). The special needs charge 255 and is abandoned if more
 than 4 ticks pass; the special weapon is temporarily swapped into the unit's current weapon slot and
 `fire_weapon(..., -1, tx, tz)` is called.
@@ -835,6 +836,47 @@ game time %ld") and `gs+0x94C − tick < 256` ("records start at %ld"), compares
 on mismatch prints "sync error: time %ld, net %d, me %d" and calls `0x44AC94` ("Sync history dump not
 compiled into this build, sorry"), which asserts and ends the game.
 
+### 16.1 When exactly a tick, a command and a checksum happen **(verified, 11 Sep 2026)**
+
+* The client's pacing loop `0x41E268` increments the tick counter `gs+0x94C` **before** it calls
+  `game_tick`, so `record` stores the checksum of the state *after* tick `t` under `t`.
+* A sync frame `UNTIL(a, u)` received from the server is executed as a whole (the `UNTIL` marker
+  and every command behind it, held-frame executor `0x41E0D8`) when `gs+0x94C + 1 == u`, i.e. at
+  game time `u − 1`, right before the tick that makes the time `u`. Ticks between two frames run
+  without commands. (`gs+0x52C`, "game time" of §3.1, is a second counter incremented inside
+  `game_tick`; both start at 0 and stay equal.)
+* The checksum sender runs at the end of `game_tick` (`0x419F1B`): among the game players whose AI
+  type (`gs+0xBBC`) is 0 and whose network id (`gs+0xCA0`) is not negative the smallest network id
+  wins; if that is the local player, `0x08 (history[t], t)` with `t = gs+0x94C` goes out as its own
+  frame. `check` (`0x44ACF8`) therefore accepts, inside a frame `UNTIL(a, u)`, any tick `t` with
+  `u − 256 <= t <= u − 1`.
+* `game_tick` order (`0x419978`): campaign funky-tower swap; per-type and per-player unit counts
+  (stats); heroes of players at the unit cap held at charge 230; `gs+0x52C == 0` → clear seen bits,
+  vision, minimap; `gs+0x530++`, `gs+0x52C++`, unit cap `0x41E7FC`; per player the vision mask from
+  the two diplomacy bit matrices and the alliance bytes; day/night flip and light; path generation
+  stamp `+= 2` (`0x444824`); every 16 ticks clear seen bits + vision + minimap; every 8 ticks stats
+  10, generators `0x440100`, triggers `0x43E5B0`, dead heroes dropped from the hero table; every 16
+  ticks income for players whose HQ slot is alive; stat 5 reset and the `+0x19C8` countdown; the
+  object loop (`0x488F1C = 0` per object, `0x4194DC` for allocated slots, selection mask cleared for
+  free ones); missiles `0x442B50` (four `update_missiles` passes, then the animation/cleanup walk);
+  `record`; sync sender; AI turn `0x41AE38` in local-command mode; timing statistics and, every 32
+  ticks, the speed negotiation `0x419804`.
+* The game RNG (§12) is seeded at game start with `srand([0x4A469C])` (`0x4120E0`: index = seed &
+  0xFF); the global is never written, so the index starts at 0 and the first `rand()` returns
+  `table[1]`. The start-position shuffle (`0x4014F8`, one `rand()` per shuffled entry) and the
+  wildlife placed after the object list consume the same sequence before the first tick.
+* `0x41A790(k, p)` (called "difficulty factor" in `DC16_MAP_FILES.md`) is the statistics getter
+  `[0x4A5710 + p*48 + k*4]` (`0x41A544` sets, `0x41A06C` adds). `run_game` (`0x401827`) fills slots
+  1..6 of player 0 from the globals `0x4A4690, 0x4A4694, 0x4A4688, 0x4A468C, 0x4A4680, 0x4A4684`,
+  which are the lobby `VAR` array itself (`ss+0xA670[16]` = `0x4A4680..`, protocol doc §4.1.1):
+  stat 1 = VAR 4 and stat 2 = VAR 5 (P7 quantity/flow multipliers, `<< 6` → 256 for the default 4),
+  stat 3 = VAR 2 (erupting vents, default 1), stat 4 = VAR 3 (renewable vents), stat 5 = VAR 0
+  (storage cells), stat 6 = VAR 1 (artifacts); `0x4A4698` = VAR 6 (commander rank) goes to every
+  player's `+0x19C0`, and `0x4A469C` = VAR 7 (unused in the UI, default 0) is the RNG seed of the
+  start shuffle and of the scenario loader. `run_game` zeroes VAR 0..3, 6, 7 and sets VAR 4/5 = 4
+  *before* the lobby runs (`0x4012A4`), so the values the server's `'o'` messages set are the ones
+  in force at game start.
+
 ---
 
 ## 17. Computer players (`ai.c`, `krusty_*.c`)
@@ -967,3 +1009,116 @@ references, the `.reloc` table to recover the `DGROUP → AUTO` function-pointer
 order tables), and a list of `call` targets as function boundaries. Regions that `dumpbin` had
 decoded as data (after inline jump tables, e.g. `0x417400`) were re-disassembled by wrapping the
 raw bytes in a minimal COFF object and running `dumpbin -DISASM` on it.
+
+---
+
+## 19. Server-side port (`Dark-Colony-Server/src/engine/`)
+
+Since 11 Sep 2026 the relay server carries a JavaScript port of this simulation core so that it can
+compute the lockstep checksum and send `0x08` commands (server plan §18). The port keeps the
+original memory layout (`mem.js`: a Buffer with the offsets of §3), one module per original source
+file (`ticker.js`, `move.js`/`path.js`, `combat.js`/`missile.js`, `city.js`, `renat.js`, `anim.js`,
+`scenario.js`/`grid.js`, `commands.js`, `tables.js`), the exe's constant tables in
+`data/dc16-tables.json` and the balance tables in `data/classic/gamestat.json`. `PORTING.md` in
+that folder states the rules (instruction-by-instruction, every `rand()` in order). Disagreements
+between this document and the code found during the port are corrected here with a date.
+
+---
+
+## 20. Corrections found during the port (11 Sep 2026)
+
+Read instruction by instruction while porting to `Dark-Colony-Server/src/engine/`; each item
+names the section it corrects. The code wins over the earlier descriptive text.
+
+* §4.2: the dispatcher's 32-tick charge regeneration and 16-tick countdowns test `gs+0x530` (the
+  day/night counter, reset at every phase flip), not `gs+0x94C`. State-table entry 0 is the no-op
+  `0x4194D4`. The blood overlay is started only while the blood slot is idle; `+0xC7` is cleared
+  even without blood sprites and `rand()` is consumed only with them.
+* §4.1: `pop_state` also asserts the object is alive. `push_state` at `sp == 5` writes the next
+  level's info offset into the low byte of `info[0]` (an out-of-bounds write of the original).
+* §4.3: the turn state is pushed *before* the sleep, so an idle unit sleeps 15/45 ticks first and
+  turns afterwards; `0x412650` is `push_turn(gs, obj, heading)`, the idle state draws the random
+  heading itself. The weapon-level byte array `+0x30` is indexed with the raw team byte, so teams
+  8 and 9 read the first armour-level bytes at `+0x38`.
+* §4.2 orders: an immobile type given a move order goes through `reset_and_dispatch_order`; the
+  attack order pushes state 0xE first and resets afterwards. The deploy order `0x416A1C` is gated
+  by `0x4168D8` (refused within Manhattan distance 7 of any city origin unless the type is in a
+  19-entry exempt list) and by type sets; type 0x40 pushes state 0x11 instead of deploying.
+* §14.3: path cell `+0xA` is the parent **x**, `+0xB` the parent **z**. The search is not plain
+  Dijkstra: `relax` adds the direction-biased weights `0x48AAD0[dirToStart][k]` (1…90) and
+  re-inserts equal-cost neighbours at the bucket head; `0x443130` is a separate chain-cost walk
+  (vertical 5, horizontal 2, diagonal 9). Two quirks are kept: down-left uses the *up* weight when
+  left is not allowed (`0x4442EB`), flyers on row `h−2` lose their three up-neighbours
+  (`0x443A0C`). The re-route search pops at most 256 nodes.
+* §14.2: `begin_move` always snaps the destination to the tile centre; the "Start moving many
+  squares" assert is dead (`len` is capped to 32 before the compare).
+* §14.4: `handle_block` walks over the occupied run to the **first free tile** and seeds the
+  re-route there; the jitter re-plan keeps the old mode with `flag = 1`; the nudge needs only
+  `blocker+0x35 == 0xFF` and an alliance entry; a turn state (4) is pushed above the step state
+  (5), so turning costs ticks; `vx = trunc(cos·speed/2048)`, `vz = trunc(sin·speed/2048)`
+  (heading 0 = +x); diagonal nudge steps need only **one** passable orthogonal neighbour.
+* §6: `vx = cos·speed >> 11`, `vz = sin·speed >> 11`; the 5 % guard loop shrinks copies of the
+  velocity and the flight time `t`, never the velocity itself; `vy = t ? dy/t : 0`; `t = −1` only
+  for blast type 0. Mines' HP: only a negative result is clamped to 1. The muzzle hotspot reader
+  holds up to 8 entries (Classic data has at most 1 per animation); the `× 4` of the launch delay
+  happens in `create_missile`.
+* §7: kind-2 missiles move sideways along a wobble table (`0x48AA1C`) and allocate the smoke puff
+  through `0x441A9C(weapon 43)`; the burning-ground age counter is `+0x18`, not `+0x10`.
+* §5: `collide` checks air → ground → secondary and scores `1 + same column + same row (+3 after
+  the bounding-box test)`, highest wins; the bounding box is the type's `+0x48..+0x54` translated
+  by the object position (all 32 STAND facings and frames; x1 is the *last* cell of facing 31, an
+  artefact of `0x4364AC`; non-flyers widened to ±96).
+* §8: kills are booked before `object_die`, losses after the grid removal; the hero-death event
+  also requires `player+0x1C == 0`; the death sound plays for building slots only.
+* §9: the healer scans an expanding square of 8 rings, air then ground, and zeroes its charge in
+  both branches.
+* §10.3: state 0xD swaps 1→41, 9→42, 4↔77, 12↔78, 47→6, 48→14, 43/44→45/46 only (6→47 and 14→48
+  happen elsewhere); LENS fires `create_missile(kind 3)` and sets its HP to 1; TEKT converts
+  wildlife within 128 tiles up to the unit cap; HYYK spawns four copies into state 0x10; abduction
+  radius 9, mobile non-commander units of non-allied teams, three per batch.
+* §2.3: the magic-bullet entries are `trunc(pct × 0.01 × 256)` (`0x42B5B0` sets the FPU to
+  truncate), not rounded: 7 % → 17, 33 → 84, 164 → 419. §2.1/§2.2: the short-line rule counts
+  the CR LF (`strlen < 4` for weapstat/mbullet/depend/unitid, `< 3` for gamestat/boomstat);
+  `+0x78` is the 1-based `pervasve.c` slot index; DEPEND stores the `−1` terminator and
+  `0x506048` is the file's line-1 count (80). A blast type with sprites *replaces* a weapon's own
+  EXPLODE set; `+0xE0` of an object type is the initial heading. UNITID.TXT (`0x438718`,
+  `lookup[80]` at `0x5044F0`) only supplies interface button ids.
+* §15.1: command `0x09` looks the type up as `unitdef[level][slot]` ignoring the race (`0x444E30`),
+  `build_slot` uses `race*2+level`; the slot-blocked flags at `player+0x7C` are **bytes** meaning
+  "under construction"; construction is **not** cosmetic: state 0x13 blocks the idle handler, a
+  drop pod (object `team*15+6`, type 0x5C/0x5D, team 8) descends 50 ticks, the BUILD animation
+  plays, the pod ascends 50 ticks, one construction per player at a time (`gs+0x19AE`).
+* §15.2: damage sprites are `+0x88` for 5/16 < HP ≤ 11/16 and `+0x84` below; `0x41B818` and
+  `0x41B930` take the **last** free object below `MAX_OBJ`; production time is exactly
+  `1 + Σ d[1..n−1]` ticks of the BUILD animation (`startAnim` leaves the first delay 0).
+* §4.2 states 0xC/0xF/0x10/0x13–0x16: 0xC transfers the vent **rate** (`obj+0x32`) every 16th
+  `DN_COUNTER` value, the AI multiplier applies to the vent's loss too, a partner 0x4D/0x4E takes
+  half; 0xF/0x10 are artifact effects (pull, bouncing crusher); 0x13–0x16 are drop pods (building
+  construction and reinforcements), not vent states. Type 37 handling is `research.c`:
+  `0x4406F8(x, z, type)` appends the object type to the site's item list; `0x4400C0` sums the
+  creature-generator counts.
+* Protocol §4.3: command `0x0C` is `(which, type, level, player)`; `0x03` carries `x, height, z`
+  and sets `MAX_OBJ = obj+1`; `0x0B`/`0x18` write the target into **`obj+0x32`** (§3.2 said
+  `+0x30`); `DISCONNECT` clears the player's max-speed slot (`gs+0x974`) and routes its message
+  through the `0x0E` handler; the `0x14` assert is `a <= 800`.
+* §3.1: `gs+0x000` is `gs->underground` (atlantis), not a network flag. Positions `O.X/O.Z`
+  exceed int16 above tile 127 and are read zero-extended (`u16 >> 8`) for tile arithmetic.
+* Map doc §6.1: the five city pairs are `(count, hp)`; `"1 −1"` pre-builds the HQ; the allies
+  line sets `(i, j)` only, plus self in both matrices; `alliance[c][9] = alliance[9][c] = 1`;
+  tower slot 5 gets HP 1. §3.2: the terrain tally counts background and foreground tiles. §8: a
+  trigger's third field is `lifes` (firings left), actions run in **reverse** file order, `+`/`−`
+  bind tighter than `*`/`/`/`%`, `&&`/`||` are bitwise on int16, and the primitive set is
+  `c r t S u(k) b(p,k) s(p,k) s(p,k,type) m(x,z) v(x,z,q)`.
+* §12/§16.1: the scenario loader re-seeds with `srand(VAR 7)` after the shuffle, so the RNG index
+  at tick 0 is the seed plus the wildlife placement calls only.
+* §10.2 / §10.3 ring walks: `rally` (`0x417400`), `stealing search` (`0x417BDC`) and `abduction`
+  (`0x4171EC`) visit, for ring `r = 0..MAX`, the four sides `(x−r, z+k)`, `(x+r, z+k)`, `(x+k, z−r)`,
+  `(x+k, z+r)` with **`k = −2·MAX .. 2·MAX` for every ring** (`MAX` = 10, 11, the abduction radius),
+  not `k = −2r..2r`; cells are therefore visited several times and a unit can be linked twice. Found
+  with the first `send`-mode game (11 Sep 2026): the client aborted a few ticks after a commander
+  rally because the port had linked different units and consumed `rand()` a different number of times.
+* §6.1: the "research bytes" `0x510188 + player` (cyborg napalm) and `0x510A48 + player`
+  (psy-raider plasma) are `object_types[4] + 0x30` and `object_types[12] + 0x30`, i.e. the
+  per-player **weapon upgrade level** of those types set by command `0x0C`; the special needs
+  level 2. Nothing else writes those addresses (found with the second recorded game, 11 Sep 2026:
+  the port refused a napalm shot the client fired).

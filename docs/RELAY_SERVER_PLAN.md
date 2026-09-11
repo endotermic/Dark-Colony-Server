@@ -49,7 +49,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F11 | Options screen speed percent → `TICK_DESSPEED(6600 / percent)`; only `0x11 TICK_SPEED` changes `gs->tick_ms`; clients compute `TICK_SPEED` from the `TICK_MAXSPEED` reports they receive. | `0x432CD3`, `0x41DD6C`, `0x419830` | **150 % = 44 ms** per tick since 10 Sep 2026 (the single-player default of the patched exes; 200 % = 33 ms, the game's own minimum `0x419883`, until then). Server sends `TICK_SPEED(TICK_MS)`; client `0x11/0x12/0x13` are dropped |
 | F12 | Start positions: at game start each client seeds the game RNG from a global that is never written (always 0), lists lobby slots with type ≠ 3 in ascending order into 8 entries padded with −1, Fisher–Yates-shuffles `N = filename[1] - '0'` entries, and the position of a slot in the shuffled list is its game player index (= start location). | `0x4014F8`–`0x40159F`; RNG `0x4120E0/0x4120F0`, table `0x488F20` | The shuffle is the same every game. Randomness can only come from **which lobby slots are occupied**. With `k` occupied slots the same `k` start locations are always used and only the assignment of players to them varies, unless all 8 slots are occupied (§7) |
 | F13 | Cheats: in-game chat `0x0E` text after `':'` equal to `we need equipment`, `I'm fighting for that equipment`, `slag net`; `0x04` with `a ∉ {1,2}` toggles debug flags; `0x0F` = +1000 P7; `0x03` spawns objects and has no legitimate sender. | `0x41DA2C`, `0x41CE9C`, `0x41DBB0`, `0x41CF08` | Drop them |
-| F14 | `0x08` sync check; sent every tick by the connected human with the **lowest network slot that is not marked lost** (`0x419F1B`–`0x419F54`). With Mercenary in slot 0 that is always Mercenary, which has no client, so **nobody sends checksums** and the game's own desync detection is inert. A receiver that detects a mismatch prints "sync error" and fails an assertion, i.e. terminates (`0x44AC94`). | `0x41CE74`, `0x419F4B` | Drop (R5), always. Decision of 7 Sep 2026: checksums are neither generated (fake human in slot 0) nor forwarded, the game runs fine without them; the temporary diagnostic flags used for the two-player sync test were removed |
+| F14 | `0x08` sync check; sent every tick by the connected human with the **lowest network slot that is not marked lost** (`0x419F1B`–`0x419F54`). With Mercenary in slot 0 that is always Mercenary, which has no client, so **nobody sends checksums** and the game's own desync detection is inert. A receiver that detects a mismatch prints "sync error" and fails an assertion, i.e. terminates (`0x44AC94`). | `0x41CE74`, `0x419F4B` | Drop (R5), always. Decision of 7 Sep 2026: checksums are neither generated (fake human in slot 0) nor forwarded, the game runs fine without them; the temporary diagnostic flags used for the two-player sync test were removed. Since 11 Sep 2026 the server can compute the checksum itself (§18, F38–F41) and `MERCENARY_SLOT` can make a real player the sender for verification (F40) |
 | F15 | `'i'` carries the scenario file name relative to `scenario/mplayer/` (client formats `"scenario/mplayer/%s"`) and the title. **The title is not free text**: the host builds it with `sprintf("%-43s (%d Player %s)", name + "\n", players, "Desert Map ")` (format string `0x48319C`, terrain strings `0x483190`), and every lobby client reads `title[45]` as the map's player count (`0x41141F`): when that digit is smaller than the number of occupied slots the client clears the scenario and un-readies everybody (`0x41143B`–`0x41144C`). The file name's 2nd character is read as the player count at game start (`0x401504`). | `0x40FB5C`, `0x410733`, `0x41141F` | File `"D8PLAY01.SCN"`, title `"Armageddon\n" + 32 spaces + " (8 Player Desert Map )"` (66 chars, `(` at index 44). A plain "Armageddon" made every real client send `'i' "", ""` plus un-ready messages a second after joining (live test) |
 | F16 | Names: 16 chars + NUL. Buffers: lobby receive 1416, in-game receive 1024, held commands 7168. | `0x41F701`, `0x41E65B` | Frame budget in §8 |
 | F17 | Original server constants: tick 66 ms, look-ahead 8 ticks, stall when `until − min(clientTime) ≥ 200`, ≤ 255 ticks per step, `DISCONNECT(slot)` in-game → AI takes over. | `0x40B7CC` | Reused, with tick 44 ms (33 ms until 10 Sep 2026) |
@@ -72,6 +72,10 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F34 | The lobby loop reads **at most one frame per iteration** (`0x411132`: one call of the frame reader, not a loop; on data it calls the dispatcher `0x40F918` and goes on with the iteration), and the dispatcher runs **every command of the frame** (loop at `0x40F929`–`0x40F975`: type byte → table `0x488E54` → handler, until the `0x00` terminator; an unknown type is "SETUP_COMMANDS BAD"), then calls `0x40F6AC` once per frame. The iteration rate is that of the UI loop. | disassembly; live 7 Sep 2026: seven one-command frames per 200 ms scrolled fast for a moment and then slower and slower (the client fell behind and queued frames) | Send one **frame** per update with all its commands inside: the marquee step, the hall dump, the room dump. Multi-command lobby frames are also what the original server relays when a client packs `'o'`+`'q'` (F23). `PACK_LOBBY_FRAMES=false` restores one command per frame |
 | F35 | The lobby chat handler (`'e'`, `0x40ECE4`) copies the chat control's current text (control 24, up to `0x800` bytes) into a local buffer, appends `"\n"` + the received string, word-wraps by inserting `'\n'` at the last space once a line reaches **width − 1 = 40** columns (control width from `0x423F24`), and then, while the text does not fit the control (`0x424608`), **drops the first line**. The control shows the last ten visual lines; nothing else is kept. The received string is appended as it is: the `"Name: "` in front of a player's line is the sending client's own convention, not something the handler needs. | disassembly `0x40ED15`–`0x40EDE5`; F26, F29 | The server can paint the whole window: ten lines of at most 40 characters replace what is shown. Lines from the relay carry no name (maintainer, 7 Sep 2026). The greeting is kept at the top by repainting the window on every chat event (§17.8) |
 | F36 | The big READY button is `checkb 133` (`INTRFACE/MULTIE` line 351), a checkbox with its own pressed state. Its click handler (`0x4115A9`–`0x411636`) sends `'h'(2, own)` on the "checked" event and `'h'(1, own)` on any other event; the only code that changes the button's state is the click itself and the client-side refusal when the own colour is locked (`0x4272A8(ui, 0x85, 0)` at `0x411608`). The `'h'` message handler drives the **row** checkbox `16 + player` only (`0x4272A8(ui, 0x10 + player, status == 2)` at `0x40F38B`); the lobby refresh only enables or disables control 133 (`0x424514` at `0x40FF96`/`0x40FFC5`). No lobby message reaches the button's state. | disassembly; all five logged room entries of 7 Sep 2026: the first READY press inside the room sent status 1, the second status 2 | After READY in the hall the button stays pressed and the server cannot release it. The room therefore seats a client from the hall **ready** (status 2, F20 lock check applied), so that the pressed button is true; one click un-readies for colour or race changes. A direct join (`HALL=false`) is present-not-ready as before |
+| F38 | **When a sync frame is executed.** The client's pacing loop (`0x41E268`) runs, per elapsed `tick_ms` while `until >= 0`: if `game_time + 1 == until` it calls the held-frame executor (`0x41E0D8`, mode 1), which dispatches whole held frames in order (every command of a frame, the `UNTIL` marker included) and stops after the frame whose `UNTIL` marker cleared `until`; then `game_time++` (`gs+0x94C`) and `game_tick` (`0x419978`). Afterwards, if `until < 0`, the next held frame starting with `0x02` supplies the new `until`. | `0x41E268`–`0x41E478`, `0x41E0D8`–`0x41E25C` | The commands of frame `UNTIL(a, u)` take effect at game time `u − 1`, before the tick that makes it `u`; ticks between two frames run without commands. The server engine mirrors exactly that (`src/synccheck.js`) |
+| F39 | **Checksum time.** `game_tick` ends with `record(gs, gs+0x94C)`: the checksum of the state *after* the tick is stored under the tick number that was incremented *before* the tick. The sender (`0x419F1B`: the human player — AI type 0 — with the smallest non-negative network id, if it is the local player) sends `0x08 (history[time], time)` with that same `time`. The receiver (`0x44ACF8`) asserts `time <= game_time` ("AUGH check sync time %ld > game time %ld") and `game_time − time < 256` ("records start at %ld"), then compares `history[time % 256]`; a mismatch prints "sync error: time %ld, net %d, me %d" and aborts. | `0x419F06`–`0x419FA9`, `0x44AC68`, `0x44ACF8`–`0x44AE7D` | A `0x08` inside frame `UNTIL(a, u)` is checked at game time `u − 1`, so it may carry any tick `t` with `u − 256 <= t <= u − 1`. The server sends, in frame k+1, the checksum of `until_k`, which it has just simulated; never tick 0 (no history entry) |
+| F40 | The lowest network id decides who sends checksums (F14, F39): with the fake host in slot 0 nobody does, and a real player in slot 0 would be the game's "host" in the clients' eyes (`'d'` player 0). | F14, `0x419F1B` | `MERCENARY_SLOT` moves the fake host for diagnostic games so that a real player becomes the sender; slot 0 then stays empty (never seatable), the fake host is never relocated by a joiner |
+| F41 | **Start shuffle RNG.** `run_game` seeds the game RNG with `srand([0x4A469C])` (`0x4120E0`: index = seed & 0xFF; the global is lobby `VAR` 7 — the `'o'` array `ss+0xA670` lives at `0x4A4680` — which the UI never changes and the server sends as 0, so index 0; the scenario loader re-seeds with the same value), then for `k = 0 .. N−1` (N = the title's player digit) swaps entry `k` of the 8-entry slot list (occupied slots ascending, padded with −1) with entry `k + rand() % (N − k)`, where `rand()` (`0x4120F0`) is `index = (index + 1) & 0xFF; return table[index]` over the 256 int32 values at `0x488F20`. The same RNG drives the whole simulation afterwards, so the shuffle's `rand()` calls are part of the deterministic sequence. | `0x4014F8`–`0x401582`, `0x4120E0`, `0x4120F0`, `0x488F20` (`data/dc16-tables.json`) | The engine starts from RNG index 0 and performs the shuffle itself; MREADY's game player index (F24) is a free check of it (`SyncCheck.onMready`) |
 | F37 | A scenario is `.SCN` (text: terrain, base name, display name, day/night, eight TEAM blocks with start position and city origin, object list `x z type player a b`), `.MAP` (u32 w, u32 h, w×h × {u16 bg, u16 fg}, w×h × u16 attribute; bit 9 = blocking terrain, rows stored `z = h-1-r`), `.MTG` (trigger ids), `.PTH` (256×256 family routing matrix + w×h family bytes in z order, 0 = impassable), `.TRO` (trigger script), `.POP` (editor-only eruption data), `.OVH`/`.O16` (96×84 minimap cache the game regenerates). Tile numbers are editor indices remapped through the terrain's `.BTS`. The lobby only ever needs lines 1–3 of the `.SCN` (F31). | `mapit.c 0x4530C0`, `path.c 0x442D8C`, `mobiles.c 0x41BAF0`, `renat.c 0x43FD1C`; all 198 shipped scenarios of both games parse; `docs/DC16_MAP_FILES.md` | `tools/map2json.js` converts scenarios to JSON, `maps/*.json` + `maps/index.json` hold the seven maps of the default `ROOMS` (others on request; grids indexed `[z][x]`, same coordinates as the game's commands), so a later server feature (position validation, start-location logic §7, a map browser) reads JSON instead of the binaries |
 
 ---
@@ -120,7 +124,9 @@ Design rules:
   single room; its design rule said multi-room would be added by instantiating `Room` per group,
   which is what 2.1 does.
 - Everything is single-threaded and event-driven; the only timer that matters is the game step.
-- The server never simulates the game. It only relays, orders and paces.
+- The relay never depends on a simulation: it only relays, orders and paces. Since 11 Sep 2026 a
+  **battle engine** (`src/engine/`, a port of the game's simulation core) can run *beside* it to
+  produce the lockstep checksum (§18); it is off by default and can never stall or alter the relay.
 - Every byte sent to a client goes through `Client.send(payloadBuffer)`, which stamps that client's
   sequence nibble. A broadcast is the same payload sent through each client's `send`.
 
@@ -591,6 +597,9 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
 | `SPEED_REFRESH_S` | `30` | re-send `TICK_SPEED` |
 | `LOG_LEVEL` | `info` | `debug` logs every frame |
+| `SYNC_CHECK` | `off` | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
+| `RECORD_DIR` | unset | record every battle as JSON lines (sync frames, client checksums, engine checksums, MREADY, disconnects) for `tools/replay.js` (§18.4); independent of `SYNC_CHECK` |
+| `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 
 ---
 
@@ -759,9 +768,9 @@ internet, and §13.5 (a capture of a genuine host) which is now optional.
   server's resync behaviour.
 - **No checksums**: with a fake human in slot 0 nobody sends `0x08` (F14), so a desync would not be
   detected by the game itself. The maintainer decided (7 Sep 2026) that checksums are neither
-  generated nor forwarded; the two-player test showed perfect sync without them. If desync
-  detection is ever wanted again, the server would have to forward `0x08` and a real player would
-  have to be the lowest non-lost slot, which contradicts the fake host design.
+  generated nor forwarded; the two-player test showed perfect sync without them. Since 11 Sep 2026
+  the server can generate them itself from its own simulation (§18, `SYNC_CHECK=send`), once the
+  engine port is verified bit-exact against recorded games; until then the option stays `off`.
 - **Colour-0 lock on the second joiner** is fixed by the `'h'(0, 0)` start signal but not explained
   (F3, §16). If a client ever refuses a human player's ready message the same way, the `tx` trace
   will show what it received.
@@ -1114,6 +1123,108 @@ above, so that the plan can be followed from scratch without repeating the disco
   against `ROOMS`, and checks on Armageddon when the game repository is present. Tests: 76, all
   passing; server code unchanged.
 
+**11 Sep 2026, the battle engine beside the relay (§18; F38–F41)**
+
+- Maintainer's request: run the battle engine on the server and put checksum commands (`0x08`)
+  into the sync frames. Design and integration done the same day; the engine itself is a port of
+  the simulation core of `dc16.exe` into `src/engine/` (in progress, see §18.5 for the state).
+- Facts read from the client's pacing code for it: a sync frame is executed as a whole when
+  `game_time + 1 == until` (F38), the checksum of a tick is recorded after that tick under the new
+  time and the sender puts that time into `0x08` (F39), the start shuffle seeds the game RNG with 0
+  and consumes one `rand()` per shuffled entry (F41). The `0x08` a frame carries must satisfy
+  `tick <= until - 1` and `until - 1 - tick < 256` on the receiving client, which the server
+  guarantees by sending, in frame k+1, the checksum of the tick `until_k` it has just simulated.
+- Server: `SYNC_CHECK=off|shadow|send`, `RECORD_DIR`, `MERCENARY_SLOT` (§11); `src/synccheck.js`
+  (engine driver: frames → engine ticks, `0x08` out, `0x08` in → comparison, MREADY → shuffle
+  check), `src/recorder.js` (JSON-lines recordings), `src/enginebridge.js` (the engine is loaded
+  asynchronously and optional), `tools/replay.js` (offline replay and comparison). The `0x08` sits
+  right after the `UNTIL`, counts against the command budget and yields to a full-size command
+  group (it goes out one frame later with the newer tick). Any engine error disables the engine for
+  the rest of the game; the relay never waits for it. With `MERCENARY_SLOT > 0` slot 0 is never
+  given to a real player (`Room.seatableSlots`), the fake host is never relocated, and the
+  hall/room DISCONNECT list on entry skips the fake host's slot instead of slot 0.
+- Tests: 85 (`test/synccheck.test.js` with a fake engine: checksum placement and tick, command
+  timing at `until - 1`, mismatch handling, engine failure, missing map/engine, MREADY shuffle
+  check, budget rule, `MERCENARY_SLOT=7`, recording); ESLint clean. Not yet tried with the real
+  game; the verification path is §18.4.
+
+**11 Sep 2026, first real-client comparison of the battle engine: 2005 checksums, 0 mismatches**
+
+- Setup (§18.4 stage 1): local server `SYNC_CHECK=shadow RECORD_DIR=logs/replays MERCENARY_SLOT=7
+  MIN_PLAYERS=1 LOG_LEVEL=debug`; the maintainer's `dc16.exe` joined room 2 (Armageddon) as slot 2,
+  the fake host sat in slot 7, so the client was the lowest network id and sent `0x08` every tick
+  (F40). The first attempt found no server: the start command with a trailing `&` had not survived
+  the maintainer's shell (nothing on 8888, no log); started from here instead.
+- Result (log `logs/2026-09-11-engine-shadow.log`, recording
+  `logs/replays/2026-09-11T11-32-52-621Z-room2-D8PLAY01.jsonl`, both outside git): MREADY reported
+  game player 1 for slot 2, the engine's shuffle agreed (F41 holds). Over 1452 ticks with a build
+  order, selections, waypoint/assault orders and wildlife wandering the engine's checksum matched the
+  client's on every one of 1442 compared ticks. At tick 1452 the engine threw and switched itself
+  off: `fireWeapon` passed the object index where `Anim.hotspots` expects a slot address (an
+  integration mismatch, not a simulation error), so the muzzle-hotspot lookup hit a NULL set the
+  first time a unit fired. Fixed (`Anim.hotspotsOfSet(fireAnim, facing)`); the offline replay of the
+  recording then ran all 2016 ticks: **2005 client checksums compared, 0 mismatches**, i.e. the port
+  reproduced the game's state bit-exactly for a 90-second game with movement, production and combat.
+- Consequence: §18.5 status is "bit-exact on the first recorded game"; the remaining gaps are longer
+  games with heavier combat, buildings and upgrades, several players, and the unported AI. `send`
+  mode stays a maintainer decision until a few more recordings replay clean.
+
+**11 Sep 2026, second real-client game: 8.5 minutes with fighting, 11512 checksums, 0 mismatches after one fix**
+
+- Same setup, longer game (log and `logs/replays/2026-09-11T11-39-44-629Z-room2-D8PLAY01.jsonl`,
+  outside git): a full base build-up — every building and every unit type of the race built
+  (maintainer's account), i.e. the construction drop pods and production from every building class
+  — six research purchases, four upgrades (`0x0C`), assault moves, fights with the wildlife, a
+  cyborg napalm strike. Live: 9714 ticks matched, then `client − engine = 1`
+  for six ticks and divergence from tick 9721 on.
+- Diagnosis from the recording alone: the only per-tick changes at 9715 were creature moves plus a
+  cyborg leaving its special-attack state (0x12) without firing; a constant +1 in the plain sum is
+  one extra missile (`gs+0x7D44`), and six ticks later napalm lands. The port gated the special on
+  "research bytes" `0x510188/0x510A48` that nothing writes; those addresses are
+  `object_types[4]+0x30` / `object_types[12]+0x30`, the cyborg's and psy-raider's **weapon upgrade
+  level** (command `0x0C`, level 2), which the player had bought at tick 8544. Fixed in `combat.js`;
+  the replay then matches all **11512 client checksums with 0 mismatches**, the first game too.
+- Both recordings are now the regression set of the engine: `node tools/replay.js <file>` must
+  print 0 mismatches after any engine change.
+
+**11 Sep 2026, first `send`-mode games: the client accepts 8952 server checksums, then dies at a commander rally**
+
+- Stage 3 of §18.4 locally: `SYNC_CHECK=send RECORD_DIR=logs/replays MIN_PLAYERS=1`, fake host back
+  in slot 0. First attempt: the whole server process crashed at the first frame with a checksum
+  above 32767 (57372): `build.sync` wrote it with a signed 16-bit write. Fixed: the 16-bit encoder
+  wraps to the bit pattern, and `SyncCheck.syncCommand` is guarded so that an exception there
+  disables the engine instead of killing the relay; a test pins both.
+- Second attempt (`logs/replays/2026-09-11T12-16-15-643Z-room2-D8PLAY01.jsonl`): 6.5 minutes,
+  **8952 server checksums sent and accepted by the client** (every one is verified by the game
+  against its own history, so this is the strongest confirmation so far). Then the maintainer
+  pressed the commander's morale star with units next to him; the client stopped echoing about ten
+  ticks after the rally tick and, after the 5-second echo deadline, was evicted and saw "connection
+  lost" (the game's assertion box is not shown; `error.log` is truncated at every start).
+- Diagnosis from the engine's own trace: the rally itself matched the disassembly, but the ring walk
+  shared by rally (`0x417400`), stealing search (`0x417BDC`) and abduction (`0x4171EC`) runs the side
+  offset `k` from `−2·MAX` to `+2·MAX` with the **constant** maximum ring, not `−2r..2r`; the port
+  visited fewer cells, linked other units and consumed `rand()` a different number of times, which
+  the wildlife's wandering turned into a checksum difference within a few ticks. Fixed in
+  `combat.js` (battle-engine doc §20). The three shadow recordings still replay with 0 mismatches,
+  and a shadow-mode repro of a real rally (`logs/replays/2026-09-11T12-44-38-906Z-room2-D8PLAY01.jsonl`:
+  charge 245, two troopers linked at tick 505, 200 more ticks played) matches all **704 client
+  checksums with 0 mismatches**. Back to `send` mode for the next games.
+- An earlier, earlier star press in the same game (ticks 4959–5066) had no effect on either side:
+  the commander was asleep with too little charge and the order was refused.
+
+**11 Sep 2026, `send` mode with two real clients on the LAN: a full game, no problems**
+
+- `SYNC_CHECK=send RECORD_DIR=logs/replays MIN_PLAYERS=1`, fake host in slot 0, two PCs
+  (`192.168.8.49` slot 5, `192.168.8.37` slot 7) in room 2 (Armageddon). The engine sent **2775
+  checksums, one per sync frame, and both clients accepted every one** (each client checks each
+  `0x08` against its own history and aborts on a difference). The maintainer's verdict: "no
+  problems". When the first player quit at tick 2788 the `DISCONNECT` handed that base to the AI
+  and the engine switched itself off for the rest of the game as designed (`ai.js` is not ported);
+  the second player played on as a plain relay game. Recording
+  `logs/replays/2026-09-11T12-58-17-957Z-room2-D8PLAY01.jsonl` (outside git).
+- Committed the same day (`SYNC_CHECK` default still `off`; enabling it in production is one
+  environment variable on Fly).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1294,3 +1405,89 @@ new greeting on entering a room; and the "fast, then slow" roll turned out to be
 one-command frames (F34), fixed by one packed frame per update. Still to be seen with real clients:
 the packed frames and the map-line display (third test), two players entering the same room through
 the hall, and a client whose slot is 7 (its own row is the last one).
+
+## 18. The battle engine beside the relay: checksums from the server (11 Sep 2026)
+
+The maintainer asked for the server to run the battle engine itself and to put checksum commands
+into the sync frames. The game's own desync detection is inert on this server (F14: the fake host
+in slot 0 is the lowest network id, so no client sends `0x08`), and the relay has no idea what
+happens in a battle (no end detection, no position validation). A server-side simulation solves
+both, but only if it is **bit-exact**: every client compares a received `0x08` with its own history
+and aborts on the first difference (F39), so a wrong checksum ends the game for everybody.
+
+### 18.1 What runs where
+
+```
+Room ── Game (relay, unchanged) ──► sync frames ──► clients
+  │                                   │
+  └── SyncCheck (src/synccheck.js) ◄──┘  feeds every issued frame to the engine, asks it for the
+        │                                checksum of the last simulated tick, compares 0x08 from clients
+        └── engine.Game (src/engine/)    the port of dc16.exe's simulation core (mem.js memory model,
+                                         engine.js game_tick, one module per original source file)
+```
+
+- `SYNC_CHECK=off` (default): nothing of this runs. `shadow`: the engine runs beside the relay, its
+  checksums are logged/recorded and compared with `0x08` messages received from clients (which
+  exist only with `MERCENARY_SLOT > 0`, F40); nothing is sent. `send`: shadow plus one `0x08` per
+  sync frame.
+- The engine is loaded asynchronously at start-up (`src/enginebridge.js`) and is optional: when the
+  module or its data files are missing, or the room's map has no `maps/<BASE>.json`, or the engine
+  throws, the room logs `engine disabled` with the reason and goes on as a plain relay. The relay
+  never waits for the engine; an exception in a tick disables the engine for that game only.
+- Inputs at game start: the lobby slots as every client saw them at the start signal (`Room.startSlots`,
+  taken in `beginStarting`), the map JSON (`maps/`), the balance tables (`data/classic/gamestat.json`,
+  generated from `GAMESTAT/*.TXT` by `tools/gamestat2json.js`), the exe's constant tables
+  (`data/dc16-tables.json`: RNG table, sine quarter wave, spiral, direction tables, city layout) and
+  the sprite timing data (`data/classic/sprites.json`, `tools/sprdata2json.js`).
+
+### 18.2 Timing of ticks, commands and checksums (F38, F39)
+
+The client executes the whole frame `UNTIL(a, u)` (marker and commands) at game time `u − 1`, then
+ticks to `u`; ticks between two frames have no commands. `SyncCheck` keeps the issued frames in
+order and, after frame k is broadcast, runs the engine: ticks up to `u_k − 1` without input, the
+frame's commands (everything except `UNTIL`, `0x08` and `TICK`), then the tick that reaches `u_k`.
+Frame k+1 may then carry `0x08 (history[u_k], u_k)`: on the receiving client that frame is executed
+at game time `u_{k+1} − 1 >= u_k`, and `u_{k+1} − 1 − u_k = n_{k+1} − 1 <= 254 < 256`, so both
+assertions of `check` hold. The first frame never carries a checksum (the engine has no tick yet;
+tick 0 has no history entry on the clients either).
+
+The `0x08` sits right after the `UNTIL`, before the players' commands (order inside a frame does
+not matter to the check), counts against the 1012-byte command budget, and is left out of a frame
+whose first queued command group would not fit next to it (the group cannot wait, the checksum can:
+the next frame carries the newer tick). Pause: no frames, no ticks. `DISCONNECT(slot)` travels in a
+frame like any command and reaches the engine's `0x10` handler at the right tick.
+
+### 18.3 What the engine must reproduce
+
+Everything that can change a position, a hit-point value, an object's existence/type/team, the
+missile count or the day/night fields, and every `rand()` call in the original order (the RNG state
+is shared by all of it). `docs/DC16_BATTLE_ENGINE.md` describes the code; `src/engine/PORTING.md`
+sets the porting rules (memory model with the original offsets, integer semantics, one module per
+original source file, `PORT NOTES` per module). The start sequence is part of it: the shuffle (F41),
+the player records, the scenario objects, the wildlife placed with `rand()` after the object list.
+
+### 18.4 Verification path
+
+1. Play a game with `SYNC_CHECK=shadow RECORD_DIR=logs/replays MERCENARY_SLOT=7` (the lowest
+   real player then sends `0x08` every tick, the server records frames, engine checksums and the
+   client's checksums and logs the first mismatch at once).
+2. `node tools/replay.js logs/replays/<file>.jsonl` re-runs the engine offline over the recording
+   and prints the first tick where it disagrees with the client — the loop for fixing the port
+   without a live game. `MREADY`'s game player index is a free check of the start shuffle.
+3. Only when recorded games replay without a mismatch: `SYNC_CHECK=send`. A mismatch reported by a
+   client during `send` disables the checksums for that game (the client that reported it has
+   already aborted; the others survive).
+
+### 18.5 State of the port (11 Sep 2026, night)
+
+All simulation modules are ported and integrated (see the §16 entries of 11 Sep 2026): tables,
+scenario/grid, ticker, move/path, combat/missile, commands/city, renat, anim; only sound handles,
+the hero-death event's uninitialised bytes and the whole of `ai.js` are stubs. **Verified against
+the real game**: three shadow recordings (90 s; 8.5 min with a full base build-up, research,
+upgrades, wildlife fights and napalm; a commander rally) replay with 14221 client checksums and 0
+mismatches, and in `send` mode two real clients played a full game accepting 2775 server checksums.
+Three port bugs were found and fixed on the way (a hotspot call, the cyborg/psy-raider "research
+bytes", the ring walk of the rally). Still to be exercised: player-versus-player destruction of
+units and buildings, artifacts, more than two players. After a `DISCONNECT` the AI takes over a
+base and the engine stops sending for that game (`ai.js` is not ported). `SYNC_CHECK` stays `off`
+by default; the verification loop for further work is §18.4.

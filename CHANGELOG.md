@@ -6,6 +6,21 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Battle engine beside the relay** (11 Sep 2026, plan §18): the server can run a port of the
+  game's simulation core (`src/engine/`, bit-exact memory layout of `dc16.exe`'s game state) and
+  put the lockstep checksum command `0x08 (checksum, tick)` into its sync frames, which no client
+  ever sends on this server (the fake host is the lowest network id). New settings: `SYNC_CHECK`
+  (`off` default, `shadow` = run and compare only, `send` = checksums in every frame), `RECORD_DIR`
+  (JSON-lines recording of every battle for `tools/replay.js`), `MERCENARY_SLOT` (move the fake
+  host so that a real player sends checksums for verification; slot 0 is then never seated). The
+  engine is optional and loaded in the background; any failure leaves the room a plain relay. Facts
+  F38–F41 (when a frame's commands execute, which tick a checksum names, the RNG seed of the start
+  shuffle) were read from the client's pacing code. The simulation modules are ported
+  (`src/engine/PORTING.md`, `data/classic/*.json`, `tools/gamestat2json.js`, `tools/sprdata2json.js`);
+  the AI is not. Two real-client games recorded the same day replay bit-exactly: 90 seconds (2005 checksums)
+  and 8.5 minutes with fighting, upgrades and napalm (11512 checksums), 0 mismatches; in `send` mode
+  two real clients played a full LAN game accepting 2775 server checksums (plan §16). Three port
+  bugs found by the recordings were fixed on the way. 106 new tests (191).
 - Scenario files documented and converted to JSON (11 Sep 2026): `docs/DC16_MAP_FILES.md` describes
   the `.SCN`/`.MAP`/`.MTG`/`.PTH`/`.TRO`/`.POP`/`.OVH` formats from the game's loaders (row order,
   tile numbering through the `.BTS` remap, the attribute word's blocking bit, the TEAM block, the

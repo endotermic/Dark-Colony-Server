@@ -11,6 +11,8 @@ import { Client, readCommands } from './client.js';
 import { Lobby } from './lobby.js';
 import { Game } from './game.js';
 import { Watchdog } from './watchdog.js';
+import { SyncCheck } from './synccheck.js';
+import { Recorder } from './recorder.js';
 
 export { STATE, SLOT_TYPE, SLOTS };
 
@@ -44,6 +46,20 @@ export class Room {
     this.lobby = new Lobby(this);
     this.game = new Game(this);
     this.watchdog = new Watchdog(this);
+    // the battle engine beside the relay (plan §18). The engine module is loaded asynchronously by
+    // index.js (enginebridge.js) and handed in through setEngine(); tests inject a fake one.
+    this.sync = new SyncCheck(this, {
+      mode: config.SYNC_CHECK,
+      recorder: config.RECORD_DIR ? new Recorder(config.RECORD_DIR, this.log) : null,
+      createGame: opts.engine?.createGame ?? null,
+      loadMapJson: opts.engine?.loadMapJson ?? null,
+    });
+  }
+
+  /** The engine factory ({ createGame, loadMapJson }) once it is loaded, or null when it is not available. */
+  setEngine(engine) {
+    this.sync.createGame = engine?.createGame ?? null;
+    this.sync.loadMapJson = engine?.loadMapJson ?? null;
   }
 
   // ---- slots --------------------------------------------------------------------------------
@@ -81,12 +97,14 @@ export class Room {
   resetSlots() {
     const cfg = this.config;
     for (let s = 0; s < SLOTS; s++) this.slots[s] = this.emptySlot(s);
-    // slot 0 is always the fake host "Mercenary"
-    this.slots[0] = this.fakeSlot(0, cfg.FAKE_NAME_LIST[0]);
+    // the fake host "Mercenary" sits in MERCENARY_SLOT (0 unless a diagnostic session moves it so
+    // that a real player becomes the lowest network id and sends 0x08 checksums, plan §18)
+    const m = cfg.MERCENARY_SLOT;
+    this.slots[m] = this.fakeSlot(m, cfg.FAKE_NAME_LIST[0]);
     // further fake humans take random slots, so that the real players' slots (and with them
     // their start positions, F12) differ from game to game
     if (cfg.FAKE_PLAYERS > 1) {
-      const pool = [1, 2, 3, 4, 5, 6, 7];
+      const pool = [1, 2, 3, 4, 5, 6, 7].filter((s) => s !== m);
       for (let i = pool.length - 1; i > 0; i--) {
         const j = this.random(i + 1);
         [pool[i], pool[j]] = [pool[j], pool[i]];
@@ -101,6 +119,11 @@ export class Room {
 
   freeSlots() {
     return this.slots.filter((sl) => !sl.fake && !sl.client);
+  }
+
+  /** Free slots a real player or a relocated fake may take: never slot 0 (the lowest network id, F14). */
+  seatableSlots() {
+    return this.freeSlots().filter((sl) => sl.slot > 0);
   }
 
   /** Seats for real players on this map. */
@@ -120,12 +143,13 @@ export class Room {
     if (this.state !== STATE.LOBBY || this.isFull()) return false;
     const slot = this.slots[s];
     if (!slot || s <= 0 || slot.client) return false;
-    return !slot.fake || this.freeSlots().length > 0;
+    if (s === this.config.MERCENARY_SLOT) return false; // the fake host is never moved
+    return !slot.fake || this.seatableSlots().length > 0;
   }
 
   /** Move the fake in slot `s` to a random free slot (fakes have no client, so nothing else notices). */
   relocateFake(s) {
-    const free = this.freeSlots();
+    const free = this.seatableSlots();
     if (free.length === 0) return false;
     const t = free[this.random(free.length)].slot;
     const f = this.slots[s];
@@ -161,7 +185,7 @@ export class Room {
     client.wire();
     if (this.log.level === 'debug') client.onSend = (c, payloads) => this.traceTx(c, payloads);
     if (this.state !== STATE.LOBBY) return this.reject(client, 'a battle is in progress, try again later');
-    const free = this.freeSlots();
+    const free = this.seatableSlots();
     if (free.length === 0 || this.isFull()) return this.reject(client, 'the lobby is full');
     // random free slot in 1..7: this is what randomises the start positions (plan §7)
     return this.adopt(client, free[this.random(free.length)].slot, true);
@@ -341,6 +365,7 @@ export class Room {
       case STATE.STARTING:
       case STATE.RUNNING:
         this.game.onClientLeft(client); // DISCONNECT inside the next sync frame (F19)
+        this.sync.onClientLeft(client, reason);
         break;
       default:
         break;
@@ -358,6 +383,7 @@ export class Room {
 
   reset() {
     this.log.info('room reset', { gamesPlayed: this.gamesPlayed });
+    if (this.state !== STATE.LOBBY) this.sync.stop('room reset');
     this.state = STATE.LOBBY;
     this.startingAt = 0;
     for (const c of this.clients) c.destroy();
@@ -371,6 +397,8 @@ export class Room {
     this.state = STATE.STARTING;
     this.startingAt = now;
     for (const c of this.clients) c.mready = false;
+    // the lobby as every client sees it when the start signal goes out: the engine's input (§18)
+    this.startSlots = this.slots.map((q) => ({ type: q.type, race: q.race, colour: q.colour, team: q.team, name: q.name }));
     // The fake players were the last status-1 slots; once none is 1 any more every client leaves
     // the lobby (F3). Status 0 is used rather than 2: a status-2 message goes through the client's
     // colour-lock check and was refused on some clients (live test, 6 Sep 2026), status 0 is
@@ -387,6 +415,8 @@ export class Room {
   beginRunning(now) {
     this.state = STATE.RUNNING;
     this.gamesPlayed++;
+    this.sync.start(this.startSlots ?? this.slots);
+    for (const c of this.players()) if (c.gamePlayer >= 0) this.sync.onMready(c, c.gamePlayer);
     this.game.start(now);
     this.log.info('running', { game: this.gamesPlayed, players: this.players().length, tickMs: this.config.TICK_MS });
   }

@@ -16,6 +16,11 @@ export class RoomPool {
     return this.rooms[index] ?? null;
   }
 
+  /** Hand the loaded battle engine ({ createGame, loadMapJson } or null) to every room. */
+  setEngine(engine) {
+    for (const r of this.rooms) r.setEngine(engine);
+  }
+
   step(now) {
     for (const r of this.rooms) r.step(now);
   }

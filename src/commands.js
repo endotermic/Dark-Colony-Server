@@ -182,6 +182,8 @@ export function decode(cmd) {
       return { a: b.readInt32LE(1), until: b.readInt32LE(5) };
     case T.CHEAT:
       return { a: b.readInt16LE(1), b: b.readInt16LE(3) };
+    case T.SYNC:
+      return { checksum: b.readInt16LE(1), time: b.readInt32LE(3) };
     case T.CHAT:
       return { from: b[1], mask: b[2], text: readCstr(b, 3) };
     case T.BONUS:
@@ -234,7 +236,7 @@ export function decode(cmd) {
 const u8 = (...v) => Buffer.from(v.map((x) => x & 0xff));
 const i16 = (v) => {
   const b = Buffer.alloc(2);
-  b.writeInt16LE(v);
+  b.writeInt16LE(((v & 0xffff) << 16) >> 16); // wraps: the 0x08 checksum is an unsigned 16-bit sum
   return b;
 };
 const i32 = (v) => {

@@ -37,7 +37,7 @@ export class Lobby {
       // client's own and Mercenary's first (the DISCONNECT handler resets type, status and CD flag
       // and keeps the client's player count right; Mercenary's row stays status 1 so that the
       // client does not leave the lobby, F3)
-      for (let q = 1; q < SLOTS; q++) if (q !== s) mine.push(build.disconnect(q));
+      for (let q = 0; q < SLOTS; q++) if (q !== s && q !== this.cfg.MERCENARY_SLOT) mine.push(build.disconnect(q));
     }
     // a fresh chat window with the room greeting pinned at the top (§17.8); the hall's lines are gone
     client.chat = new ChatView(this.greeting());

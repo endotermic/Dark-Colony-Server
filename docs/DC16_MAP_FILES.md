@@ -209,6 +209,14 @@ The start position is where the team's commander stands at game start (the objec
 After EOF the game adds `players/5 × difficulty(0,5)` random creatures of type 85 or 90 on random
 passable tiles (`0x41C87D`–`0x41C994`); they are not in the file.
 
+The "difficulty factors" `0x41A790(0, k)` are the statistics slots of player 0 (`DC16_BATTLE_ENGINE.md`
+§16.1), filled by `run_game` from the lobby `VAR` array (`ss+0xA670` = `0x4A4680..`): slot 1/2 = VAR 4/5
+(P7 quantity/flow, `<< 6` → 256 for the default 4), slot 3 = VAR 2 (erupting vents, default 1), slot 4 =
+VAR 3 (renewable vents), slot 5 = VAR 0 (storage cells), slot 6 = VAR 1 (artifacts). With the relay
+server's `VAR_DEFAULTS` vents keep the file's rate and amount, no artifact site is created unless no
+slot is occupied, and no random creatures are added after EOF (found 11 Sep 2026 while porting the
+loader; the city pairs are `(count, hp)`, see the battle-engine doc §20).
+
 Object type ids are the row numbers of `GAMESTAT/GAMESTAT.TXT` (106 types; the JSON carries the
 name of each). Multiplayer maps contain: one type 69 commander (lieutenant) and one type 0 trooper
 per team, the commander at the start position, vents (40), artifact sites (37), creature generators

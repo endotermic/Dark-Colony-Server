@@ -29,6 +29,7 @@ export class Watchdog {
       paused: g.paused,
       stalls: this.stalls,
       stalledNow: g.stallSince > 0,
+      engine: r.sync.mode === 'off' ? undefined : r.sync.summary(),
       players: r.players().map((c) => ({
         slot: c.slot,
         gamePlayer: c.gamePlayer,

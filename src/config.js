@@ -38,7 +38,21 @@ export const DEFAULTS = Object.freeze({
   STATS_INTERVAL_S: 30, // in-game stats log line; 0 = off
   DEBUG_MODE: false, // also implied by LOG_LEVEL=debug: applies the full-map-view cheat at game start
   LOG_LEVEL: 'info',
+  // The server-side battle engine (plan §18): off = relay only; shadow = the engine runs beside the
+  // relay, its checksums are logged/recorded and compared with 0x08 messages from clients; send =
+  // shadow plus one 0x08 (checksum, tick) command in every sync frame. A mismatch aborts the CLIENT
+  // ("sync error"), so `send` is for verified builds only.
+  SYNC_CHECK: 'off',
+  // Record every battle (sync frames, client checksums, engine checksums) as JSON lines into this
+  // directory for offline replay with tools/replay.js; '' = off. Independent of SYNC_CHECK.
+  RECORD_DIR: '',
+  // Lobby slot of the fake host. 0 (default) makes it the lowest network id, so no client sends
+  // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every
+  // tick, which RECORD_DIR/SYNC_CHECK=shadow compare with the engine. Real players never get slot 0.
+  MERCENARY_SLOT: 0,
 });
+
+export const SYNC_CHECK_MODES = ['off', 'shadow', 'send'];
 
 const TRUE_WORDS = new Set(['1', 'true', 'yes', 'on']);
 
@@ -116,4 +130,7 @@ function validate(cfg) {
   if (cfg.FILL_AI_TYPE !== 0 && cfg.FILL_AI_TYPE !== 1) throw new Error('FILL_AI_TYPE must be 0 or 1');
   if (cfg.LOOKAHEAD < 1 || cfg.MAX_LAG <= cfg.LOOKAHEAD) throw new Error('need 1 <= LOOKAHEAD < MAX_LAG');
   if (cfg.STRIKE_LIMIT < 1) throw new Error('STRIKE_LIMIT must be >= 1');
+  cfg.SYNC_CHECK = String(cfg.SYNC_CHECK).trim().toLowerCase();
+  if (!SYNC_CHECK_MODES.includes(cfg.SYNC_CHECK)) throw new Error(`SYNC_CHECK must be one of ${SYNC_CHECK_MODES.join(', ')}`);
+  if (!Number.isInteger(cfg.MERCENARY_SLOT) || cfg.MERCENARY_SLOT < 0 || cfg.MERCENARY_SLOT > 7) throw new Error('MERCENARY_SLOT must be 0..7');
 }
