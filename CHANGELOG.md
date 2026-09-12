@@ -4,6 +4,17 @@ Dates are the commit dates on `main`. Details of every finding and decision are 
 [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (section 16 is the dated change log of the
 live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md).
 
+## Unreleased
+
+- **The game's AI documented** (12 Sep 2026): [`docs/DC16_AI.md`](docs/DC16_AI.md) describes the
+  computer player of `dc16.exe` ("Krusty") from the disassembly — schedule, command path, state
+  layout, influence map, census, production goals, the four tasks, group movement, `aimsg`, save/load.
+  `DC16_BATTLE_ENGINE.md` §17 now points there and lists what it had wrong.
+- **Alive bots planned** (12 Sep 2026, maintainer request; nothing implemented yet): plan §19 designs
+  Krusty instances run by the server for the fake human players, their decisions travelling as
+  ordinary commands in the sync frames (facts F43–F46). Settings foreseen: `BOTS`, `BOT_THINK_TICKS`,
+  `BOT_SPLIT_PERCENT`, `BOT_CLASS_WEIGHTS`, `BOT_SEED`.
+
 ## 2.2 — 12 September 2026 (tag `v2.2.0`)
 
 The battle engine runs beside the relay and puts lockstep checksums into the sync frames, the hall

@@ -19,7 +19,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R1 | Node.js, from scratch, no game code changes | Single process, zero npm dependencies (`node:net`, `node:crypto`, `node:test`) |
 | R2 | Hosted on Fly.io, TCP | One always-on machine, dedicated IPv4, ports 8888 + 8889 |
 | R3 | 8 players | Slots 0..7; slot 0 is the fake host, slots 1..7 are real TCP clients |
-| R4 | Slot 0 = fake human player **"Mercenary"**, always a fake human (never handed to the AI) | Server emulates the host client for slot 0 (name, race, colour, team, status). `FAKE_PLAYERS` (1..7) adds further fake humans in random slots, e.g. 7 fakes + 1 real player |
+| R4 | Slot 0 = fake human player **"Mercenary"**, always a fake human (never handed to the AI) | Server emulates the host client for slot 0 (name, race, colour, team, status). `FAKE_PLAYERS` (1..7) adds further fake humans in random slots, e.g. 7 fakes + 1 real player. Since 12 Sep 2026 the maintainer wants the fakes to **play** ("alive bots", §19): they stay human slots on the wire, the server issues their commands |
 | R5 | Ignore command `0x08` (checksum) | Dropped, never queued |
 | R6 | Very strict sync: commands only travel inside the frame that carries the `0x02` sync command; identical bytes, identical order for everyone | One sync frame per server step: `[UNTIL][cmd…][0x00]`, broadcast byte-for-byte to all clients (only the per-connection sequence nibble differs) |
 | R7 | Start the game with the READY button (the chat word `ready` of the first design was dropped on 7 Sep 2026: the button works for every joiner, the eighth slot included) | When every real player has status 2 and there are at least `MIN_PLAYERS`, a countdown runs and the server frees the fake slots from status 1 (`'h'(0, q)`), which makes every client leave the lobby (§6.3) |
@@ -78,6 +78,10 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F41 | **Start shuffle RNG.** `run_game` seeds the game RNG with `srand([0x4A469C])` (`0x4120E0`: index = seed & 0xFF; the global is lobby `VAR` 7 — the `'o'` array `ss+0xA670` lives at `0x4A4680` — which the UI never changes and the server sends as 0, so index 0; the scenario loader re-seeds with the same value), then for `k = 0 .. N−1` (N = the title's player digit) swaps entry `k` of the 8-entry slot list (occupied slots ascending, padded with −1) with entry `k + rand() % (N − k)`, where `rand()` (`0x4120F0`) is `index = (index + 1) & 0xFF; return table[index]` over the 256 int32 values at `0x488F20`. The same RNG drives the whole simulation afterwards, so the shuffle's `rand()` calls are part of the deterministic sequence. | `0x4014F8`–`0x401582`, `0x4120E0`, `0x4120F0`, `0x488F20` (`data/dc16-tables.json`) | The engine starts from RNG index 0 and performs the shuffle itself; MREADY's game player index (F24) is a free check of it (`SyncCheck.onMready`) |
 | F37 | A scenario is `.SCN` (text: terrain, base name, display name, day/night, eight TEAM blocks with start position and city origin, object list `x z type player a b`), `.MAP` (u32 w, u32 h, w×h × {u16 bg, u16 fg}, w×h × u16 attribute; bit 9 = blocking terrain, rows stored `z = h-1-r`), `.MTG` (trigger ids), `.PTH` (256×256 family routing matrix + w×h family bytes in z order, 0 = impassable), `.TRO` (trigger script), `.POP` (editor-only eruption data), `.OVH`/`.O16` (96×84 minimap cache the game regenerates). Tile numbers are editor indices remapped through the terrain's `.BTS`. The lobby only ever needs lines 1–3 of the `.SCN` (F31). | `mapit.c 0x4530C0`, `path.c 0x442D8C`, `mobiles.c 0x41BAF0`, `renat.c 0x43FD1C`; all 198 shipped scenarios of both games parse; `docs/DC16_MAP_FILES.md` | `tools/map2json.js` converts scenarios to JSON, `maps/*.json` + `maps/index.json` hold the seven maps of the default `ROOMS` (others on request; grids indexed `[z][x]`, same coordinates as the game's commands), so a later server feature (position validation, start-location logic §7, a map browser) reads JSON instead of the binaries |
 | F42 | **The READY button is disabled while the scenario is empty.** The lobby refresh (`0x40FF80`) enables control 133 (F36) only when the scenario file name (`gs+0xA264`, set by `'i'`) is non-empty and the word at `gs+4` is 0; otherwise `0x424514(ui, 0x85, 1)` greys it out (`0x40FF96`; enable at `0x40FFC5`). The `'i'` handler stores the title at `gs+0xA268`; the player-count check of F15 (`title[45]`, `0x41141F`) is skipped when the title is empty (`0x411416`), so an empty title causes no un-ready storm. `'i' "", ""` is the client's own "no map" state (F15 example). | disassembly `0x40FF80`–`0x40FFD0`, `0x411416`; real client 12 Sep 2026: empty map line, READY greyed | The hall sends `'i' "", ""` while no room is selected (maintainer, 12 Sep 2026): the map line is empty and the client itself disables READY until `/N` puts the room title there; the server-side refusal of READY without a selection stays as a guard |
+| F43 | **The AI is a command generator.** `ai_think` (`0x41AD30`) decides and then calls the ordinary command builders (`0x40C50C` → `0x09`, `0x40C538` → `0x0A`, `0x40C7D4` → `0x07`+`0x05`, `0x05 0x0D` deploy); every builder ends in `0x421648`, which during `ai_turn` runs in "local command mode" (byte `0x4AF090`, set by `game_tick` around the call) and executes the bytes at once through the same handler table `0x48949C` the sync frames use. The AI never sends anything; nothing in a client distinguishes a human's command from an AI's. | `0x419FA9`–`0x419FC0`, `0x421648`, `0x41E06C`; `docs/DC16_AI.md` §3 | A server may generate the same bytes for a fake human and put them into its next sync frame (§19) |
+| F44 | **Money is local.** The `0x09`/`0x0A`/`0x0C` handlers add to `P.SPENT` and never touch `P.MONEY`; the sender deducts before sending (build menu `0x43332F`, Krusty goal actions `0x4562B0`/`0x456408`). Money is not in the checksum. | `0x41CAA4`, `0x41C9C8`, `0x41CBD4`; `DC16_AI.md` §3 | A fake player's money exists only in the server engine; the bot deducts there (§19.1) |
+| F45 | **AI schedule.** `ai_turn` runs on ticks with `TICK & 3 == 0`: tick 4 → every AI player; afterwards one *slot* per call (`rr = (rr+1) % 8`, humans waste the call), so player `p ≥ 1` thinks at ticks `4 + 4p + 32k`, player 0 at `36 + 32k`. AI commands of tick `t` are applied after `record(t)` and enter checksum `t+1`. | `0x41AE38`, `0x419FB6`; `DC16_AI.md` §2–§3 | Bots think every 32 ticks at the same phases; a bit-exact `ai.js` must run at that point of the tick (§19.6) |
+| F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
 ---
 
@@ -1279,6 +1283,26 @@ above, so that the plan can be followed from scratch without repeating the disco
   smoke test). The lobby greeting reads `Welcome to Dark Colony server 2.2.` (`VERSION_SHORT` from
   `package.json`; the hall tests now derive that string instead of pinning `2.1`). Deployed to Fly.
 
+**12 Sep 2026, alive bots: the game's AI documented, server bots planned (§19, F43–F46)**
+
+- Maintainer's request: "make our server bots alive" — the fake players should play. No code yet.
+- The computer player of `dc16.exe` ("Krusty", `ai.c` + six `krusty_*.c` files) was read instruction
+  by instruction from `dc16.asm` and written up in `docs/DC16_AI.md`: framework and think schedule,
+  the local-command path that executes AI commands on every machine, the full 0x6C40-byte state
+  layout (zone table, memory of seen objects, four major tasks × sixteen groups, 32 goals, tunables),
+  influence map formula, census (workers → task 0, tower builders → defend, scouts → scouting, the
+  rest 25 % defend / 75 % attack), the 18 production goals, the four tasks (workers to vents, defend,
+  attack with its deterministic target scoring, flyer scouting/bombing), the group mover, every
+  `rand()` site, the `aimsg` trigger ids, DISCONNECT and save/load. Several statements of
+  `DC16_BATTLE_ENGINE.md` §17 turned out wrong (task roles swapped, state offsets, "demand" array,
+  RNG constant); §17 now points to the new document and lists the corrections.
+- Design decision recorded in §19: bots are Krusty instances run by the server against the engine's
+  state for the fake human players; their decisions become ordinary commands in the next sync frame
+  (F43), money is kept on the engine's player block (F44), the think phase follows the original
+  (F45), a private RNG replaces the game RNG, vision is the fake player's own (F46). The same module
+  is to be promoted later to a bit-exact `src/engine/ai.js` so that the engine survives a
+  `DISCONNECT` takeover and AI-typed lobby slots (§19.6). Steps, configuration and risks in §19.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1552,3 +1576,164 @@ bytes", the ring walk of the rally). Still to be exercised: player-versus-player
 units and buildings, artifacts, more than two players. After a `DISCONNECT` the AI takes over a
 base and the engine stops sending for that game (`ai.js` is not ported). `SYNC_CHECK` stays `off`
 by default; the verification loop for further work is §18.4.
+
+---
+
+## 19. Alive bots: the fake players play (plan of 12 Sep 2026, nothing implemented yet)
+
+The maintainer asked on 12 Sep 2026 for the server's bots to come alive: AI Mercenary and the other
+fake humans (`FAKE_PLAYERS`) should build, harvest, defend and attack instead of sitting idle. This
+section is the design; the game's own computer player it is based on is documented in
+`docs/DC16_AI.md` (written the same day from the disassembly).
+
+### 19.1 Why the server can do this at all
+
+* **The original AI is nothing but a command generator.** `ai_think` decides and then calls the very
+  same command builders the mouse and the build menu use (`0x09` build building, `0x0A` build units,
+  `0x07`+`0x05` waypoint orders, `0x05` order `0x0D` deploy). In the original those bytes are executed
+  on the spot on every machine (local-command mode, `DC16_AI.md` §3); a server can instead put the
+  identical bytes into its next sync frame, and every client executes them for the fake's game player
+  exactly as it executes a human's orders. Nothing in the client distinguishes a human's command from
+  a bot's (F43).
+* **The server already knows the whole game.** Since 11 Sep 2026 the battle engine (§18) runs beside
+  the relay in `send` mode and is bit-exact with the clients: objects, hit points, money, vision bits,
+  production queues, the path families ("zones") and the routing matrix are all in `room.sync.engine`.
+  That is precisely the input Krusty reads (`DC16_AI.md` §8–§13). No new data source is needed.
+* **Money is local.** The `0x09`/`0x0A`/`0x0C` handlers book spending but never deduct money; the
+  *sender* deducts before sending (build menu `0x43332F`, Krusty `0x4562B0`/`0x456408`). A fake
+  player's money therefore exists on no client at all; the engine's copy (`P.MONEY`, fed by the
+  income step of every 16th tick and by refunds) is its only ledger, and the bot deducts there (F44).
+* **The fakes stay humans on the wire.** No lobby type change, no `DISCONNECT`, no "lost, AI taking
+  over": R4 holds. The clients see eight named human players, some of which happen to be played by the
+  server. This also keeps the checksum sender rule (F14/F40) and the hall unchanged.
+
+### 19.2 What a bot is
+
+One **Krusty instance per fake player**, running on the server against the engine's game state, with
+two substitutions relative to the original (`DC16_AI.md` §17.2):
+
+| Original Krusty | Server bot |
+|---|---|
+| runs inside `game_tick` on every machine, every 32 ticks per player (`ai_turn`, F45) | runs on the server after `SyncCheck.advance()` has simulated up to `until_k`, when `until_k % 32 == phase(bot)` (the original phase `4 + 4·slot`, so the bots are spread over the window) |
+| commands executed immediately via `0x421648` in local mode | commands appended as one group to `Game.queue` → next sync frame → executed by clients and engine at `until_{k+1} − 1` (one frame ≈ 1–2 ticks later than the original) |
+| `rand()` = the shared game RNG `0x4120F0` (part of the lockstep) | a private RNG per bot (the engine's RNG must not be touched: it is part of the checksum) |
+| `money -= cost` on the local player block | the same on the engine's player block (the only ledger, F44) |
+| vision = the AI player's own vision bits (`see_thru` = own team) | the same bits from the engine's load grid (`grid.teamBit(p)`); the bot does **not** see the whole map |
+
+Everything else — zone table, influence map, census, the 18 production goals, the four tasks (workers
+to vents, defend, attack, flyer scouting), the group mover — is ported **logically** (same decisions,
+same thresholds, same command payloads), not instruction-exact. Bit-exactness is not needed for a bot:
+its output is commands, and commands are applied identically everywhere by construction (R6). The
+module is written so that the same code can later run in bit-exact mode inside the engine (§19.6).
+
+### 19.3 Placement in the code
+
+```
+src/bot/
+  krusty.js     one Krusty: state (zones, 4 major tasks × 16 groups, goals, tunables), think()
+  influence.js  influence map + zone init (krusty_general.c)
+  tasks.js      census, goals/production, worker task, defend task, attack task, bomber task
+  mover.js      set_route, new/disband group, group mover (krusty_army.c), hop count
+  sink.js       command builders for the bot: 0x07+0x05 (chunked to the frame budget), 0x05 0x0D,
+                0x09, 0x0A, 0x0C with the game player index; the "client" of the original
+  manager.js    BotManager per room: creates one Krusty per fake slot at game start, drives think()
+                from SyncCheck, hands command groups to Game.queueCommands, logs a stats line
+```
+
+* `SyncCheck` gets a hook `onAdvanced(tick)` called at the end of `advance()`; `BotManager` thinks
+  there for every bot whose phase matches (F45) and only while `sync.active` (engine present, no
+  divergence). Commands are queued with `room.game.queueCommands(group)` and go out with the next
+  frame like a client's group; the `0x08` still comes first (§18.2).
+* Player indices: `sync.slotToPlayer[fake.slot]` (F41). Object ids and coordinates come straight from
+  the engine (`objAddr`, `O.X/O.Z` in 1/256 tile; zone centres `tile << 8` as the original, no
+  half-tile offset).
+* Frame budget: a `0x07` frame with `n` objects and one waypoint is `3 + 4 + 2n` bytes plus `4n` for
+  the `0x05` orders; the sink splits a group order into chunks of at most 100 objects so that no group
+  exceeds `COMMAND_BUDGET` (1012 bytes); a chunk that does not fit waits for the next frame
+  (`Game.step` already keeps groups whole).
+* The bots must never read or write anything of the engine except through documented accessors
+  (`mem.js`, `grid.js`, `path.js` families/routing, `tables.js`); they never call `G.rand()`. A guard
+  in tests asserts that the engine's RNG index and checksum history are unchanged by a think.
+* Failure isolation: any exception in a think disables **that bot** for the rest of the game and logs
+  it; the engine and the relay are unaffected (same policy as §18).
+
+### 19.4 Behaviour and configuration
+
+Default behaviour = the original Krusty on "easy" (the lobby's two computer types differ only by the
+income multiplier `+0x19BC`, which is applied by the harvesting code of every client for AI-typed
+players only; a fake human harvests at 1×, so bots get the human income). Settings:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BOTS` | `krusty` | `off` = idle fakes as before; `krusty` = every fake plays |
+| `BOT_THINK_TICKS` | `32` | think interval per bot (the original's 32) |
+| `BOT_SPLIT_PERCENT` | `75` | share of combat units given to the attack task (Krusty tunable `+0x6C14`) |
+| `BOT_CLASS_WEIGHTS` | `1,1,2,4,2,4,2` | the seven class weights of the unit-building goal (`+0x6C18..+0x6C30`) |
+| `BOT_SEED` | random | seed of the bots' private RNG (a fixed seed makes a recorded game reproducible) |
+
+Optional later knobs, deliberately not in the first version: a `BOT_HANDICAP` that skips thinks, a
+`BOT_MONEY_BONUS` (the bot could grant itself money by simply not deducting — but a fake player's
+money exists only on the server, so this would be invisible and unfair rather than a difficulty
+setting; leave it out), team play (bots allied with each other through the lobby's team numbers —
+possible today with `TEAM_SET`, needs a lobby rule).
+
+Chat: the greeting line of AI Mercenary changes from "My base stays idle." to "I play too." when
+`BOTS=krusty`; no in-game chat from bots (R-decision 7 Sep 2026: the relay is nameless in battle).
+
+### 19.5 Steps
+
+| Step | Deliverable | Done when |
+|---|---|---|
+| 1 | `docs/DC16_AI.md` (this analysis), plan §19, facts F43–F46 | reviewed by the maintainer |
+| 2 | `src/bot/sink.js` + tests: exact payloads of `0x07/0x05/0x09/0x0A/0x0C`, chunking, budget | round-trips through `splitCommands` and `engine.applyCommand` without asserts |
+| 3 | `src/bot/influence.js`: zone init (home zone, hop BFS, centres) and influence map over the engine state; `tools/botmap.js` prints the zone table of a room map | zone table of Armageddon matches a hand check (home zone, hop distances) |
+| 4 | `src/bot/tasks.js` goals + census + worker task; `BotManager` wired to `SyncCheck` behind `BOTS` | headless self-play (`tools/botmatch.js`: engine + N bots, no clients, commands looped back one tick later) shows HQ, worker, barracks built and workers on vents within the first minutes |
+| 5 | defend, attack, bomber tasks and the mover | in self-play 8 bots fight; no engine assert, no dropped command group, think time < 5 ms |
+| 6 | live test on the LAN with one real player against 7 bots, `SYNC_CHECK=send RECORD_DIR=logs/replays` | the real client accepts every checksum for a whole game (the bots' commands are ordinary commands, so a mismatch would mean an engine bug, not a bot bug); the recording replays clean with `tools/replay.js` |
+| 7 | deploy (`fly deploy`), greeting text, CHANGELOG 2.3 | public game with living bots |
+
+Order of the tasks inside step 4/5 follows the original's dependency: nothing moves without the
+census, nothing attacks without the influence map.
+
+### 19.6 Second stage: the same code bit-exact inside the engine
+
+Two situations still break the server's picture of the game, both because `src/engine/ai.js` is a
+stub (§18.5): a real player's `DISCONNECT` hands their base to Krusty on every client, and a lobby
+with computer slots (`FILL_EMPTY_WITH_AI`) runs Krusty on every client. From the first think the
+engine diverges and `send` stops — and with it the bots, which need `sync.active`.
+
+The bot module is therefore written with two seams so that it can be promoted to the engine's
+`ai.js`: the RNG (`G.rand()` in exact mode, private in bot mode) and the command sink (immediate
+`applyCommand` in exact mode, frame queue in bot mode). In exact mode the port must additionally
+follow `DC16_AI.md` §17.1: the think runs after `record(t)` and before the next frame's commands;
+`ai_think` draws one `rand()` per personality pair (strict `w > r·(cum+w)/32767`); the schedule is
+`TICK & 3 == 0`, all AIs at tick 4, then one *slot* per call; every `rand()` of the defend and bomber
+tasks in the listed order; the two "minor index used as zone index" bugs of `attack_plan` reproduced;
+the type-1/2 personalities' libc `rand()` (`0x44E177`) is not lock-stepped and is only reached from
+campaign triggers, so it is out of scope for multiplayer. Verification is the §18.4 loop: a shadow
+recording of a game in which a player disconnects must replay clean. This stage is optional for
+"alive bots" but it is what makes them survive a disconnect and lets AI-typed slots coexist with
+`send`.
+
+### 19.7 Risks and open points
+
+* **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in
+  the meantime; the handlers write blindly (`cmdOrder` sets pending/order on any slot). A human's late
+  click has the same effect and the game tolerates it; the bot additionally re-checks liveness at the
+  next think. Not a sync risk: everybody applies the same bytes.
+* **Engine dependency.** Bots freeze when the engine is disabled for a room (missing map JSON, a
+  detected divergence, AI takeover after a disconnect until §19.6 is done). The room keeps relaying;
+  the log says why. `BOTS=krusty` therefore requires `SYNC_CHECK=shadow` or `send`.
+* **Original bugs.** `attack_plan` indexes the zone table with the minor index twice, `group_strength`
+  uses `gs+0x40` as a defence-class column and the class number as a unit type, `kai+0x6C34` is never
+  initialised (so the enemy-avoiding zone route never runs). The bot port keeps the observable
+  behaviour where it is harmless and documents each deviation in a `PORT NOTES` block, as
+  `src/engine/PORTING.md` prescribes; the exact-mode promotion (§19.6) must reproduce them.
+* **Strength of play.** Krusty was tuned for 640×480 single-player maps with campaign triggers
+  (`aimsg`) helping it; on the multiplayer maps it will build the standard base and send 75 % of its
+  army at the nearest contested zone. Whether that is fun against one human is a live-test question;
+  the tunables of §19.4 exist to adjust it, and a smarter successor can reuse the influence map and
+  mover unchanged.
+* **Performance.** A think is ~800 objects × 8 vision lookups plus zone scans of 256×(neighbours),
+  well under a millisecond in Node for one bot; seven bots spread over the 32-tick window add at most
+  one think per server step.

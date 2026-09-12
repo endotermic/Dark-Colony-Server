@@ -881,102 +881,30 @@ compiled into this build, sorry"), which asserts and ends the game.
 
 ## 17. Computer players (`ai.c`, `krusty_*.c`)
 
-### 17.1 Framework **(verified)**
+Superseded on 12 Sep 2026 by **`DC16_AI.md`**, written instruction by instruction from the
+disassembly for the server's "alive bots" (`RELAY_SERVER_PLAN.md` §19). The sketch that stood here
+(8 Sep 2026) got the framework right — personalities `0x489488`, `ai_turn` every 4th tick, the
+weighted choice in `ai_think`, the command builders, the 18 production rules of `0x499158`, the
+influence-map idea and the 0x6C40-byte state — but several details wrong. Read `DC16_AI.md`; the
+corrections, so that nobody restores the old text from memory:
 
-* Setup (`0x40122C`): for each lobby slot the player's race goes to `+0xBB8`, the AI type to
-  `+0xBBC`: lobby type 2 (human) → 0, type 3 (closed) → 4, computer types 0/1 → 3. `+0x19BC` is set
-  to 0x100 for type 0 and 0x200 for type 1 (income multiplier, §15.2). `ai_init` `0x41AC80`
-  allocates the AI game state (`gs+0xB94`: start tick, round-robin counter). The scenario trigger
-  action `ai <player> <type>` (`0x43D930`, action 0 of `trigger.c`) sets any type in campaign
-  missions, and a disconnected human is switched to type 3 (§ protocol `DISCONNECT`).
-* `ai_turn` `0x41AE38` is called from `game_tick` in local-command mode every 4th tick: on tick 4
-  every AI player thinks once, afterwards one AI player per call in round robin — so each computer
-  player thinks every 32 ticks and its commands are generated identically on every machine.
-* `ai_think` `0x41AD30(gs, player)`: `personality = 0x489488[type − 1]` = `{pairs, save, load,
-  destroy, message}`; `pairs` is a NULL-terminated list of `{weight_fn, action_fn}`. All weights are
-  evaluated and one action is drawn with probability `w_i / Σ w` (reservoir sampling using
-  `rand()·(cum + w_i)·2⁻¹⁵ ≤ w_i`, constant `0x48385C`); the chosen action runs once. Actions use the
-  client command builders (`0x40C50C` build building, `0x40C538` build units, `0x40C7D4` waypoint
-  orders, `0x40C978` attack target) so the commands go through the same handlers as a human's.
-* Helpers: `own_unit(obj, player)` `0x456078` = alive, own, not flying, mobile, armed;
-  `enemy_target(gs, obj, player)` `0x4560CC` = other team **and that team is human**;
-  `unit_class(type)` `0x456150`: types 0–15 → 0..7 (type − 8 for aliens: 0 infantry, 1 tower
-  builder, 2 mech/scythe, 3 artillery, 4 cyborg/psy-raider, 5 scout, 6 worker, 7 carry-all),
-  healers → 7, deployed towers → 1, everything else → 8.
-
-| Type | Pairs (`weight → action`) | Behaviour |
-|---|---|---|
-| 1 | `0x455E30→0x455E70`: any building buildable → build the first one; `0x44AEB0→0x44AF10`: a troop affordable → pick a random buildable troop item and order `max(1, money / candidates / cost)` units; `0x44B004→0x44B058`: own units exist → all of them assault-move to a random point in a box around a random *human* player's HQ; `0x455EC0→0x455F3C`: own flyer exists → send a random flyer to a random map tile; `0x44B2C0→0x44B360`: a vent (type 40) and a worker exist → send a random worker to a random free vent | simple base builder and rusher |
-| 2 | flyer scouting as above; `0x44B500→0x44B50C`: every own unit attacks a random visible human unit (`0x0E` commands in one frame) | attacks only, never builds |
-| 3 | `0x44BC80→0x44BE64` (weight 1) | "Krusty", the real AI (§17.2) |
-| 4 | `0x44D660→0x44D668` | does nothing (closed lobby slots) |
-
-### 17.2 Krusty (type 3) *(architecture verified, task internals inferred)*
-
-* State: `0x6C40` bytes per player (`player+0xBC4`, allocated on first use by `0x44BD50`, name
-  "Krusty AI"): byte 0 first-run flag; **zone table** 256 × 18 bytes (a zone is a path family, §14.3):
-  `+2/+3` centre tile, `+4/+6`, `+8/+0xA`, `+0xC/+0xE` = (owner, net strength) for anti-air,
-  ground and air presence, `+0x10` building count, `+0x12` flags (bit 0 contested), `+0xD` hop
-  distance from the home zone; `+0x1200` four bytes per object (task assignment, 0xFF none);
-  four **major tasks** with a nine-class demand array (`+0x3154 + 4860·i`, `int16[9]`) and six
-  callbacks (`+0x3168..+0x317C`), each owning minor tasks = unit groups linked through
-  `obj+0xD2/+0xD4` (`kai->major_tasks[task].tasks[minor]`); 18 production rules copied to `+0x6A94`
-  from `0x499158`; tunables `+0x6C14..+0x6C30` (defaults 0xC0 = 75 %, 1, 1, 2, 4, 2, 4, 2);
-  `+0x6C38[8]` enemy-team flags. The scenario trigger `aimsg` (`0x44BF78`, 15 message ids) changes
-  the tunables: id 0 sets the 75 % split as `value·256/100`, ids 1–5 the class weights, higher ids
-  zone-related parameters (not traced). `0x44C750`/`0x44CF48` save and load the state
-  (`KRUSTY_SAVE_*`).
-* Initialisation (`0x456EF4`): home zone = family of the city origin (assert `start_zone!=0`), hop
-  distances of all zones by breadth-first search over the routing matrix (`0x44B670` also gives the
-  hop count between two zones), zone centres = mean tile of every family snapped to a real tile of
-  that family; task slots are initialised by `0x459B68` (0), `0x459574` (1, scouting), `0x458E54`
-  (2, defence) and `0x45A460` (3), each installing its callbacks.
-* Every think (`0x44BE64`):
-  1. `krusty_general` `0x456818` rebuilds the **influence map**: for every object of a team < 8 that
-     the AI can currently see (own vision mask; hidden mines only when detected), buildings add to the
-     zone's building count, combat units add a strength value derived from their magic-bullet row to
-     the zone's anti-air, ground or air pool — added to the current owner's total, or subtracted from
-     it and the owner flipped when exceeded, flagging the zone contested.
-  2. Census (`0x4572AC`): own units per class; unassigned units are offered to the four tasks through
-     their "want a unit of this class" callbacks and linked into their groups (`0x44BC8C`); the 75 %
-     tunable splits units between two pools.
-  3. Demand (`0x457684`): task demands and queued units are summed per class and the **production
-     rules** run (`0x457614`): the first rule whose check returns 0 fires and the chain stops.
-  4. The tasks' update callbacks run (`+0x3168`, `+0x3174`, `+0x316C`, `+0x3170`): they move unit
-     groups between zones along zone routes (`0x457EA4`, "AI Path not found (hsm)"), choose attack
-     targets (`best_candidate`), defend zones (`krusty_defend.c`), scout and bomb (`krusty_scout.c`,
-     `OBJ_BOMBING`) and manage groups (`krusty_army.c`). Their internals were not traced.
-
-Production rules (`0x499158`; "army" = own units of classes 0, 2, 3, 4, 5; building kinds map to
-DEPEND items by race through `0x499110`):
-
-| # | fires when | action |
-|---|---|---|
-| 0 | HQ / mind hive (items 0 / 14) buildable | build it (`0x09`) |
-| 1 | fewer than 1 worker | build a worker |
-| 2 | barracks / warrior hive (1 / 15) buildable | build |
-| 3 | army < 5 and unit count < cap | build one unit of the class with the smallest `count × weight` among buildable troop items |
-| 4 | robot factory 1 / breeding 1 (3 / 17) | build |
-| 5 | science 1 (2 / 16) | build |
-| 6 | army < 10 | build a unit |
-| 7 | fewer than 2 workers | build a worker |
-| 8 | army < 15 | build a unit |
-| 9 | science 2 (4 / 18) | build |
-| 10 | robot factory 2 / breeding 2 (5 / 19) | build |
-| 11 | army < 20 | build a unit |
-| 12 | mech / scythe armour upgrade (69 / 43) | checked with `dep_check_building`, which never returns 1 for an upgrade item — dead rule *(inferred)* |
-| 13 | mech / scythe weapon upgrade (67 / 41) | same |
-| 14 | army < 30 | build a unit |
-| 15 | research centre (6 / 20) | build |
-| 16 | army < 200 | build a unit |
-| 17 | always | nothing |
-
-Building rules fire when `dep_check_building` returns 1, and also when the slot is blocked for the
-scenario (then the action does nothing but the chain still stops). The unit-building action prefers
-the class whose `count × weight` is lowest, the weights being the tunables per class (infantry
-`+0x6C18`, mech `+0x6C1C`, artillery `+0x6C20`, cyborg `+0x6C24`, scout `+0x6C28`, carry-all/healer
-`+0x6C2C`, tower builder `+0x6C30`), deducts the cost from `+0xBAC` and sends `0x0A` for one unit;
-a building action checks `cost ≤ money` and the slot before deducting and sending `0x09`.
+* Task roles: 0 = workers → vents, **1 = defend** (`0x459574`), **2 = attack** (`0x458E54`),
+  3 = flyer scouting/bombing (`0x45A460`); the old table had 1 and 2 swapped.
+* State layout: zone records at `kai + 18z` (owners i8 at `+4/+8/+0xC`, strengths u16 at
+  `+6/+0xA/+0xE`, `+0xD` hop distance, `+0x10` building count, `+0x12` flags); `kai+0x1202` is the
+  memory of last-seen enemy objects, not a task assignment (membership is `obj+0xD2 == −2`); the
+  major tasks start at `kai+0x1E84` (0x12FC each), `+0x3154` is task 0's per-class **unit count**,
+  not a demand; groups are 0x12C bytes; 32 goal slots; nine tunables; `+0x6C38` is the vision-sharing
+  mask, not "enemy flags".
+* `ai_think`: one `rand()` per pair, strict `w > r·(cum+w)/32767`; `ai_turn` rotates over *slots*
+  (a think every 32 ticks at phase `4 + 4p`); the personality `+0xC` callback is `destroy`.
+* Local command mode is the byte `0x4AF090` toggled by `game_tick` around `ai_turn`; the AI's
+  commands are executed immediately by `0x41E06C` after `record(t)` and belong to checksum `t+1`.
+* The `+0x3178` callback recounts units (no class argument); class → task routing is fixed in the
+  census; `0x457EA4` sums enemy strength along a route (the "AI Path not found (hsm)" assert is the
+  Dijkstra `0x4579F0`); `ai_status` is `obj+0xCC`; the attack task sends no `0x0B`/`0x0E`.
+* `DISCONNECT` (`0x41DBE0`) also does `MONEY −= SPENT` and clears the max-speed slot; `aimsg`
+  ids 6–14 are add/remove defend zone, set goal, zone flags, attack ratio, vision sharing.
 
 ---
 

@@ -75,7 +75,7 @@ VA in a comment on the line above; keep helper names close to the docs.
 | `city.js` | `city.c`/`depend.c`: `build_slot` `0x4450F4`, building idle `0x41460C`, production, dependency checks | `buildSlot`, `stateBuildingIdle`, `depCheckBuilding`, ... |
 | `renat.js` | `renat.c` generators `0x440100/0x43FFB0/0x41B818`, vents, artifacts `0x440650/0x4406F8/0x4400C0`, triggers `0x43E5B0` (+ `0x43CFE8`, `0x43D904`), states 0, 0xC, 0xF, 0x10, 0x13–0x16, pickups `0x4143D4` | `generatorsTick(G)`, `triggersTick(G)`, state handlers |
 | `anim.js` | animation instances (8-byte slots at `O.ANIM0/1/2`, status bytes), FIN frame timing, sprite-derived data (bounding boxes, muzzle hotspots) from `data/classic/sprites.json` | `startAnim`, `advanceAnims`, `hotspots`, `bbox` |
-| `ai.js` | `ai.c` / krusty (later) | |
+| `ai.js` | `ai.c` / krusty (later; specification in `docs/DC16_AI.md` §17.1: run after `record(t)`, one `rand()` per personality pair, slot round robin, the listed quirks) | `aiTurn(G)` |
 
 Cross-module calls: `import * as Ticker from './ticker.js'` and call `Ticker.pushState(...)` at run
 time (ESM live bindings make the cycles harmless). Use the names in the table; if you need a
