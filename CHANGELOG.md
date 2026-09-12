@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **No preselected room in the hall** (12 Sep 2026, maintainer decision): a newcomer has no room
+  selected. The map line is **empty** (`'i' "", ""`), which makes the game grey out its READY
+  button by itself until a room is chosen (the lobby refresh disables it while the scenario file
+  name is empty, plan F42); the pinned header ends with `No room selected. Type /1../7 + ENTER.`.
+  Should a READY arrive anyway it is refused with `Select a room first: /1../7 + ENTER.`. Until now
+  the lowest-numbered joinable room was preselected, so READY alone joined it. `tools/fakeclient.js`
+  without `--room` stays in the hall. One new test, six adjusted (193).
 - **Battle engine beside the relay** (11 Sep 2026, plan §18; deployed to Fly with `SYNC_CHECK=send` the same day): the server can run a port of the
   game's simulation core (`src/engine/`, bit-exact memory layout of `dc16.exe`'s game state) and
   put the lockstep checksum command `0x08 (checksum, tick)` into its sync frames, which no client

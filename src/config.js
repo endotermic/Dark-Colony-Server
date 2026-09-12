@@ -8,7 +8,7 @@ export const DEFAULTS = Object.freeze({
   // Rooms, one map each (plan §17): SCENARIO/MPLAYER file names, optionally FILE:Name[:terrain].
   // The 2nd character of a file name is the map's player count; it caps the room (F22). At most seven:
   // the rooms are shown in the lobby rows that are not the player's own (F33), numbered 1..7 in
-  // place; the map line repeats the selected one. Room 1 (the default selection) is a jungle map.
+  // place; the map line repeats the selected one (no room is preselected since 12 Sep 2026). Room 1 is a jungle map.
   ROOMS: 'J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07',
   HALL: true, // false = every connection goes straight into room 1 (the 2.0 behaviour)
   MARQUEE_MS: 200, // hall: one character of scrolling per step in the room rows

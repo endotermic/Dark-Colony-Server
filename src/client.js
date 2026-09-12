@@ -61,7 +61,7 @@ export class Client {
     this.framesOut = 0;
     this.onSend = null; // optional (client, payloads) => void hook for tracing
     // hall state
-    this.selected = 0; // index of the selected room
+    this.selected = -1; // index of the selected room; -1 = none yet (nothing is preselected)
     this.rows = null; // row texts last sent
     this.flags = null; // CD icons ("joinable") last sent
     this.chat = new ChatView(); // the client's lobby chat window as the server paints it (chat.js)

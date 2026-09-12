@@ -8,8 +8,8 @@ Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colon
 
 Then, in the lobby: the player rows other than your own are the **rooms** 1 to 7, each with its
 own map; after the fixed number the row text scrolls the map name, its terrain (jungle or desert),
-the player count and whether the room is open, and the map line repeats the selected room. Type `/1` … `/7` in the chat, hit
-ENTER to select the room, and press **READY** to enter it. Inside the room press **READY** again when you want to fight. Your own
+the player count and whether the room is open. No room is preselected: type `/1` … `/7` in the chat and hit
+ENTER to select one (the map line then shows it), then press **READY** to enter it. Inside the room press **READY** again when you want to fight. Your own
 row shows your name; you can type it there.
 
 ---

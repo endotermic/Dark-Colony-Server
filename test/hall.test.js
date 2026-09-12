@@ -73,7 +73,7 @@ test('config: ROOMS entries resolve against the map table, custom maps need a na
   assert.equal(loadConfig({}, { FAKE_PLAYERS: 7, LOG_LEVEL: 'debug' }).FAKE_PLAYERS, 7, 'debug mode does not touch the fakes');
 });
 
-test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in place, its own name row, the selected room in the map line, the chat window", () => {
+test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in place, its own name row, an empty map line, the chat window", () => {
   const h = new HallHarness();
   const p = h.enter('A');
   const c = hallClient(h, p);
@@ -85,9 +85,9 @@ test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in plac
   assert.ok(p.slot >= 1 && p.slot <= 7);
   const scen = cmds.find((cmd) => cmd.type === T.SCENARIO);
   assert.equal(scen.title, h.hall.titleFor(c));
-  assert.ok(scen.title.startsWith(`${HALL_TITLE_PREFIX}1 Plink - O jungle (0/7) open\n`), scen.title);
-  assert.equal(scen.title[45], '8', 'eight occupied rows need an 8 where the lobby reads the player count (F22)');
-  assert.ok(scen.title.endsWith('(8 Player Jungle Map )'), 'the terrain of the selected room');
+  assert.equal(c.selected, -1, 'no room is preselected (maintainer, 12 Sep 2026)');
+  assert.equal(scen.file, '', 'no file: the client disables READY while the scenario file name is empty (F42)');
+  assert.equal(scen.title, '', 'the map line is empty while no room is selected (maintainer, 12 Sep 2026)');
   for (let q = 0; q < 8; q++) {
     assert.ok(cmds.some((cmd) => cmd.type === T.TYPE && cmd.player === q && cmd.value === 2), `row ${q} human`);
     assert.ok(cmds.some((cmd) => cmd.type === T.READY && cmd.player === q && cmd.status === 1), `row ${q} present, not ready (F3)`);
@@ -125,13 +125,31 @@ test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in plac
     'then press READY to join it.',
     'The map line shows the selected room.',
     'You may type your name in your row.',
-    'Room 1 (Plink - O) is selected.',
+    'No room selected. Type /1../7 + ENTER.',
   ]);
   assert.ok(chat.slice(6).every((t) => t === ' '));
   assert.deepEqual(hallClient(h, p).chat.header.length, 6, 'all six greeting lines are static');
   assert.ok(!chat.some((t) => t.startsWith('Mercenary:')));
   assert.equal(h.hall.clients.size, 1);
   assert.equal(h.room.clients.size, 0);
+});
+
+test('READY without a selection is refused: nothing is preselected, the client stays in the hall until it types /N', () => {
+  const h = new HallHarness();
+  const p = h.enter('A');
+  p.take();
+  p.cdReport();
+  p.pressReady();
+  const cmds = p.takeCmds();
+  assert.equal(h.hall.clients.size, 1, 'still in the hall');
+  assert.equal(h.room.clients.size, 0, 'room 1 did not get the client');
+  assert.ok(!cmds.some((cmd) => cmd.type === T.SCENARIO), 'no room dump');
+  const win = windowOf(cmds);
+  assert.equal(win[5], 'No room selected. Type /1../7 + ENTER.', 'the header still says so');
+  assert.equal(win[6], 'Select a room first: /1../7 + ENTER.', 'the refusal, below the header');
+  p.chat('/1');
+  p.pressReady();
+  assert.equal(p.roomOf(h.pool), h.room, 'after typing the number READY joins');
 });
 
 test('room rows: the number stays in place, the rest is padded to one length so all rows scroll with the same period', () => {
@@ -184,6 +202,8 @@ test('the name may be typed in the hall and follows into the room; race, colour 
   h.advance(200);
   h.step();
   assert.ok(!p.takeCmds().some((c) => c.type === T.NAME && c.player === p.slot), 'the own row is not re-sent by the marquee');
+  p.chat('/1');
+  p.take();
   p.pressReady();
   const cmds = p.takeCmds();
   assert.equal(h.room.slots[p.slot].name, 'Nika');
@@ -301,7 +321,7 @@ test('the rows scroll: after MARQUEE_MS all seven room rows shift by one charact
   assert.equal(p.takeCmds().find((cmd) => cmd.type === T.NAME && cmd.player === h.hall.rowOf(c, 1)).name, '2 mageddon deser');
 });
 
-test('a room in battle shows the icon off and is not the default; the map line follows the selected room; READY there is refused', () => {
+test('a room in battle shows the icon off; nothing is preselected; the map line follows the selected room; READY there is refused', () => {
   const h = new HallHarness({ MIN_PLAYERS: 1 });
   const a = h.join('A'); // direct join into room 1
   a.take();
@@ -312,8 +332,8 @@ test('a room in battle shows the icon off and is not the default; the map line f
   const c = hallClient(h, p);
   let cmds = p.takeCmds();
   p.cdReport();
-  assert.equal(c.selected, 1, 'room 2 selected by default');
-  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>2 Armageddon desert (0/7) open'));
+  assert.equal(c.selected, -1, 'no room is preselected, not even an open one');
+  assert.equal(cmds.find((cmd) => cmd.type === T.SCENARIO).title, '', 'empty map line');
   assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 && cmd.value === 0), 'row 0 = room 1: icon off');
   assert.ok(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name.startsWith('1 Plink - O'));
   p.chat('/1');
@@ -340,6 +360,8 @@ test('slot conflicts: a slot taken by a real player is reported, and newcomers a
   const p = h.enter('P');
   p.take();
   p.cdReport();
+  p.chat('/1');
+  p.take();
   // a direct joiner takes exactly p's slot in room 1 (random index p.slot-1 of the free list 1..7)
   h.randomSeq = [p.slot - 1];
   const a = h.join('A');
@@ -351,7 +373,6 @@ test('slot conflicts: a slot taken by a real player is reported, and newcomers a
   const cmds = p.takeCmds();
   assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (1/7) slot taken'), 'room 1 is selected: the map line says why');
   assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 && cmd.value === 0), 'row 0 = room 1: icon off');
-  p.chat('/1');
   p.pressReady();
   const text = chatText(p.takeCmds());
   assert.ok(text.includes(`your slot ${p.slot} is taken there`), text);
@@ -372,12 +393,12 @@ test('seven fakes: rooms show (0/7), stay joinable, the fake in the way moves, a
   let cmds = p.takeCmds();
   p.cdReport();
   for (let q = 0; q < 8; q++) assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 + q && cmd.value === 1), `row ${q} joinable`);
-  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (0/7) open'), 'the size shown is the map slots without Mercenary');
   assert.ok(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === h.hall.rowOf(c, 3)).name.startsWith('4 Circle of Fri'));
   const room = h.pool.rooms[3];
   assert.equal(room.seats(), 1, 'one real seat in truth');
   p.chat('/4');
-  p.take(); // the selection update
+  cmds = p.takeCmds(); // the selection update
+  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>4 Circle of Friends desert (0/7) open'), 'the size shown is the map slots without Mercenary');
   p.pressReady();
   cmds = p.takeCmds();
   assert.equal(p.roomOf(h.pool), room);
@@ -450,7 +471,7 @@ test("hall chat goes to the other waiting clients under the sender's name; /room
     '7 Rings of fire jungle (0/7) open',
   ], 'six header rows leave four rows for messages');
   assert.equal(list[1], 'Type /1../7 + ENTER to select a room,');
-  assert.equal(list[5], 'Room 1 (Plink - O) is selected.');
+  assert.equal(list[5], 'No room selected. Type /1../7 + ENTER.');
   assert.equal(q.takeCmds().length, 0, 'the list is private');
   // a flood of comments never eats a greeting line
   for (let i = 0; i < 20; i++) p.chat(`comment ${i}`);
@@ -478,6 +499,7 @@ test('a 4-player room shows (0/3), seats three real players, caps MIN_PLAYERS, a
     const p = h.enter(n);
     p.take();
     p.cdReport();
+    p.chat('/1');
     p.pressReady(); // enters the room, present-not-ready
   }
   assert.equal(room.clients.size, 3);
@@ -485,8 +507,8 @@ test('a 4-player room shows (0/3), seats three real players, caps MIN_PLAYERS, a
   const d = h.enter('D');
   const c = hallClient(h, d);
   const cmds = d.takeCmds();
-  assert.equal(c.selected, 1, 'room 1 is full: room 2 is the default');
-  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>2 Armageddon desert (0/7) open'));
+  assert.equal(c.selected, -1, 'nothing is preselected, full or not');
+  assert.equal(cmds.find((cmd) => cmd.type === T.SCENARIO).title, '', 'empty map line');
   assert.equal(h.hall.rowOf(c, 0), 0);
   assert.equal(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name, '1 Four Corners d');
   assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 && cmd.value === 0), 'full: icon off');

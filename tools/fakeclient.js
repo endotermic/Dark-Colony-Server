@@ -9,9 +9,10 @@
 // (default); hold = never; follow = be ready exactly when a player outside peerSlots (a real player)
 // is ready, so that a room of scripted clients waits for a human to start the battle (tools/smoketest.js).
 //
-// Hall (plan §17): when the first scenario title is the hall's, the client types "/<room>" (if
-// --room is given) and presses READY to join; the room's own scenario message marks the arrival,
-// after which READY is pressed again after --ready-after.
+// Hall (plan §17): when the first scenario title is the hall's (empty = nothing selected, or a
+// leading '>'), the client types "/<room>" and presses READY to join; without --room it stays in the
+// hall (the server preselects no room; the real client's READY button is disabled there, F42). The room's own scenario message marks the arrival, after
+// which READY is pressed again after --ready-after.
 
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
@@ -28,7 +29,7 @@ export class FakeClient extends EventEmitter {
     this.readyAfterMs = opts.readyAfterMs ?? 500;
     this.loadMs = opts.loadMs ?? 200;
     this.tickMs = opts.tickMs ?? 33;
-    this.room = opts.room ?? 0; // hall: room number to select with "/N"; 0 = keep the server's choice
+    this.room = opts.room ?? 0; // hall: room number to select with "/N"; 0 = none, the client stays in the hall
     this.readyPolicy = opts.readyPolicy ?? 'auto'; // READY inside a room: auto | hold | follow
     this.peerSlots = opts.peerSlots ?? new Set(); // follow: slots of the other scripted clients in the room
     this.announceName = opts.announceName ?? false; // send the name after the handshake, as if typed
@@ -155,11 +156,12 @@ export class FakeClient extends EventEmitter {
     // the rest of the dump may be in the same payload? no: one command per frame, handled below
   }
 
-  /** Press the READY button: in the hall after typing the room command, if any; in a room only with readyPolicy auto. */
+  /** Press the READY button: in the hall after typing the room command (none = stay in the hall); in a room only with readyPolicy auto. */
   pressReady() {
     if (this.state !== 'lobby') return;
     const inHall = this.hallTitle && !this.inRoom;
-    if (inHall && this.room > 0) this.send(build.lobbyChat(`${this.name}: /${this.room}`));
+    if (inHall && this.room <= 0) return; // nothing selected: the server would refuse READY
+    if (inHall) this.send(build.lobbyChat(`${this.name}: /${this.room}`));
     if (!inHall && this.readyPolicy !== 'auto') return;
     this.send(build.ready(2, this.slot));
   }
@@ -172,7 +174,7 @@ export class FakeClient extends EventEmitter {
         case T.SCENARIO:
           this.scenarioTitle = d.title;
           this.emit('title', d.title);
-          if (d.title.startsWith(HALL_TITLE_PREFIX)) {
+          if (d.title === '' || d.title.startsWith(HALL_TITLE_PREFIX)) {
             this.hallTitle = true;
           } else if (this.hallTitle && !this.inRoom) {
             // moved from the hall into a room: the dump that follows carries the real statuses

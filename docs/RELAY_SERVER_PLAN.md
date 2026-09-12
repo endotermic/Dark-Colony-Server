@@ -28,7 +28,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x0F`, `0x03` are dropped |
 | R11 | 150 % game speed (200 % until 10 Sep 2026), clients cannot change it | Server sends `TICK_SPEED(44)` itself and drops `0x11/0x12/0x13` from clients |
 | R12 | Clients may drop out or misbehave; a client that does not answer every message correctly is removed and everybody is told it left the lobby or the battle | Per-phase expected answers, deadlines and violation rules (§9); the eviction broadcasts `'h' 0` + `DISCONNECT` in the lobby and a `DISCONNECT` inside the next sync frame in battle |
-| R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room; chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
+| R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room (nothing is preselected since 12 Sep 2026: it asks for a room number until one is typed); chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
 
 ---
 
@@ -77,6 +77,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F40 | The lowest network id decides who sends checksums (F14, F39): with the fake host in slot 0 nobody does, and a real player in slot 0 would be the game's "host" in the clients' eyes (`'d'` player 0). | F14, `0x419F1B` | `MERCENARY_SLOT` moves the fake host for diagnostic games so that a real player becomes the sender; slot 0 then stays empty (never seatable), the fake host is never relocated by a joiner |
 | F41 | **Start shuffle RNG.** `run_game` seeds the game RNG with `srand([0x4A469C])` (`0x4120E0`: index = seed & 0xFF; the global is lobby `VAR` 7 — the `'o'` array `ss+0xA670` lives at `0x4A4680` — which the UI never changes and the server sends as 0, so index 0; the scenario loader re-seeds with the same value), then for `k = 0 .. N−1` (N = the title's player digit) swaps entry `k` of the 8-entry slot list (occupied slots ascending, padded with −1) with entry `k + rand() % (N − k)`, where `rand()` (`0x4120F0`) is `index = (index + 1) & 0xFF; return table[index]` over the 256 int32 values at `0x488F20`. The same RNG drives the whole simulation afterwards, so the shuffle's `rand()` calls are part of the deterministic sequence. | `0x4014F8`–`0x401582`, `0x4120E0`, `0x4120F0`, `0x488F20` (`data/dc16-tables.json`) | The engine starts from RNG index 0 and performs the shuffle itself; MREADY's game player index (F24) is a free check of it (`SyncCheck.onMready`) |
 | F37 | A scenario is `.SCN` (text: terrain, base name, display name, day/night, eight TEAM blocks with start position and city origin, object list `x z type player a b`), `.MAP` (u32 w, u32 h, w×h × {u16 bg, u16 fg}, w×h × u16 attribute; bit 9 = blocking terrain, rows stored `z = h-1-r`), `.MTG` (trigger ids), `.PTH` (256×256 family routing matrix + w×h family bytes in z order, 0 = impassable), `.TRO` (trigger script), `.POP` (editor-only eruption data), `.OVH`/`.O16` (96×84 minimap cache the game regenerates). Tile numbers are editor indices remapped through the terrain's `.BTS`. The lobby only ever needs lines 1–3 of the `.SCN` (F31). | `mapit.c 0x4530C0`, `path.c 0x442D8C`, `mobiles.c 0x41BAF0`, `renat.c 0x43FD1C`; all 198 shipped scenarios of both games parse; `docs/DC16_MAP_FILES.md` | `tools/map2json.js` converts scenarios to JSON, `maps/*.json` + `maps/index.json` hold the seven maps of the default `ROOMS` (others on request; grids indexed `[z][x]`, same coordinates as the game's commands), so a later server feature (position validation, start-location logic §7, a map browser) reads JSON instead of the binaries |
+| F42 | **The READY button is disabled while the scenario is empty.** The lobby refresh (`0x40FF80`) enables control 133 (F36) only when the scenario file name (`gs+0xA264`, set by `'i'`) is non-empty and the word at `gs+4` is 0; otherwise `0x424514(ui, 0x85, 1)` greys it out (`0x40FF96`; enable at `0x40FFC5`). The `'i'` handler stores the title at `gs+0xA268`; the player-count check of F15 (`title[45]`, `0x41141F`) is skipped when the title is empty (`0x411416`), so an empty title causes no un-ready storm. `'i' "", ""` is the client's own "no map" state (F15 example). | disassembly `0x40FF80`–`0x40FFD0`, `0x411416`; real client 12 Sep 2026: empty map line, READY greyed | The hall sends `'i' "", ""` while no room is selected (maintainer, 12 Sep 2026): the map line is empty and the client itself disables READY until `/N` puts the room title there; the server-side refusal of READY without a selection stays as a guard |
 
 ---
 
@@ -572,7 +573,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 |---|---|---|
 | `PORT` | `8888` | listen port (Fly maps 8888 and 8889 to it) |
 | `HEALTH_PORT` | unset | optional bare TCP liveness port for a Fly check; the game never talks to it |
-| `ROOMS` | `J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07` | 1..7 rooms, one map each (§17.6): `SCENARIO/MPLAYER` file names, looked up in `src/maps.js` (F31); a map not in the table is written `FILE:Name[:terrain]`, name ≤ 42 chars. The 2nd character of the file is the player count and caps the room (F22). Seven at most: one lobby row per room, the eighth row is the player's own (F33). Room 1, the default selection, is a jungle map (maintainer, 7 Sep 2026). Replaces `MAP_FILE`/`MAP_TITLE`/`MAP_TERRAIN` of 2.0 |
+| `ROOMS` | `J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07` | 1..7 rooms, one map each (§17.6): `SCENARIO/MPLAYER` file names, looked up in `src/maps.js` (F31); a map not in the table is written `FILE:Name[:terrain]`, name ≤ 42 chars. The 2nd character of the file is the player count and caps the room (F22). Seven at most: one lobby row per room, the eighth row is the player's own (F33). Room 1 is a jungle map (maintainer, 7 Sep 2026); no room is preselected since 12 Sep 2026. Replaces `MAP_FILE`/`MAP_TITLE`/`MAP_TERRAIN` of 2.0 |
 | `HALL` | `true` | the room-selection lobby (§17); `false` = every connection goes straight into room 1 as in 2.0 |
 | `MARQUEE_MS` | `200` | hall: the room rows scroll one character per this many ms (≥ 50); 300 was too slow for the maintainer (7 Sep 2026) |
 | `PACK_LOBBY_FRAMES` | `true` | several commands per lobby frame (F34): one frame per marquee step and per dump; `false` = one command per frame as the original host and 2.0 |
@@ -989,7 +990,7 @@ above, so that the plan can be followed from scratch without repeating the disco
   the selection or that room's state changes; the seven other rooms fill the rows that are not the
   player's own, in order. `MAX_ROOMS` is 8 again and Big Crater is back in the default list. The
   hall's instruction text moved to the chat greeting; scripted clients recognise the hall by the
-  leading `>` of the title.
+  leading `>` of the title (or an empty title, since 12 Sep 2026).
 - **Room size**: the rows and the map line show `players / (map players − 1)`, i.e. the map's slots
   without Mercenary; fakes are idle bases, not participants. Whether a seat is really free is still
   decided by the real seat count (`full`).
@@ -1238,6 +1239,26 @@ above, so that the plan can be followed from scratch without repeating the disco
   checksums are never relayed (they only exist in diagnostic `MERCENARY_SLOT>0` sessions and are
   compared, not forwarded).
 
+**12 Sep 2026, no preselected room (maintainer decision)**
+
+- The hall no longer preselects a room. Until now a newcomer had the lowest-numbered joinable room
+  selected (else room 1), so READY without typing anything joined that room. `Client.selected` now
+  starts at −1: the map line is **empty** (`'i' "", ""`, F42), the sixth header line is `No room
+  selected. Type /1../7 + ENTER.` until the first `/N` turns it into `Room N (<map>) is selected.`,
+  and a READY before a selection answers `Select a room first: /1../7 + ENTER.` and leaves the
+  client in the hall. The first version of the day put a prompt `>Type /1../7 + ENTER to select a
+  room` into the map line; the maintainer's live test (Classic `dc16.exe` against a local server)
+  asked for the field to be empty instead, because the game then greys out its READY button by
+  itself (the lobby refresh disables control 133 while the scenario file name is empty, F42), which
+  is the stock appearance before a host picks a map. Empty file and title cause no un-ready storm:
+  the F15 player-count check is skipped for an empty title. Scripted clients recognise the hall by
+  an empty title or the leading `>`. `/N`, `/rooms`, `/help`, the rows and the icons are
+  unchanged. `tools/fakeclient.js` without `--room` stays in the hall instead of pressing READY on
+  the server's choice; the smoke test's observer never pressed READY by itself and parses only map
+  lines that start with a room number, so it is unaffected. §11 (`ROOMS`), §17.1–17.4, §17.6,
+  §17.8, R13, README and CHANGELOG updated; one new test (READY refused without a selection), six
+  adjusted, 193 in all. The prompt variant was seen on a real client on 12 Sep 2026 (and rejected, see above); the empty-map-line variant awaits its live test.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1249,7 +1270,7 @@ everything that is displayed. So the lobby itself becomes the room browser.
 ### 17.1 Overview
 
 ```
-connect ──'d'(15,p) + hall dump──► HALL (private view: 7 rows = rooms 1..7 in place, own name row, map line = selected room)
+connect ──'d'(15,p) + hall dump──► HALL (private view: 7 rows = rooms 1..7 in place, own name row, map line = selected room, or empty until one is picked)
    │  '/N' selects a room (row N gets the '>' marker, Mercenary confirms)
    │  READY ('h' 2,p) on a joinable room
    ▼
@@ -1274,12 +1295,12 @@ packed frame (F34; `PACK_LOBBY_FRAMES=false` gives one command per frame as in �
 | Step | Message | Notes |
 |---|---|---|
 | 1 | `'d' 15, p` | `p` = the slot the client keeps for the whole connection (§17.5) |
-| 2 | `'i' "D8PLAY01.SCN", title` | the **selected room** in the map line: title = `formatScenarioTitle(">3 Circle of Friends (0/7) open", 8, terrain)`. The digit at index 45 must be 8 because eight rows are occupied (F22); the file is never loaded, no game starts from the hall. Re-sent whenever the selection or that room's count or state changes |
+| 2 | `'i' "D8PLAY01.SCN", title` | the **selected room** in the map line: title = `formatScenarioTitle(">3 Circle of Friends (0/7) open", 8, terrain)`. The digit at index 45 must be 8 because eight rows are occupied (F22); the file is never loaded, no game starts from the hall. Re-sent whenever the selection or that room's count or state changes. **Nothing is preselected** (maintainer, 12 Sep 2026): until the first `/N` the message is `'i' "", ""` (empty file and title), which makes the client grey out READY (F42) and show an empty map line |
 | 3 | for every row q ≠ p: `'l' q,q` | colours = row |
 | 4 | for every row q ≠ p: `'g' q,text_q` · `'f' 0,q` · `'j' 2,q` · `'n' q,q` · `'h' 1,q` | every row is a present-not-ready human, so the client stays in the lobby (F3) and no colour is ever locked (F20) |
 | 5 | for p: `'g' p,<player name>` · `'f' 0,p` · `'j' 2,p` · `'l' p,p` · `'n' p,p` · `'h' 1,p` | the own row shows the player's name: the client never repaints its own field from an incoming `'g'` (F33), so this row cannot carry room text |
 | 6 | `'o' v,default` for v = 0..7, then `'o' 8+q, joinable_q` for q = 0..7 | the per-row CD icon (cosmetic, F5) marks the rooms this client can join right now |
-| 7 | the chat window | ten `'e'` lines (§17.8): the six-row header `Welcome to Dark Colony server 2.1.` · `Type /1../7 + ENTER to select a room,` · `then press READY to join it.` · `The map line shows the selected room.` · `You may type your name in your row.` · `Room <n> (<map>) is selected.`, then blanks |
+| 7 | the chat window | ten `'e'` lines (§17.8): the six-row header `Welcome to Dark Colony server 2.1.` · `Type /1../7 + ENTER to select a room,` · `then press READY to join it.` · `The map line shows the selected room.` · `You may type your name in your row.` · `No room selected. Type /1../7 + ENTER.` (becomes `Room <n> (<map>) is selected.` once a room is chosen), then blanks |
 
 Rows and map line: the rooms fill the rows in order, skipping the client's own row `p`, so row 0
 (Mercenary's slot) is always room 1 and the rooms after the own row sit one row lower than their
@@ -1299,8 +1320,10 @@ live test: unequal lengths made the rows drift apart). A part longer than the 14
 one character per `MARQUEE_MS` (200 ms) with three spaces between the end and the wrap-around; a
 short one stands still. Every step recomputes the map line, the rows and the icons from the live room
 states and sends only what changed, **in one frame** (F34), so state changes (a room starts, fills
-or empties) show up within one step. Default selection: the lowest-numbered room the client can
-join, else room 1.
+or empties) show up within one step. No default selection (maintainer, 12 Sep 2026; until then the
+lowest-numbered joinable room, else room 1, was preselected): a room is selected only by typing its
+number, the map line is empty until then (which disables the client's READY button, F42), and a
+stray READY before a selection is refused (§17.3).
 
 Cost: one frame of at most about 150 bytes per step per waiting client, roughly 0.7 KB/s at
 200 ms, far below the battle stream.
@@ -1314,7 +1337,7 @@ Cost: one frame of at most about 150 bytes per step per waiting client, roughly 
 | `'g'` name | own slot only: sanitised, stored as the player's name and echoed like a room does; it follows the player into the room. The own field is the client's anyway (F33) |
 | `'f' 'k' 'm'` race, colour, team | **drop, no echo** (R13). The client applies changes only when they come back, so nothing changes on screen |
 | `'j' 'l' 'n' 'i' 'p'` | drop (host-owned, as in §6.2) |
-| `'h' 2,p` READY | join the selected room (§17.5); `'h' 1,p` is dropped |
+| `'h' 2,p` READY | join the selected room (§17.5); with no selection (the button is disabled on the client then, F42) a stray READY is told `Select a room first: /1../7 + ENTER.` and stays; `'h' 1,p` is dropped |
 | `'e'` chat | text after the first `':'` (the client's prefix is its row text): a command (§17.4) or hall chat |
 | `'y'` INIT_ME | re-send the hall dump; a second one is a strike |
 | numeric in-game types, unknown letters | strike (§9.3) |
@@ -1381,7 +1404,7 @@ the current player numbers a conflict is rare; it is reported as `slot taken`.
   the second one is told `it is full`.
 - Defaults, in room order: Plink - O (jungle), Armageddon, Black Widow, Circle of Friends, Olympus
   Mons (desert), Hoops of Fury, Rings of fire (jungle), all 8-player maps; the jungle map comes
-  first so that the default selection is a jungle map.
+  first (it was the preselected room until 12 Sep 2026; nothing is preselected since).
   fake host in slot 0.
 - Every room logs with `room: n`; the hall logs `hall joined`, `hall -> room`, `hall left`.
 
@@ -1402,7 +1425,8 @@ clients' views and sends each of them its ten lines in one packed frame. What th
 therefore always the render, with the header on top. Entering a room replaces the view (new header,
 no old lines). Headers: hall **six rows** (`Welcome to Dark Colony server 2.1.`, the two command
 lines, `The map line shows the selected room.`, `You may type your name in your row.`, `Room <n>
-(<map>) is selected.`; the last one is rewritten in place on every selection), room one row (`Room
+(<map>) is selected.`, which reads `No room selected. Type /1../7 + ENTER.` before the first
+selection; the last one is rewritten in place on every selection), room one row (`Room
 <n>: <map>, <terrain>, <k> players.`); the rest is for messages: four rows in the hall (so `/rooms`
 shows its last four lines and `/help` is three short lines), nine in a room. The tenth live test
 showed the three instruction lines scrolling away under a flood of comments while the three header

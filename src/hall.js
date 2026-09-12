@@ -2,8 +2,11 @@
 // lobby screen used as a room browser. The player rows other than the client's own show the rooms
 // (up to seven), numbered 1..7 in place: the number and a space stay fixed, the map name, the
 // player count and the availability scroll through the remaining 14 characters of the name field.
-// The map line repeats the selected room in full. The client's own row keeps showing the player's
-// name: the client never repaints its own name field from an incoming 'g' (F33), so the server
+// The map line repeats the selected room in full; until the player has typed a room number it is
+// EMPTY ('i' "", ""): no room is preselected (maintainer, 12 Sep 2026) and the client's own lobby
+// refresh disables the READY button while the scenario file name is empty (F42), so the button is
+// grey until a room is chosen, as in the stock game before the host picks a map. The client's own row keeps showing
+// the player's name: the client never repaints its own name field from an incoming 'g' (F33), so the server
 // cannot use that row. Chat commands select a room; the READY button joins it. The name may be
 // typed here and follows the player into the room; race, colour and team cannot be changed here.
 // The view is private to each client.
@@ -71,31 +74,31 @@ export class Hall {
     const slot = this.pickSlot();
     client.slot = slot;
     client.name = `Player${slot}`;
-    client.selected = this.defaultRoom(slot);
+    client.selected = -1; // no room is preselected: the player types /N (maintainer, 12 Sep 2026)
     this.clients.add(client);
     const rows = this.rowsFor(client);
     // the chat window: the whole greeting is a static header (§17.8), messages go below it
     client.chat.setHeader(this.headerFor(client));
     client.sendBatch([build.version(this.cfg.PROTOCOL_VERSION, slot), ...this.pack([...this.dumpPayloads(client, rows), ...client.chat.payloads()])]);
     this.remember(client, rows);
-    this.log.info('hall joined', { id: client.id, slot, address: client.address, waiting: this.clients.size, selected: client.selected + 1 });
+    this.log.info('hall joined', { id: client.id, slot, address: client.address, waiting: this.clients.size });
   }
 
   /**
    * The six static lines at the top of a hall client's chat (maintainer, 7 Sep 2026: none of them
    * may scroll away). No player name: "PlayerN" is generated and means nothing. The last line names
-   * the selected room and is rewritten in place on every selection.
+   * the selected room (or says that none is selected yet) and is rewritten in place on every selection.
    */
   headerFor(client) {
     const n = this.pool.rooms.length;
-    const sel = this.pool.rooms[client.selected];
+    const sel = this.pool.rooms[client.selected] ?? null;
     return [
       `Welcome to Dark Colony server ${VERSION_SHORT}.`,
       `Type /1../${n} + ENTER to select a room,`,
       'then press READY to join it.',
       'The map line shows the selected room.',
       'You may type your name in your row.',
-      `Room ${sel.id} (${sel.map.name}) is selected.`,
+      sel ? `Room ${sel.id} (${sel.map.name}) is selected.` : `No room selected. Type /1../${n} + ENTER.`,
     ];
   }
 
@@ -119,12 +122,6 @@ export class Hall {
       }
     }
     return best[this.random(best.length)];
-  }
-
-  /** Index of the first room the client could join right now, else room 1. */
-  defaultRoom(slot) {
-    const i = this.pool.rooms.findIndex((r) => r.canJoin(slot));
-    return i < 0 ? 0 : i;
   }
 
   // ---- the private lobby view ---------------------------------------------------------------
@@ -160,11 +157,21 @@ export class Hall {
     return this.pool.rooms[q < client.slot ? q : q - 1] ?? null;
   }
 
-  /** The map line: the selected room in full, in the game's title format with the digit 8 (F22). */
+  /**
+   * The map line: the selected room in full, in the game's title format with the digit 8 (F22), or
+   * the empty string while no room is selected (the client then greys out READY itself, F42).
+   */
   titleFor(client) {
     const room = this.pool.rooms[client.selected];
+    if (!room) return '';
     const text = `${HALL_TITLE_PREFIX}${this.describe(room, client.slot)}`.slice(0, MAX_TITLE_NAME);
     return formatScenarioTitle(text, SLOTS, room.map.terrain);
+  }
+
+  /** The 'i' for the map line: file + title, or both empty while nothing is selected (F42). */
+  scenarioFor(client) {
+    const title = this.titleFor(client);
+    return build.scenario(title ? HALL_FILE : '', title);
   }
 
   /** One entry per row: what to show in the name field, the CD icon ("joinable"), type and status. */
@@ -204,7 +211,7 @@ export class Hall {
   /** The hall's lobby dump for `client` (like the room dump, §6.1, without the 'd'). */
   dumpPayloads(client, rows) {
     const s = client.slot;
-    const out = [build.scenario(HALL_FILE, this.titleFor(client))];
+    const out = [this.scenarioFor(client)];
     for (let q = 0; q < SLOTS; q++) if (q !== s) out.push(build.colourSet(q, q));
     for (let q = 0; q < SLOTS; q++) {
       if (q === s) continue;
@@ -229,7 +236,7 @@ export class Hall {
       const rows = this.rowsFor(client);
       const title = this.titleFor(client);
       const payloads = [];
-      if (title !== client.title) payloads.push(build.scenario(HALL_FILE, title));
+      if (title !== client.title) payloads.push(this.scenarioFor(client));
       for (let q = 0; q < SLOTS; q++) {
         if (rows[q].text !== client.rows[q]) payloads.push(build.name(q, rows[q].text));
         if (rows[q].flag !== client.flags[q]) payloads.push(build.variable(8 + q, rows[q].flag));
@@ -403,6 +410,7 @@ export class Hall {
   /** The READY button in the hall: move the client into the selected room. */
   join(client) {
     const room = this.pool.rooms[client.selected];
+    if (!room) return this.say(client, `Select a room first: /1../${this.pool.rooms.length} + ENTER.`);
     const why = this.blocker(client, room);
     if (why) return this.say(client, `Cannot join room ${room.id}: ${why}.`);
     this.clients.delete(client);
