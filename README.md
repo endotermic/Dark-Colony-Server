@@ -16,7 +16,8 @@ row shows your name; you can type it there.
 
 ## What the server does
 
-- It replaces the in-game host. Slot 0 is a fake human player, **Mercenary**; real players get random
+- It replaces the in-game host. Slot 0 is a fake human player, **AI Mercenary**, who greets every
+  room with a chat line saying that it is an AI bot and the host; real players get random
   free slots, so their start positions differ from game to game.
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer

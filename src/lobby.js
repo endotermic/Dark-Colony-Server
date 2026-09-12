@@ -53,10 +53,18 @@ export class Lobby {
     return this.cfg.PACK_LOBBY_FRAMES ? packPayloads(payloads) : payloads;
   }
 
-  /** The static header of a player's chat window in this room: the room line only (maintainer, 7 Sep 2026). */
+  /**
+   * The static header of a player's chat window in this room: the room line (maintainer, 7 Sep 2026)
+   * and, since 12 Sep 2026 (maintainer), a greeting from the fake host itself, the one relay line
+   * that carries a name: AI Mercenary says that it is an AI bot and the host of the game (§17.8).
+   * ChatView wraps it at 40 columns.
+   */
   greeting() {
     const r = this.room;
-    return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`];
+    return [
+      `Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`,
+      `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`,
+    ];
   }
 
   /** The host's lobby state dump for a client in slot `s` (protocol doc §6.1), without the 'd'. */

@@ -592,7 +592,8 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `STRICT_SEQ` | `true` | a wrong sequence nibble is a hard violation (`false` = resync like the original server) |
 | `MERCENARY_RACE` | `0` | race of every fake player: 0 Human, 1 Gray |
 | `FAKE_PLAYERS` | `1` | fake humans including Mercenary (1..7), placed in random slots; `MIN_PLAYERS ≤ 8 − FAKE_PLAYERS` |
-| `FAKE_NAMES` | `Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` |
+| `MERCENARY_NAME` | `AI Mercenary` | display name of the fake host in slot 0 (`Mercenary` until 12 Sep 2026); at most 16 characters (F33) |
+| `FAKE_NAMES` | `AI Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` |
 | `DEBUG_MODE` | `false` | debug mode (also implied by `LOG_LEVEL=debug`): full map view for everybody at game start (F28) |
 | `FILL_EMPTY_WITH_AI` | `false` | empty slots become AI (`0` easy / `1` hard via `FILL_AI_TYPE`) |
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
@@ -1259,6 +1260,18 @@ above, so that the plan can be followed from scratch without repeating the disco
   §17.8, R13, README and CHANGELOG updated; one new test (READY refused without a selection), six
   adjusted, 193 in all. The prompt variant was seen on a real client on 12 Sep 2026 (and rejected, see above); the empty-map-line variant awaits its live test.
 
+**12 Sep 2026, AI Mercenary (maintainer decision)**
+
+- The fake host is called **AI Mercenary** (`MERCENARY_NAME` default; `FAKE_NAMES` starts with it
+  too so that the second fake is still Renegade), and the room greeting (§17.8) has a second header
+  line from it: `AI Mercenary: Hi! I am an AI bot and the host of this game. My base stays idle.`,
+  wrapped at 40 columns under the room line. Asked for after the live test of the empty map line
+  (which the maintainer confirmed the same day): a newcomer should be told what the player in slot 0
+  is. It is the one relay line with a name in front; the rule of 7 Sep 2026 (§17.8) holds for every
+  other line. The hall has no such line (no Mercenary there). The name is 12 characters, under the
+  16 of the name field (F33). Tests adjusted (lobby header, fake names, recordings); README,
+  CHANGELOG, §11 updated. Confirmed on a real client the same day (local server, Classic `dc16.exe`).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1414,7 +1427,11 @@ the current player numbers a conflict is rare; it is reported as `slot taken`.
 
 Two rules from the maintainer (7 Sep 2026, after the fifth round): a line the relay itself writes
 carries **no name** in front (no `"Mercenary: "`), and the hall and room greetings sit **at the top of
-the chat and stay there** while messages arrive.
+the chat and stay there** while messages arrive. One exception since 12 Sep 2026 (maintainer): the
+room header's second line is a greeting **from the fake host itself**, `AI Mercenary: Hi! I am an AI
+bot and the host of this game. My base stays idle.` (wrapped at 40 columns by `ChatView`), so that
+a newcomer understands what the player in slot 0 is. The fake host's display name is `AI Mercenary`
+(`MERCENARY_NAME`) since the same day; "Mercenary" elsewhere in this document means that slot-0 fake.
 
 The client's chat control is a plain ten-line log that wraps at 40 columns and drops lines from the
 top (F35), so the server paints it: `ChatView` (`src/chat.js`) keeps, per client, a static header

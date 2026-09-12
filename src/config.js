@@ -27,10 +27,10 @@ export const DEFAULTS = Object.freeze({
   LAG_DROP_MS: 10000, // 0 = never drop laggards (original behaviour)
   STRIKE_LIMIT: 10,
   STRICT_SEQ: true,
-  MERCENARY_NAME: 'Mercenary',
+  MERCENARY_NAME: 'AI Mercenary', // the fake host's display name (was 'Mercenary' until 12 Sep 2026)
   MERCENARY_RACE: 0, // race of every fake player: 0 Human, 1 Gray
   FAKE_PLAYERS: 1, // fake human players including Mercenary (1..7); the rest of the slots are for real players
-  FAKE_NAMES: 'Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider',
+  FAKE_NAMES: 'AI Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider',
   FILL_EMPTY_WITH_AI: false,
   FILL_AI_TYPE: 0, // 0 easy, 1 hard
   ALLOW_PAUSE: true,

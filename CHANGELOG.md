@@ -6,6 +6,11 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **AI Mercenary** (12 Sep 2026, maintainer decision): the fake host in slot 0 is called
+  `AI Mercenary` (`MERCENARY_NAME` default, was `Mercenary`), and the room greeting gets a second
+  header line from it: `AI Mercenary: Hi! I am an AI bot and the host of this game. My base stays
+  idle.` (wrapped at 40 columns, pinned under the room line). It is the one relay line that carries a
+  name; everything else the server writes stays nameless.
 - **No preselected room in the hall** (12 Sep 2026, maintainer decision): a newcomer has no room
   selected. The map line is **empty** (`'i' "", ""`), which makes the game grey out its READY
   button by itself until a room is chosen (the lobby refresh disables it while the scenario file

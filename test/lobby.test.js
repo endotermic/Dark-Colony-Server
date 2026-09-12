@@ -4,6 +4,7 @@ import { Harness, cmdsOf } from './helpers.js';
 import { T, build } from '../src/commands.js';
 import { STATE } from '../src/constants.js';
 import { formatScenarioTitle } from '../src/config.js';
+import { wrap } from '../src/chat.js';
 
 test('the scenario title follows the game format so that the lobby finds the player count at index 45', () => {
   const t = formatScenarioTitle('Armageddon', 8, 'desert');
@@ -31,7 +32,7 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(cmds[1].title[45], '8', 'player count digit where the lobby reads it');
   assert.equal(cmds[1].title, h.room.map.titleWire);
   // Mercenary: slot 0, human, present-not-ready, colour 0
-  assert.ok(cmds.some((c) => c.type === T.NAME && c.player === 0 && c.name === 'Mercenary'));
+  assert.ok(cmds.some((c) => c.type === T.NAME && c.player === 0 && c.name === 'AI Mercenary'));
   assert.ok(cmds.some((c) => c.type === T.TYPE && c.player === 0 && c.value === 2));
   assert.ok(cmds.some((c) => c.type === T.READY && c.player === 0 && c.status === 1));
   assert.ok(cmds.some((c) => c.type === T.COLOUR_SET && c.player === 0 && c.value === 0));
@@ -50,13 +51,18 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(vars.length, 16);
   assert.ok(vars.filter((v) => v.index >= 8).every((v) => v.value === 1));
   assert.equal(vars.find((v) => v.index === 2).value, 1);
-  // the chat window: ten lines, the room greeting pinned at the top, no name in front of relay lines (§17.8)
+  // the chat window: ten lines, the room greeting pinned at the top; the only named relay line is
+  // the fake host's own greeting (maintainer, 12 Sep 2026; §17.8)
   const chat = cmds.filter((c) => c.type === T.LOBBY_CHAT).map((c) => c.text);
   assert.equal(chat.length, 10);
   assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
-  assert.equal(chat[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room line is the whole header');
-  assert.ok(chat.slice(1).every((t) => t === ' '));
-  assert.ok(!chat.some((t) => t.startsWith('Mercenary:')));
+  assert.equal(chat[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room line comes first');
+  assert.ok(chat[1].startsWith('AI Mercenary: Hi! I am an AI bot'), chat[1]);
+  const header = h.room.lobby.greeting().flatMap((t) => wrap(t));
+  assert.deepEqual(chat.slice(0, header.length), header);
+  assert.ok(header.length >= 3 && header.length <= 4, 'the greeting wraps into a few lines');
+  assert.ok(chat.slice(header.length).every((t) => t === ' '));
+  assert.equal(chat.filter((t) => /^[A-Za-z]+( [A-Za-z]+)?: /.test(t)).length, 1, 'one named line: the host greeting');
   // the first frame of the whole write was the version
   const firstPayload = p.all[0];
   assert.equal(firstPayload[0], T.VERSION);
