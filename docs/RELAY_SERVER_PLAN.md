@@ -1272,6 +1272,13 @@ above, so that the plan can be followed from scratch without repeating the disco
   16 of the name field (F33). Tests adjusted (lobby header, fake names, recordings); README,
   CHANGELOG, §11 updated. Confirmed on a real client the same day (local server, Classic `dc16.exe`).
 
+**12 Sep 2026, release 2.2**
+
+- `package.json` 2.1.0 → 2.2.0, tag `v2.2.0`; CHANGELOG's Unreleased section became the 2.2 entry
+  (battle engine + checksums, no preselected room, AI Mercenary, 150 % speed, map files to JSON,
+  smoke test). The lobby greeting reads `Welcome to Dark Colony server 2.2.` (`VERSION_SHORT` from
+  `package.json`; the hall tests now derive that string instead of pinning `2.1`). Deployed to Fly.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a

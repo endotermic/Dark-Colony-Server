@@ -9,6 +9,7 @@ import { loadConfig } from '../src/config.js';
 import { packPayloads } from '../src/client.js';
 import { CHAT_ROWS } from '../src/chat.js';
 import { HALL_TITLE_PREFIX, marquee } from '../src/hall.js';
+import { VERSION_SHORT } from '../src/version.js';
 
 // default rooms: 1 Plink - O (jungle), 2 Armageddon, 3 Black Widow, 4 Circle of Friends, 5 Olympus Mons (desert),
 // 6 Hoops of Fury, 7 Rings of fire (jungle)
@@ -120,7 +121,7 @@ test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in plac
   assert.equal(chat.length, CHAT_ROWS);
   assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
   assert.deepEqual(chat.slice(0, 6), [
-    'Welcome to Dark Colony server 2.1.',
+    `Welcome to Dark Colony server ${VERSION_SHORT}.`,
     'Type /1../7 + ENTER to select a room,',
     'then press READY to join it.',
     'The map line shows the selected room.',
@@ -227,7 +228,7 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   let cmds = payloads.flatMap(cmdsOf);
   const win = windowOf(cmds);
   assert.equal(win.length, CHAT_ROWS);
-  assert.equal(win[0], 'Welcome to Dark Colony server 2.1.', 'the header stays on top');
+  assert.equal(win[0], `Welcome to Dark Colony server ${VERSION_SHORT}.`, 'the header stays on top');
   assert.equal(win[5], 'Room 3 (Black Widow) is selected.', 'the selection line of the header changed in place');
   assert.ok(win.slice(6).every((t) => t === ' '), 'no message was added');
   assert.ok(win.every((t) => t.length <= 40));
@@ -460,7 +461,7 @@ test("hall chat goes to the other waiting clients under the sender's name; /room
   p.send(build.lobbyChat('Player9: hello all'));
   const qWin = windowOf(q.takeCmds());
   assert.equal(qWin.length, CHAT_ROWS);
-  assert.equal(qWin[0], 'Welcome to Dark Colony server 2.1.', "the other client's own header stays on top");
+  assert.equal(qWin[0], `Welcome to Dark Colony server ${VERSION_SHORT}.`, "the other client's own header stays on top");
   assert.ok(qWin.includes('Nika: hello all'), qWin.join('|'));
   assert.ok(windowOf(p.takeCmds()).includes('Nika: hello all'));
   p.chat('/rooms');

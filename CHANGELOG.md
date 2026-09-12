@@ -4,7 +4,12 @@ Dates are the commit dates on `main`. Details of every finding and decision are 
 [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (section 16 is the dated change log of the
 live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md).
 
-## Unreleased
+## 2.2 — 12 September 2026 (tag `v2.2.0`)
+
+The battle engine runs beside the relay and puts lockstep checksums into the sync frames, the hall
+preselects no room, the fake host is called AI Mercenary and introduces itself, the default speed is
+150 %, and the scenario files are documented and converted to JSON. Everything below was deployed to
+Fly as it landed (8–12 Sep 2026); the lobby greeting now says `Dark Colony server 2.2`.
 
 - **AI Mercenary** (12 Sep 2026, maintainer decision): the fake host in slot 0 is called
   `AI Mercenary` (`MERCENARY_NAME` default, was `Mercenary`), and the room greeting gets a second

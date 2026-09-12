@@ -1,6 +1,6 @@
 {
   "name": "dark-colony-server",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Dark Colony (1997) multiplayer relay server: fake host, strict lockstep, Fly.io",
   "type": "module",
   "main": "src/index.js",
