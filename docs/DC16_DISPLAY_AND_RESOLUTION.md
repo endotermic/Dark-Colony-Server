@@ -2119,6 +2119,77 @@ parse), which de-risks them completely.
 
 ---
 
+#### 10.16 Two monitors: the surfaces are lost right after the mode switch **(verified in game, 13 Sep 2026)**
+
+Reported 13 Sep 2026: on a PC with two monitors the game "hangs" at start-up, black screen,
+right before the intro movie. Reproduced on the maintainer's machine (primary 1920×1200 at (0,0),
+secondary 1920×1080 at x=1920) and traced with a thread-stack scanner and a monitor-layout
+watcher (both throw-away Python/ctypes scripts; no debugger was needed):
+
+```
+ 0.00  start
+ 1.41  primary now 1024×768 — and the secondary has moved from x=1920 to x=1024
+ 3.43  foreground window = "Assertion Failed!" (#32770), error.log = 71 bytes
+```
+
+* `SetDisplayMode(1024,768,16)` in `win_init` makes Windows **re-lay out the desktop**: the
+  secondary monitor is pushed left to the new right edge of the primary. That re-layout is a
+  display change the game did not ask for, and DirectDraw answers it by marking every
+  exclusive-mode surface **lost**. The loss arrives asynchronously, 0.5–2 s after the switch
+  (it hit the loading screen's `Flip` in one run and the palette remap in the others). With a
+  single monitor nothing moves, so nothing is lost — which is why nobody saw it in 1997 or in the
+  eleven days of 1024×768 testing.
+* The start-up path never restores surfaces. `remap` (`ddex4.c`, `0x0042F320`, ~line 1000–1036)
+  converts the 256 palette entries to 16-bit pixels by `GetDC(back buffer)` → `SetPixel(0,0)` →
+  `ReleaseDC` → `Lock` → read the pixel → `Unlock`, once per entry, and asserts on the first
+  failure: `"POO can't unlock in remap"` line 1029 (`0x0042F394`), Lock line 1033 (`0x0042F3F5`),
+  GetDC line 1036 (`0x0042F43E`). An instrumented build recorded the code: `Unlock` returned
+  **`DDERR_SURFACELOST` 0x887601C2** while `GetDC` and `Lock` had still succeeded. The loading
+  screen (`0x0042EEF6`) asserts `"Flip Problem"` (line 893, `0x0042F031`) when its `Flip` fails.
+* The assert handler (`0x0047C02E` → `0x0047BEB7`) writes `error.log` and calls
+  `MessageBoxA(NULL, msg, "Assertion Failed!", MB_TASKMODAL)` — the box is the foreground window
+  but sits **behind the exclusive-mode primary surface**, so the player sees a black screen that
+  reacts to nothing but Enter. That is the "hang"; the process exits with 255 when the box is
+  dismissed.
+* The game does restore lost surfaces, but only on its per-frame flip path: `0x0042E141`
+  (`BltFast` offscreen → back buffer) and `0x0042E291` (`Flip`) test for `DDERR_SURFACELOST`
+  and call `restore_surfaces` `0x0042E060` (Restore primary, offscreen, the 32 cursor surfaces
+  with their bitmaps reloaded through `0x00450530`). `clear_screen` `0x0042F774` does the same.
+  `IsLost` is never called anywhere; the window procedure does not track activation.
+
+**Fix — `patch_ddraw_lost.py` (verify / plan / apply, `.ddraw.bak`, pattern-located, both
+exes):** make the four start-up failures non-fatal and let the first in-game frame repair
+everything, which is exactly what the game already does after an alt-tab. Four edits per exe
+(Council Wars at +0x60), plus three `.reloc` entries turned into ABSOLUTE padding for the
+overwritten `push imm32` operands:
+
+| Site (Classic) | Stock | New | Effect |
+|---|---|---|---|
+| `0x0042F394` | `push "POO can't unlock in remap"` | `jmp 0x0042F486` | Unlock failed → next palette index |
+| `0x0042F3F5` | `push fmt` (Lock assert) | `jmp 0x0042F486` | Lock failed → next index |
+| `0x0042F43E` | `push fmt` (GetDC assert) | `jmp 0x0042F486` | GetDC failed → next index |
+| `0x0042F033` | `je 0x0042F090` | `jmp 0x0042F090` | a failed loading-screen `Flip` is not fatal |
+
+What is lost: the 16-bit LUT entries (`screen->palette + 0x602 + 2·i`) of the indices `remap`
+could not read while the surface was gone — and `remap` runs again at every palette change, the
+first one before the main menu is drawn, so nothing of it is ever visible. Confirmed in game by
+the maintainer on the two-monitor machine: intro, menu and play as on one monitor.
+
+**What did not work.** A first version restored the surfaces *inside* `remap` and retried the
+index (a `try_restore` helper in the cave of the two dead assert blocks, calling
+`restore_surfaces` up to 300 times with `PeekMessageA`/`Sleep(100)` between attempts, and the
+loading screen redrawn from its `GetDC`). It got past the asserts, but the process then died
+silently with exit code −1 four to nine seconds later, main thread inside `DDRAW.dll` in a
+`WaitForMultipleObjects`; `error.log` stayed empty. Restoring in the middle of the loading
+sequence upsets the modern DirectDraw emulation layer in a way the stock per-frame restore does
+not, and the skip variant was confirmed working, so the restore variant was dropped. A fallback
+for the unrecoverable case (Restore keeps failing) therefore does not exist either: those
+asserts now simply do not fire at start-up.
+
+The instrumented builds that pinned the error code and the stack scanner (Wow64 thread
+contexts read with `ReadProcessMemory`, return addresses resolved against the DLL export tables)
+are not kept; the technique is described in `CLAUDE.md`.
+
 ## 11. Risks
 
 | Risk | Assessment |

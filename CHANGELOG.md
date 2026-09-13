@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Game exes: no more start-up hang on two-monitor PCs** (13 Sep 2026, `tools/patch_ddraw_lost.py`,
+  doc `DC16_DISPLAY_AND_RESOLUTION.md` §10.16): the 1024x768 mode switch makes Windows move the second
+  monitor, DirectDraw marks the game's surfaces lost, and the stock start-up code asserted into a
+  message box hidden behind the full-screen surface. Four failure branches (three in the palette
+  remap, one in the loading screen) are now non-fatal; the game's own per-frame restore repairs the
+  surfaces. Both `dc16.exe` and `DCEXP16.EXE` in the Dark-Colony repository carry it.
+
 - **AI Mercenary plays** (13 Sep 2026, maintainer request; plan §19.8, facts F47-F48): the fake host
   has a rushing character (a worker to a vent, a barracks, cheap infantry non-stop, a four-unit wave
   at the nearest enemy base and reinforcements in pairs) and sells an alliance: whoever gives it
