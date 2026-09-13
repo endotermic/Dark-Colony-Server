@@ -14,16 +14,27 @@ were confirmed by running the patched game:
    coordinates** and are not offset by it. Verified: NEWGAMEE's `checkb 0` at (193,23) renders at
    (193,23) whatever the size line says, and the shipped four-argument scripts (LOPTE and friends)
    simply place their widgets at coordinates that already agree with their rect.
+3. The bounds rect is what the window *erases* when it opens: interface.c's window_draw
+   (0x00422D84, the last thing load_interface does) fills it with the `colour erase` RGB and
+   flips before the background GIF is decoded (section 10.15). The stock rect is the whole
+   framebuffer, so a full-screen menu must keep `size 0 0 W H` at the new size too. The first
+   version of this tool wrote `X Y 640 480`, and every screen change then flashed a 640x480
+   black box in the middle of the previous screen (found in the game, 13 Sep 2026).
 
 So letterboxing a screen is three coupled edits, which is why they live in one tool:
 
     a. repack the background GIF onto a W x H canvas with the original content centred;
-    b. set the script's `size` to `X Y w h` so the bounds rect covers where the content now is;
-    c. add the same (X, Y) to every positioned widget's x and y.
+    b. set the script's `size` to `0 0 W H` (the rect is erased at open; it must stay full-screen);
+    c. add the content offset (X, Y) to every positioned widget's x and y.
+
+The four sub-window dialogs without a background (LOBJE, LOPTE, LQCE, LSGE: objectives, options,
+quit and save/load over the battlefield) are shifted instead by half the growth, ((W-640)/2,
+(H-480)/2), rect and widgets alike, so they stay centred on the map view, which grows
+symmetrically about them.
 
 The result is a pixel-correct 640x480 screen letterboxed inside 1024x768, with no artwork and no
 code patching. Repainting properly at the target size (vector-first) can follow later and just
-replaces the padded file -- at which point the offsets in (b) and (c) go back to zero.
+replaces the padded file -- at which point the offsets in (c) go back to zero.
 
 This is a stop-gap for *menus*. It is deliberately NOT applied to MAINE, the in-game HUD: padding
 that would keep the map viewport at its old 512x448, which is the opposite of the point. MAINE
@@ -50,7 +61,7 @@ import struct
 import sys
 
 SIZE2 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$', re.M)
-SIZE4 = re.compile(rb'^[ \t]*size[ \t]+\d+[ \t]+\d+[ \t]+\d+[ \t]+\d+', re.M)
+SIZE4 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)([ \t]*\r?)$', re.M)
 BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/)?(\S+)', re.M | re.I)
 
 # Widget kinds whose 4th and 5th fields are x and y: <kind> <number> <desc> <x> <y> <w> <h> ...
@@ -136,6 +147,28 @@ def scan(intrface_dir, only=None, include_hud=False, width=1024, height=768):
             gw, gh = im.size
         jobs.append((fn, gif, gw, gh))
     return jobs, skipped
+
+
+def scan_dialogs(intrface_dir, only=None):
+    """Sub-window dialogs: scripts whose pristine copy has the four-argument `size` and no
+    background line. Returns [(fn, x, y, w, h)], read from the .bak when one exists."""
+    out = []
+    for fn in sorted(os.listdir(intrface_dir), key=str.lower):
+        path = os.path.join(intrface_dir, fn)
+        if not os.path.isfile(path) or fn.lower().endswith('.bak'):
+            continue
+        if only and fn.lower() != only.lower():
+            continue
+        src = path + '.bak' if os.path.exists(path + '.bak') else path
+        data = open(src, 'rb').read()
+        m = SIZE4.search(data)
+        if not m or BACKGROUND.search(data):
+            continue
+        x, y, w, h = (int(m.group(i)) for i in (3, 4, 5, 6))
+        if x == 0 and y == 0:
+            continue                              # a full-screen rect, not a dialog
+        out.append((fn, x, y, w, h))
+    return out
 
 
 def base_intrface_dir(intrface_dir):
@@ -280,8 +313,8 @@ def pad_bmp(src, dst, width, height):
     return sw, sh, pad
 
 
-def edit_script(path, x, y, w, h, dry_run=False):
-    """Set `size x y w h` and add (x, y) to every positioned widget's coordinates.
+def edit_script(path, x, y, rect, dry_run=False):
+    """Add (x, y) to every positioned widget's coordinates and set `size` to `rect` (x y w h).
 
     Returns (size_before, size_after, widgets_moved, warnings).
     """
@@ -316,11 +349,12 @@ def edit_script(path, x, y, w, h, dry_run=False):
         out.append(body + sep + comment)
     data = b'\n'.join(out)
 
-    m = SIZE2.search(data)
+    m = SIZE2.search(data) or SIZE4.search(data)
     before = m.group(0).rstrip(b'\r\n').decode() if m else None
     after = None
     if m:
-        new = b'%ssize%s%d %d %d %d%s' % (m.group(1), m.group(2), x, y, w, h, m.group(6))
+        tail = m.group(6) if m.re is SIZE2 else m.group(7)
+        new = b'%ssize%s%d %d %d %d%s' % ((m.group(1), m.group(2)) + tuple(rect) + (tail,))
         data = data[:m.start()] + new + data[m.end():]
         after = new.rstrip(b'\r\n').decode()
     if not dry_run:
@@ -356,10 +390,10 @@ def cmd_plan(args, jobs, skipped):
                  '' if fits else '   TOO LARGE, would be skipped',
                  '   (in the base INTRFACE)' if elsewhere else ''))
         for script, _, _ in entries:
-            _, _, moved, warns = edit_script(os.path.join(args.dir, script), dx, dy, gw, gh,
-                                             dry_run=True)
-            print('        %-14s size -> %d %d %d %d, %d widget(s) shifted by (+%d,+%d)%s'
-                  % (script, dx, dy, gw, gh, moved, dx, dy,
+            _, _, moved, warns = edit_script(os.path.join(args.dir, script), dx, dy,
+                                             (0, 0, args.width, args.height), dry_run=True)
+            print('        %-14s size -> 0 0 %d %d, %d widget(s) shifted by (+%d,+%d)%s'
+                  % (script, args.width, args.height, moved, dx, dy,
                      '   %d WARNING(S)' % len(warns) if warns else ''))
             for wtext in warns:
                 print('            ! ' + wtext)
@@ -379,6 +413,19 @@ def cmd_plan(args, jobs, skipped):
             src = path + '.bak' if os.path.exists(path + '.bak') else path
             print('  %-26s %d marker(s) +(%d,%d)'
                   % (os.path.basename(path), edit_scene(src, dx, dy, dry_run=True), dx, dy))
+    dialogs = scan_dialogs(args.dir, args.only)
+    if dialogs:
+        dx, dy = (args.width - 640) // 2, (args.height - 480) // 2
+        print('\n  sub-window dialogs (no background; rect and widgets +(%d,%d)):' % (dx, dy))
+        for fn, x, y, w, h in dialogs:
+            path = os.path.join(args.dir, fn)
+            src = path + '.bak' if os.path.exists(path + '.bak') else path
+            _, _, moved, warns = edit_script(src, dx, dy, (x + dx, y + dy, w, h), dry_run=True)
+            print('  %-26s size %d %d %d %d -> %d %d %d %d, %d widget(s)%s'
+                  % (fn, x, y, w, h, x + dx, y + dy, w, h, moved,
+                     '   %d WARNING(S)' % len(warns) if warns else ''))
+            for wtext in warns:
+                print('            ! ' + wtext)
     if skipped:
         print('\n  not touched:')
         for fn, why in skipped:
@@ -422,9 +469,19 @@ def cmd_apply(args, jobs, skipped):
         # always edit from the pristine copy, so re-running apply is idempotent rather than
         # shifting every widget a second time
         shutil.copy2(spath + '.bak', spath)
-        before, after, moved, warns = edit_script(spath, dx, dy, sw, sh)
+        before, after, moved, warns = edit_script(spath, dx, dy, (0, 0, args.width, args.height))
         print('script  %-24s %r -> %r, %d widget(s) +(%d,%d)'
               % (script, before, after, moved, dx, dy))
+        for wtext in warns:
+            print('        ! ' + wtext)
+    dx, dy = (args.width - 640) // 2, (args.height - 480) // 2
+    for fn, x, y, w, h in scan_dialogs(args.dir, args.only):
+        spath = os.path.join(args.dir, fn)
+        backup(spath)
+        shutil.copy2(spath + '.bak', spath)           # transform the pristine copy
+        before, after, moved, warns = edit_script(spath, dx, dy, (x + dx, y + dy, w, h))
+        print('dialog  %-24s %r -> %r, %d widget(s) +(%d,%d)'
+              % (fn, before, after, moved, dx, dy))
         for wtext in warns:
             print('        ! ' + wtext)
     for path, bw, bh in find_bitmaps(args.dir):
@@ -495,7 +552,8 @@ def main(argv=None):
         return cmd_revert(args)
 
     jobs, skipped = scan(args.dir, args.only, args.include_hud, args.width, args.height)
-    if not jobs and not (find_bitmaps(args.dir) and not args.only):
+    if not jobs and not scan_dialogs(args.dir, args.only) \
+            and not (find_bitmaps(args.dir) and not args.only):
         raise SystemExit('nothing to do in %s%s'
                          % (args.dir, ' for --only %s' % args.only if args.only else ''))
     return (cmd_plan if args.command == 'plan' else cmd_apply)(args, jobs, skipped)

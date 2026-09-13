@@ -311,8 +311,10 @@ The `size` handler is `widget.c` `0x004223A8` and it accepts **two or four** num
 * `size X Y W H` → rect `(X, Y, W, H)` — used by the four sub-window scripts above
 
 **Consequence: every screen can be repositioned or resized by editing one line of text, with no
-binary patching at all.** Centring an existing 640×480 screen inside 1024×768 is
-`size 192 144 640 480`.
+binary patching at all.** ~~Centring an existing 640×480 screen inside 1024×768 is
+`size 192 144 640 480`.~~ — **Retracted twice over**: the rect does not move the widgets (§10.1),
+and it is the area `window_draw` erases when the screen opens, so a full-screen script must keep
+`size 0 0 1024 768` (§10.15).
 
 ### 6.1 The in-game HUD is three data files **(verified)**
 
@@ -554,6 +556,7 @@ Council Wars `dc16.exe` is a different build; only the §3 anchor is given for i
 | minimap view-box x `+519` | `0x0043A27A` | `0x3967A` | `05 07 02 00 00` | `0x396DA` |
 | lightplane row advance 512 (×30, `add eax`) | `0x00453CCB … 0x00454276` | `0x530CB … 0x53676` | `05 00 02 00 00` | `+0x60` each |
 | lightplane row advance 512 (`lea edi`) | `0x004542BC` | `0x536BC` | `8D B8 00 02 00 00` | `0x5371C` |
+| day/night clock hand anchor x 608 / y 450 (`clock.c`, §10.15) | `0x0043ACB5` / `0x0043ACA2` | `0x3A0B5` / `0x3A0A2` | `B8 60 02 00 00` / `BA C2 01 00 00` | `0x3A115` / `0x3A102` |
 
 The last two rows are a *viewport* constant (512 = the stock map view width), not a screen one;
 they were found by symptom in the first visual test (§10.6), not by the sweep. Two further
@@ -1907,6 +1910,84 @@ each unique in both builds). The slider keeps working, multiplayer is unaffected
 server dictates `TICK_SPEED(33)` (plan R11), and a save game carries the speed it was saved with.
 Applied to both repository exes on 10 Sep 2026.
 
+#### 10.15 Three leftovers found in play: the battlefield dialogs, a black box at every screen change, and the clock hand **(verified by disassembly and pixel comparison; game test pending)**
+
+Reported 13 Sep 2026 after playing the 1024×768 build: (1) the in-game pop-up dialogs (options,
+objectives, quit, save/load) still sat at their 640×480 places, in the upper left of the enlarged
+map view; (2) pressing a main-menu button (new campaign, load game, multiplayer) flashed a
+**640×480 black box in the middle of the screen** before the next screen came up; (3) the
+day/night dial on the panel showed its face, but the hand never moved although day and night
+themselves changed.
+
+##### The dialogs: the one class of script `pad_background.py` skipped
+
+The four sub-window scripts `LOBJE`, `LOPTE`, `LQCE`, `LSGE` have no `background` and already
+used the four-argument `size` (§10.1), so the tool left them alone. Their widget coordinates are
+absolute like everyone else's, the `interface.c` dialog module positions nothing by code (§10.7),
+and in stock they were centred on the *map view* (LOPTE spans x 112..420 around the view centre
+260). The view grows symmetrically by (+384, +288), so shifting rect and widgets by half of that,
+**(+192, +144)**, keeps them centred on it. `pad_background.py apply` now does this for every
+script whose pristine copy has a four-argument `size` and no background (`scan_dialogs`, printed
+as `dialog` lines, `.bak` and re-derivation as for the menus): 116 widgets per game, both games.
+
+##### The black box: the `size` rect is erased when a window opens
+
+`load_interface` (`widget.c`, keyword loop `0x004232E2`) ends by calling `window_draw`
+`0x00422D84` (call at `0x00423A46`) with the background and palette names. `window_draw` copies
+the window's bounds rect — the four dwords the `size` handler `0x004223A8` stored at window+0 —
+over the context's clip rect, fills it with the `colour erase` RGB (`0x489530/34/38`) through
+`[ctx+60h]`, restores the clip, flips (`[ctx+54h]`) **and only then** decodes the background GIF
+(`[ctx+34h]`). At 640×480 the rect was the whole framebuffer, so this was the familiar black
+screen between menus. The padded scripts said `size 192 144 640 480` (§10.1 step 2, §6), so the
+erase became a 640×480 black box over the still-displayed previous screen, visible for as long as
+the new screen took to load (the main menu behind it is a full-frame painting since §10.11, which
+is why it showed).
+
+Fix: **the rect of a full-screen script must stay the whole framebuffer.** `pad_background.py`
+writes `size 0 0 1024 768` now (the four-argument form so its own re-derivation from `.bak` keeps
+working; the game builds the same rect from either form) and only the widgets carry the (192,144)
+offset. §6's "centring an existing screen is `size 192 144 640 480`" is thereby retracted: the
+rect never positioned anything (§10.1), and it is not harmless either. 41 scripts changed
+(20 Classic, 19 Council Wars root, `exp/intrface/shumane`, copied to `ozi_ns/intrface/shumane`
+exactly as `build_ozi_overlay.py` copies it); the GIFs, bitmaps and scene files re-derived
+byte-identically.
+
+##### The clock hand: a code-drawn sprite anchored at (608, 450)
+
+The dial is two things. The face is panel art in `INTRFACE.GIF`; the hand is a cell of
+`sprites/cloc` (36 cells of 28×28: 18 for the day half, 18 for the night half) drawn by `clock.c`
+(assert string `(cs.frame>=0)||(cs.frame<cs.clock.number)` at `0x48648C`), not by `MAINE`:
+
+* `clock_init` `0x0043AAC0` (Council Wars +0x60) loads the bank (`0x50DE7C`), keeps the cell
+  count (`0x50DE60`) and its half (`0x50DE78` = 18), and stores
+  `ticks_per_cell = phase_length (gs+0x534) / 18` as a float at `0x50DE74`.
+* `clock_draw` `0x0043AB38` (CW `0x0043AB98`) computes `cell = counter (gs+0x530) / ticks_per_cell`,
+  `+18` at night (`gs+0x53C`), pulls the index back by one when the counter reaches the half, and
+  whenever the cell differs from the last drawn one (`0x50DE72`) blits it through `[ctx+58h]` at
+  `x = 0x260 − cell_w`, `y = 0x1C2 − cell_h`: the cell's **bottom-right corner is anchored at
+  (608, 450)** — `0x0043ACB5` `B8 60 02 00 00`, `0x0043ACA2` `BA C2 01 00 00` (CW
+  `0x0043AD15` / `0x0043AD02`). Neither number is 640 or 480, so the §8 sweep did not see them.
+
+`hud_layout.py` slides the panel's bottom cluster by (+384, +288) (right_panel `insert=399`), and
+a pixel comparison confirms the stock face at (580..608, 422..450) sits at **(964..992, 710..738)**
+in both rebuilt `INTRFACE.GIF`s. So the hand had been drawn inside the map view all along and the
+terrain painted over it every frame. `tools/patch_clock.py` (verify / plan / apply, `.clock.bak`;
+pattern `BA imm32 66 8B 58 06 29 DA 89 D3 31 D2 66 8B 50 04 B8 imm32 29 D0`, unique in both
+builds) sets the anchor to `(608 + W − 640, 450 + H − 480)` = **(992, 738)**: two dwords per exe
+(Classic file `0x3A0A3` / `0x3A0B6`, DCEXP16 `0x3A103` / `0x3A116`), plain constants without
+`.reloc` entries. Applied to both repository exes on 13 Sep 2026.
+
+##### Follow-up from the game test: the PAUSED picture
+
+All three confirmed in game the same day; the tester then noticed that the ESC/pause overlay was
+still in the upper left of the view. It is not code-drawn: it is `MAINE`'s `picture 199` (cell
+132 of `MAINBUT.SPR`, 123×137, declared `5 5` but the cell is drawn whole) at (200,160), i.e.
+centred on the stock map view, toggled by the pause handler (`0x0040AF93` hides it while
+`gs+0x46F51` is 0, `0x0040B33C` shows and redraws it when the flag is set) as the only member of
+`group 201`. `hud_layout.py`'s `shift()` had a rule for the panel and one for the bottom bar and
+left everything inside the view where it was; it now moves an in-view widget by half the growth,
+so `maine apply` puts the picture at **(392, 304)** in both games. Game test pending.
+
 ### Stage 4 — cursors and movies
 
 * Cursors are `IDirectDrawSurface` blits at 1:1, so they simply look small. Redrawing
@@ -2098,6 +2179,8 @@ parse), which de-risks them completely.
 | `0x0042F828` / `0x0042F8D8` | `lock_screen` / `unlock_screen` |
 | `0x0042FBF0` | `install_ddraw_driver` |
 | `0x004223A8` | `widget.c` `size` keyword parser (2 or 4 numbers) |
+| `0x00422D84` | `widget.c` `window_draw`: erases the window's `size` rect with `colour erase`, flips, then loads the background (§10.15); called at the end of `load_interface` `0x00423A46` |
+| `0x0043AAC0` / `0x0043AB38` | `clock.c` `clock_init` / `clock_draw` (day/night hand, `sprites/cloc`, anchor at `0x0043ACB5`/`0x0043ACA2`; §10.15) |
 | `0x004232E2`ff | `widget.c` interface-script keyword dispatch |
 | `0x00435E24` | clip view rect to map (uses the 16/14 tile counts) |
 | `0x00435E7C` | build the render view struct at `0x005044AC` |

@@ -305,12 +305,17 @@ def shift(x, y, dx, dy):
     follow it down as well as right and stay on the bottom edge of the screen. Likewise the one
     bottom-bar widget right of the message-box splice (`in_text 200` at x 480, the box's right
     end) follows the box's end to the right.
+
+    The one widget *inside* the map view, the PAUSED picture (`picture 199`, cell 132 of
+    MAINBUT, 123x137 at (200,160), shown by the pause handler 0x0040B33C while `gs+0x46F51`
+    is set), is centred on the view, so it moves by half the growth. The first 1024x768 build
+    left it at (200,160), in the upper left of the enlarged view (found in play, 13 Sep 2026).
     """
     if x >= PANEL_X:
         return x + dx, y + dy if y >= PANEL_INSERT else y
     if y >= MSG_Y:
         return x + dx if x >= BOTTOM_INSERT else x, y + dy
-    return x, y
+    return x + dx // 2, y + dy // 2
 
 
 def _lines(px, w, h, vertical):
