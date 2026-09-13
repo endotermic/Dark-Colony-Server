@@ -4,7 +4,14 @@ Dates are the commit dates on `main`. Details of every finding and decision are 
 [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (section 16 is the dated change log of the
 live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md).
 
-## Unreleased
+## 2.3 — 13 September 2026 (tag `v2.3.0`)
+
+The fake players play: two rusher bots (AI Mercenary, AI Marauder) that sell a two-minute alliance
+for 1000 money, keep the peace among themselves, defend their bases and take over the seat of a
+player who leaves; victory by alliance works in the real game. The game's own AI is documented, money
+gifts between humans work again, and the game exes no longer hang at start-up on two-monitor PCs.
+Everything below was deployed to Fly as it landed (12–13 Sep 2026); the lobby greeting now says
+`Dark Colony server 2.3`.
 
 - **Game exes: no more start-up hang on two-monitor PCs** (13 Sep 2026, `tools/patch_ddraw_lost.py`,
   doc `DC16_DISPLAY_AND_RESOLUTION.md` §10.16): the 1024x768 mode switch makes Windows move the second

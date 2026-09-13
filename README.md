@@ -1,4 +1,4 @@
-# Dark Colony Server 2.2
+# Dark Colony Server 2.3
 A standalone multiplayer server for the classic RTS game *Dark Colony* (1997), designed for
 interoperability with the original, unmodified game.
 
@@ -49,7 +49,9 @@ row shows your name; you can type it there.
 
 Version 2.0 (September 2026) is a rewrite; version 1.x lives in the git history. Version 2.1 adds
 the rooms and the room-selection lobby; 2.2 the server-side battle engine (checksums in the sync
-frames), the empty hall selection and AI Mercenary. The history of releases is in [`CHANGELOG.md`](CHANGELOG.md).
+frames), the empty hall selection and AI Mercenary; 2.3 the playing bots (AI Mercenary and AI Marauder,
+alliances for sale, takeover of leavers) and the two-monitor start-up fix of the game exes. The history
+of releases is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 

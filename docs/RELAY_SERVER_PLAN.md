@@ -1394,6 +1394,14 @@ above, so that the plan can be followed from scratch without repeating the disco
   second later (Victory). Send-mode checksums accepted throughout, no assert, no stall, no bot line
   reached the player without a deal. Nothing left open from the day's requests.
 
+**13 Sep 2026, release 2.3**
+
+- `package.json` 2.2.0 → 2.3.0, tag `v2.3.0`; CHANGELOG's Unreleased section became the 2.3 entry
+  (AI Mercenary and AI Marauder play: rush, alliance for sale, pacts, base defence, takeover of
+  leavers, victory by alliance; money gifts relayed again; DEPEND loader fixed; `DC16_AI.md`; the
+  two-monitor start-up fix of the game exes, `tools/patch_ddraw_lost.py`, display doc §10.16). The
+  lobby greeting reads `Welcome to Dark Colony server 2.3.` (`VERSION_SHORT`). Deployed to Fly.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
