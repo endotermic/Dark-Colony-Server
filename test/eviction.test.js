@@ -143,10 +143,11 @@ test('in-game strikes accumulate to an eviction announced in the sync stream', (
   for (const p of [a, b]) p.send(build.mready(p.slot, 2));
   a.take();
   b.take();
-  a.send(build.bonus(1));
-  a.send(build.bonus(1));
+  const createRaw = Buffer.from([T.CREATE, ...new Array(13).fill(0)]); // the cheat command without a sender (F13)
+  a.send(createRaw);
+  a.send(createRaw);
   assert.ok(!a.gone);
-  a.send(build.bonus(1));
+  a.send(createRaw);
   assert.ok(a.gone);
   h.stepAfter(33);
   assert.ok(leaveAnnouncement(cmdsOf(b.take()[0]), a.slot));

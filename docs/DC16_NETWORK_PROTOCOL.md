@@ -207,9 +207,9 @@ Each command is executed by every client at the same game tick (§6.4). Object i
 | `0x0A` *(build units)* | `0x41C9C8` | `u8 unit_type`, `u8 player`, `u8 count` | append `count` copies of `unit_type` to the player's production queue for the type's class (GAMESTAT column 21), book `count × cost` as spent; no money check in the handler |
 | `0x0B` *(target object)* | `0x41D468` | `i16 obj`, `i16 target` | set the object's target-object field `obj+0x32` |
 | `0x0C` *(setting)* | `0x41CBD4` | `u8 which (0/1)`, `u8 type`, `u8 level`, `u8 player` | per-player upgrade level of object type `type` (`which` 0 weapon slot, 1 armour multiplier), costs 1000×level, refunded when that level is already set (corrected 11 Sep 2026 from the handler and the sender `0x40C564`) |
-| `0x0D` *(diplomacy)* | `0x41D7AC` | `u8 pa (<8)`, `u8 pb (<8)`, `u8 which (0/1)`, `u8 on` | set relation between players `pa`,`pb` in matrix 0 (alliance) or 1 (shared vision) |
+| `0x0D` *(diplomacy)* | `0x41D7AC` | `u8 pa (<8)`, `u8 pb (<8)`, `u8 which (0/1)`, `u8 on` | set bit `pb` of byte `pa` in matrix 0 (alliance) or 1 (shared vision) (`0x41E928`); the relation is in force only when both directions are set (`0x41E970`, evaluated every tick at `0x419BB0`). Sent by the diplomacy screen's ally / vision toggles (`0x4335A8`-`0x4335D1` -> `0x40C598`) |
 | `0x0E` *(chat / cheat)* | `0x41DA2C` | `u8 from`, `u8 to_mask`, `string text` | if `to_mask & (1<<me)`: show message (queue of 6). Text after `':'` is compared with cheat codes `we need equipment` (+10000 P7 for all), `I'm fighting for that equipment` (P7 = 0), `slag net` (toggle flag) |
-| `0x0F` *(bonus)* | `0x41DBB0` | `u8 player` | if `player == me`: +1000 P7 |
+| `0x0F` *(money gift)* | `0x41DBB0` | `u8 player` | if `player == me`: +1000 P7. Sent by the diplomacy screen's "give 1000" button (`0x43351E`-`0x433564` -> `0x40C730`) after the sender checked `money > 1000` and deducted 1000 locally, so the transfer is complete only when the receiver's machine executes it (money is local, §6.4). Listed as a cheat with no sender until 13 Sep 2026 |
 | `0x10` `DISCONNECT` | `0x41DBE0` | `u8 slot` | map network slot → player; mark player lost, AI takes over, post message "%s lost, AI taking over" |
 | `0x11` `TICK_SPEED` | `0x41DD6C` | `i32 ms` | `gs->tick_ms = ms` |
 | `0x12` `TICK_MAXSPEED` | `0x41DDB4` | `u8 player`, `i32 ms` | `gs->max_speed[player] = ms` |
@@ -329,7 +329,11 @@ The relay server's fake host makes the lowest network id a player without a clie
 A read error on a server slot closes it and broadcasts `DISCONNECT(slot)`. In the lobby the slot becomes type 3 / status 0. In-game the player's control changes to AI (`+0xBBC = 3`), its money is normalised and a system chat message "*name* lost, AI taking over" is generated locally. A client whose own read fails leaves the game with "Connection Lost"/"SERVER LOST!?!".
 
 ### 6.7 Chat and cheats
-Lobby chat: `'e' "Name: text"`. In-game chat: `0x0E from, to_mask, text` (bit *i* of `to_mask` = deliver to player *i*); the text after `':'` is compared against the three cheat strings listed in §4.3.
+Lobby chat: `'e' "Name: text"`. In-game chat: `0x0E from, to_mask, text` (bit *i* of `to_mask` = deliver to player *i*); the text after `':'` is compared against the three cheat strings listed in §4.3. The relay's bots (AI Mercenary, AI Marauder) speak in battle with `from` = their game player index and the client convention `"Name: text"`; the offer goes to everybody (`to_mask = 0xFF`), the deal to the payer (`1 << payer`) and a bot's action lines to its current ally only, none without one (server plan §19.8, §19.9).
+
+**End of a multiplayer battle** (`0x40ACD5`, every UI frame, game types 1/2): `0x40E260(gs)` returns 1 when every alive player (`0x40E1D4`: any living object of the team except mines 45/46, deployed towers 41/42 and the city's tower slot) is mutually allied (matrix 0, both bits) with the first alive player; the client then sets `gs+0x471C8` and `stat(0,0)` = its own player if still alive, else 8, and the results screen shows Victory or Defeat (`0x404964`). Nothing is sent: each client ends the game on its own (server plan F49).
+
+The in-game **diplomacy screen** (`0x4334DD`) has one row per other player (button ids 154..195, row = `(id - 154) / 6`, the own player skipped) with columns 0 ally toggle -> `0x0D`, 1 shared-vision toggle -> `0x0D`, 4 give 1000 -> `0x0F` (server plan F47/F48).
 
 ---
 

@@ -5,6 +5,9 @@ import { T, build } from '../src/commands.js';
 import { STATE } from '../src/constants.js';
 import { COMMAND_BUDGET } from '../src/game.js';
 
+// 0x03 create object: the one in-game command with no legitimate sender (F13)
+const CREATE_RAW = Buffer.from([T.CREATE, ...new Array(13).fill(0)]);
+
 test('sync frames: UNTIL first, until strictly increasing, commands in arrival order, identical bytes', () => {
   const h = new Harness();
   const [a, b] = startBattle(h);
@@ -58,19 +61,24 @@ test('filters: sync checks and speed messages vanish silently, cheats strike, ch
   a.send(build.tickMaxSpeed(1, 100));
   a.send(build.tickDesSpeed(66));
   assert.equal(a.client.strikes, 0);
-  a.send(build.bonus(1));
+  a.send(CREATE_RAW);
   a.send(build.cheat(5, 2));
   assert.equal(a.client.strikes, 2);
   a.send(build.chat(1, 0xff, 'Alice: slag net'));
   a.send(build.chat(1, 0xff, "Alice: I'm fighting for that equipment"));
   assert.equal(a.client.strikes, 4);
   a.send(build.chat(1, 0xff, 'Alice: gg'));
+  // 0x0F is the diplomacy screen's "give 1000" (F47): relayed, not a cheat; an impossible player strikes
+  a.send(build.bonus(b.slot));
+  a.send(build.bonus(9));
+  assert.equal(a.client.strikes, 5);
   h.stepAfter(33);
   const cmds = cmdsOf(b.take()[0]);
-  assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.TICK_SPEED, T.CHAT]);
+  assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.TICK_SPEED, T.CHAT, T.BONUS]);
   assert.equal(cmds[2].text, 'Alice: gg');
+  assert.equal(cmds[3].player, b.slot);
   // ten strikes evict
-  for (let i = 0; i < 6; i++) a.send(build.bonus(1));
+  for (let i = 0; i < 5; i++) a.send(CREATE_RAW);
   assert.ok(a.gone);
 });
 

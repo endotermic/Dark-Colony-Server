@@ -6,6 +6,51 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **AI Mercenary plays** (13 Sep 2026, maintainer request; plan §19.8, facts F47-F48): the fake host
+  has a rushing character (a worker to a vent, a barracks, cheap infantry non-stop, a four-unit wave
+  at the nearest enemy base and reinforcements in pairs) and sells an alliance: whoever gives it
+  1000 with the diplomacy screen's "give 1000" button becomes its ally with shared vision for
+  `MERCENARY_ALLY_S` (120) seconds; payments arriving while an alliance runs are returned. Every
+  decision is said aloud in the battlefield chat, starting with the offer in the first frame. New
+  settings `MERCENARY_AI` (`rusher`, or `off` for the idle base), `MERCENARY_ALLY_S`,
+  `MERCENARY_THINK_TICKS`; needs the engine (`SYNC_CHECK` `shadow`/`send`). The lobby greeting
+  announces the deal. New modules `src/rusher.js`, `src/mercenary.js`.
+- **A second bot, AI Marauder** (13 Sep 2026, maintainer request): `FAKE_PLAYERS` defaults to 2 and
+  every fake human is a bot with the same rush and its own alliance for sale, so a lone player can
+  fight both, buy one of them, or set them against each other. The hall shows room sizes without the
+  fakes ("(0/6)" on an 8-player map). 16 new tests (209).
+- **Alliances both ways, victory by alliance, bots for players who leave** (13 Sep 2026, maintainer
+  request; plan §19.9, fact F49): the bought alliance is set in both directions (alliance and vision),
+  so the payer need not touch the diplomacy screen and the bot's troops stop at once. The game ends
+  a battle, with Victory for everyone alive, as soon as all alive players are mutually allied
+  (`0x40E260`), so a lone player wins by buying the alliance of every remaining bot within the two
+  minutes. A client that leaves a running or loading battle is taken over by a new bot (speaking as
+  `AI <name>`, money normalised) instead of being handed to the game's own AI with `DISCONNECT`; the
+  engine stays in step. Without the engine the old `DISCONNECT` path remains.
+- **Pacts between bots, actions told to the ally only** (13 Sep 2026, after the first live test of
+  the bots; plan §16, §19.9, F49 corrected): the game's end check compares every alive player with
+  the *first* alive one, so a player allied with two rival bots did not win. Bots whose current
+  allies are the same player now ally with each other for as long as both deals hold, which makes
+  the victory by alliance work. A bot's decisions are now chat lines to its ally alone (the in-game
+  chat's player mask) and are not sent while it has no ally; the offer stays public, the deal and
+  its end go to the player concerned. 2 new tests (213).
+- **The bots keep the peace among themselves** (13 Sep 2026, maintainer request after the third
+  live test, which confirmed the victory by alliance in the real game): unhired bots are allied with
+  each other from the first frame; a bot that is bought turns on the bots that do not serve its
+  ally, and the peace returns when its deal ends. A lone player faces two allied bots instead of
+  two bots at war with each other.
+- **The rusher defends its base** (13 Sep 2026, maintainer request): enemy units within 10 tiles of
+  an own building pause the rush; the soldiers at home assault the nearest intruder, the nearest
+  units on their way come back when the home guard is short (three per intruder, at least four; a
+  live test had shown the whole army walking home for one scout), and the troops march on again
+  once the base is clear. New rusher settings `defendRadius`, `defendReorderTicks`,
+  `defendPerIntruder`, `defendMin`. 1 new test (214).
+- **Money gifts work again** (13 Sep 2026): the in-game command `0x0F` is the diplomacy screen's
+  "give 1000", not a cheat; the relay had dropped it since 2.0, so a gift between humans vanished
+  while the giver still paid. It is now relayed (F47).
+- **Engine fixes** (13 Sep 2026): the DEPEND loader now fills the field names `depend.c` reads (every
+  dependency check on real tables had answered "unavailable"), and a building's death no longer
+  calls `depRecompute` without a player. Neither affects a checksum.
 - **The game's AI documented** (12 Sep 2026): [`docs/DC16_AI.md`](docs/DC16_AI.md) describes the
   computer player of `dc16.exe` ("Krusty") from the disassembly — schedule, command path, state
   layout, influence map, census, production goals, the four tasks, group movement, `aimsg`, save/load.

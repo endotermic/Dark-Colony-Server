@@ -210,9 +210,22 @@ export class Game {
           break; // every healthy client sends these; dropped silently (R11)
 
         case T.CREATE:
-        case T.BONUS:
           r.strike(client, `cheat command ${typeName(cmd.type)}`);
           break;
+
+        case T.BONUS: {
+          // the diplomacy screen's "give 1000" (F47): the giver already deducted locally and only the
+          // receiver's machine adds, so it is relayed like an order. Aimed at a bot it buys that bot's
+          // alliance (mercenary.js); the engine keeps the bots' ledgers.
+          const d = decode(cmd);
+          if (d.player > 7) {
+            r.strike(client, `bonus for player ${d.player}`);
+            break;
+          }
+          group.push(cmd.raw);
+          r.bots.onGift(client, d.player);
+          break;
+        }
 
         case T.CHAT: {
           const d = decode(cmd);

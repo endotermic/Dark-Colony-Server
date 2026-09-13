@@ -19,13 +19,13 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R1 | Node.js, from scratch, no game code changes | Single process, zero npm dependencies (`node:net`, `node:crypto`, `node:test`) |
 | R2 | Hosted on Fly.io, TCP | One always-on machine, dedicated IPv4, ports 8888 + 8889 |
 | R3 | 8 players | Slots 0..7; slot 0 is the fake host, slots 1..7 are real TCP clients |
-| R4 | Slot 0 = fake human player **"Mercenary"**, always a fake human (never handed to the AI) | Server emulates the host client for slot 0 (name, race, colour, team, status). `FAKE_PLAYERS` (1..7) adds further fake humans in random slots, e.g. 7 fakes + 1 real player. Since 12 Sep 2026 the maintainer wants the fakes to **play** ("alive bots", §19): they stay human slots on the wire, the server issues their commands |
+| R4 | Slot 0 = fake human player **"Mercenary"**, always a fake human (never handed to the AI) | Server emulates the host client for slot 0 (name, race, colour, team, status). `FAKE_PLAYERS` (1..7, **default 2 since 13 Sep 2026**: AI Mercenary plus **AI Marauder** in a random slot) adds further fake humans in random slots, e.g. 7 fakes + 1 real player. Since 12 Sep 2026 the maintainer wants the fakes to **play** ("alive bots", §19): they stay human slots on the wire, the server issues their commands; since 13 Sep 2026 every fake is a bot (§19.8) |
 | R5 | Ignore command `0x08` (checksum) | Dropped, never queued |
 | R6 | Very strict sync: commands only travel inside the frame that carries the `0x02` sync command; identical bytes, identical order for everyone | One sync frame per server step: `[UNTIL][cmd…][0x00]`, broadcast byte-for-byte to all clients (only the per-connection sequence nibble differs) |
 | R7 | Start the game with the READY button (the chat word `ready` of the first design was dropped on 7 Sep 2026: the button works for every joiner, the eighth slot included) | When every real player has status 2 and there are at least `MIN_PLAYERS`, a countdown runs and the server frees the fake slots from status 1 (`'h'(0, q)`), which makes every client leave the lobby (§6.3) |
 | R8 | Default map **ARMAGEDDON** (8-player desert) | `'i' "D8PLAY01.SCN", "Armageddon"` |
 | R9 | Random placement for every new game | Joiners get a random free lobby slot; see §7 for why this is the only lever |
-| R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x0F`, `0x03` are dropped |
+| R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x03` are dropped. `0x0F` is **not** a cheat: it is the diplomacy screen's "give 1000" (F47) and is relayed since 13 Sep 2026 |
 | R11 | 150 % game speed (200 % until 10 Sep 2026), clients cannot change it | Server sends `TICK_SPEED(44)` itself and drops `0x11/0x12/0x13` from clients |
 | R12 | Clients may drop out or misbehave; a client that does not answer every message correctly is removed and everybody is told it left the lobby or the battle | Per-phase expected answers, deadlines and violation rules (§9); the eviction broadcasts `'h' 0` + `DISCONNECT` in the lobby and a `DISCONNECT` inside the next sync frame in battle |
 | R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room (nothing is preselected since 12 Sep 2026: it asks for a room number until one is typed); chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
@@ -48,7 +48,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F10 | On receipt of `UNTIL(a, until)` the client sends back a **rebuilt** 9-byte `UNTIL(a, until)` frame (echo); when it reaches `until` it sends `UNTIL(-1, until)`. | `0x41E4B4`–`0x41E544`, `0x41CDC7` | Consume both; `a ≠ -1` = latency sample, `a = -1` = `clientTime[slot] = until` |
 | F11 | Options screen speed percent → `TICK_DESSPEED(6600 / percent)`; only `0x11 TICK_SPEED` changes `gs->tick_ms`; clients compute `TICK_SPEED` from the `TICK_MAXSPEED` reports they receive. | `0x432CD3`, `0x41DD6C`, `0x419830` | **150 % = 44 ms** per tick since 10 Sep 2026 (the single-player default of the patched exes; 200 % = 33 ms, the game's own minimum `0x419883`, until then). Server sends `TICK_SPEED(TICK_MS)`; client `0x11/0x12/0x13` are dropped |
 | F12 | Start positions: at game start each client seeds the game RNG from a global that is never written (always 0), lists lobby slots with type ≠ 3 in ascending order into 8 entries padded with −1, Fisher–Yates-shuffles `N = filename[1] - '0'` entries, and the position of a slot in the shuffled list is its game player index (= start location). | `0x4014F8`–`0x40159F`; RNG `0x4120E0/0x4120F0`, table `0x488F20` | The shuffle is the same every game. Randomness can only come from **which lobby slots are occupied**. With `k` occupied slots the same `k` start locations are always used and only the assignment of players to them varies, unless all 8 slots are occupied (§7) |
-| F13 | Cheats: in-game chat `0x0E` text after `':'` equal to `we need equipment`, `I'm fighting for that equipment`, `slag net`; `0x04` with `a ∉ {1,2}` toggles debug flags; `0x0F` = +1000 P7; `0x03` spawns objects and has no legitimate sender. | `0x41DA2C`, `0x41CE9C`, `0x41DBB0`, `0x41CF08` | Drop them |
+| F13 | Cheats: in-game chat `0x0E` text after `':'` equal to `we need equipment`, `I'm fighting for that equipment`, `slag net`; `0x04` with `a ∉ {1,2}` toggles debug flags; `0x03` spawns objects and has no legitimate sender. (`0x0F` = +1000 P7 was listed here as a cheat until 13 Sep 2026; it is the money gift of the diplomacy screen, F47.) | `0x41DA2C`, `0x41CE9C`, `0x41DBB0`, `0x41CF08` | Drop them |
 | F14 | `0x08` sync check; sent every tick by the connected human with the **lowest network slot that is not marked lost** (`0x419F1B`–`0x419F54`). With Mercenary in slot 0 that is always Mercenary, which has no client, so **nobody sends checksums** and the game's own desync detection is inert. A receiver that detects a mismatch prints "sync error" and fails an assertion, i.e. terminates (`0x44AC94`). | `0x41CE74`, `0x419F4B` | Drop (R5), always. Decision of 7 Sep 2026: checksums are neither generated (fake human in slot 0) nor forwarded, the game runs fine without them; the temporary diagnostic flags used for the two-player sync test were removed. Since 11 Sep 2026 the server can compute the checksum itself (§18, F38–F41) and `MERCENARY_SLOT` can make a real player the sender for verification (F40) |
 | F15 | `'i'` carries the scenario file name relative to `scenario/mplayer/` (client formats `"scenario/mplayer/%s"`) and the title. **The title is not free text**: the host builds it with `sprintf("%-43s (%d Player %s)", name + "\n", players, "Desert Map ")` (format string `0x48319C`, terrain strings `0x483190`), and every lobby client reads `title[45]` as the map's player count (`0x41141F`): when that digit is smaller than the number of occupied slots the client clears the scenario and un-readies everybody (`0x41143B`–`0x41144C`). The file name's 2nd character is read as the player count at game start (`0x401504`). | `0x40FB5C`, `0x410733`, `0x41141F` | File `"D8PLAY01.SCN"`, title `"Armageddon\n" + 32 spaces + " (8 Player Desert Map )"` (66 chars, `(` at index 44). A plain "Armageddon" made every real client send `'i' "", ""` plus un-ready messages a second after joining (live test) |
 | F16 | Names: 16 chars + NUL. Buffers: lobby receive 1416, in-game receive 1024, held commands 7168. | `0x41F701`, `0x41E65B` | Frame budget in §8 |
@@ -81,6 +81,9 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F43 | **The AI is a command generator.** `ai_think` (`0x41AD30`) decides and then calls the ordinary command builders (`0x40C50C` → `0x09`, `0x40C538` → `0x0A`, `0x40C7D4` → `0x07`+`0x05`, `0x05 0x0D` deploy); every builder ends in `0x421648`, which during `ai_turn` runs in "local command mode" (byte `0x4AF090`, set by `game_tick` around the call) and executes the bytes at once through the same handler table `0x48949C` the sync frames use. The AI never sends anything; nothing in a client distinguishes a human's command from an AI's. | `0x419FA9`–`0x419FC0`, `0x421648`, `0x41E06C`; `docs/DC16_AI.md` §3 | A server may generate the same bytes for a fake human and put them into its next sync frame (§19) |
 | F44 | **Money is local.** The `0x09`/`0x0A`/`0x0C` handlers add to `P.SPENT` and never touch `P.MONEY`; the sender deducts before sending (build menu `0x43332F`, Krusty goal actions `0x4562B0`/`0x456408`). Money is not in the checksum. | `0x41CAA4`, `0x41C9C8`, `0x41CBD4`; `DC16_AI.md` §3 | A fake player's money exists only in the server engine; the bot deducts there (§19.1) |
 | F45 | **AI schedule.** `ai_turn` runs on ticks with `TICK & 3 == 0`: tick 4 → every AI player; afterwards one *slot* per call (`rr = (rr+1) % 8`, humans waste the call), so player `p ≥ 1` thinks at ticks `4 + 4p + 32k`, player 0 at `36 + 32k`. AI commands of tick `t` are applied after `record(t)` and enter checksum `t+1`. | `0x41AE38`, `0x419FB6`; `DC16_AI.md` §2–§3 | Bots think every 32 ticks at the same phases; a bit-exact `ai.js` must run at that point of the tick (§19.6) |
+| F47 | **`0x0F` has a legitimate sender: the diplomacy screen's "give 1000" button.** The in-game diplomacy panel (`0x4334DD`: button ids 154..195, `(id - 154) / 6` = row = the other players in order, `% 6` = column) sends, for column 4, `0x0F(target)` through `0x40C730` **after** checking `money > 1000` and deducting 1000 locally (`0x43352B`/`0x43354E`); the handler `0x41DBB0` adds 1000 only on the machine whose local player is `target`. Columns 0 and 1 toggle the alliance / shared-vision bit towards that player (`0x41E94C` get, `0x40C598` -> `0x0D(me, target, column, !current)`). | `0x4334DD`-`0x4335E7`, `0x40C730`, `0x41DBB0` | The relay must forward `0x0F` (until 13 Sep 2026 it struck it as a cheat, so a gift between humans vanished and the giver still lost the 1000). For the Mercenary the engine's ledger receives it (local player -1: `cmdBonus` adds for any target) |
+| F48 | **Alliance and vision are per-direction bits that must match.** `0x0D(pa, pb, which, on)` sets bit `pb` of byte `pa` in matrix `which` (`0x41E928`); `game_tick` derives the alliance byte `gs+0x46F54[10a+b]` and the vision mask bit from `0x41E970(matrix, a, b)` = bit `b` of byte `a` **and** bit `a` of byte `b`. Targeting (`collide.c`) and the shared-vision mask read those derived values. A one-sided "alliance" therefore changes nothing until the other side sets its bit too. | `0x41D7AC`, `0x41E928`, `0x41E970`, `0x419BB0` | The Mercenary sets its two bits towards its ally and tells the ally in chat to set theirs; its own rusher never targets the ally regardless (`isAlly`), but the game's auto-fire only stops once the bits match |
+| F49 | **End of a multiplayer battle.** Every UI frame the client (`0x40ACD5`, game types 1/2) calls `game_over 0x40E260(gs)`: walk players 0..7, `first` = the first one for which `player_alive 0x40E1D4(gs, p)` holds; every further alive player must be **mutually allied** with `first` (`0x41E970(matrix 0, first, p)`, both bits) or the game goes on; with no unallied alive pair it returns 1. `player_alive` = any living object (`life ∉ {0, 10}`) of team `p` other than mines (types 45/46), deployed towers (41/42) and the city's tower slot (`obj < 120 && obj % 15 == 5`): buildings, workers and mining towers all count. When the check fires the client sets `gs+0x471C8 = 1`, and `stat(0, 0)` = its own player if it is still alive (`ui+0x13B == 0`, set earlier when `player_alive(me)` first failed, `0x40AC2A`) else 8; `run_game` then shows the results screen (`0x404964`), which prints **Victory** (`0x482430`) when `stat(0, 0) == local player`, **Defeat** otherwise (`0x404A83`). Alliances therefore end the game: once all alive players are mutually allied, every one of them has won. | `0x40AB40`-`0x40AD3C`, `0x40E1D4`, `0x40E260`, `0x404964` | **The check is a star, not a set of pairs the player is in**: every alive player is compared with `first` (the lowest alive game player index), so with two rival bots alive a lone player allied with both does NOT win — the two bots are not allied with each other (first live test 13 Sep 2026, §16: matrix rows 1↔6 and 6↔7 set, 1↔7 clear, `game_over` false while both deals overlapped). Victory by alliance therefore needs the bots that share a paying ally to ally with each other too (or one bot left); done the same day as the "pacts" of `Bots.syncPacts` (§19.9). A lone player against a single remaining bot wins for 1000. The server does not need an end detection of its own: the clients leave when they show the results screen and the room resets |
 | F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
 ---
@@ -403,7 +406,8 @@ function step(now) {
 |---|---|
 | `0x02 UNTIL(a, u)` | consume. `a ≠ -1`: echo of our frame; `a` must be in the client's `pendingEchoes` (else hard violation, §9), remove it and keep `now − sentAt` as the latency sample. `a == -1`: the client reached `u`; `u` must be an issued `until` and greater than its previous report (else hard violation); set `clientTime[s] = u` |
 | `0x04 CHEAT(1,·)` / `(2,·)` pause / resume | if `ALLOW_PAUSE` (default true): set `paused`, relay **as a standalone frame immediately** (the client handles pause out-of-band and discards the frame, F6). Otherwise drop |
-| `0x04` other, `0x03`, `0x08`, `0x0F` | **drop**, log (R5, R10) |
+| `0x04` other, `0x03`, `0x08` | **drop**, log (R5, R10) |
+| `0x0F bonus(player)` | **queue** (F47: the diplomacy screen's "give 1000"; the giver deducted locally, only the receiver's machine adds); `player > 7` strikes. Aimed at the Mercenary it buys the alliance (§19.8) |
 | `0x11`, `0x12`, `0x13` speed | **drop** (R11) |
 | `0x0E chat(from, mask, text)` | drop if the text after the first `':'` (trimmed) equals one of the three cheat strings (F13); otherwise queue |
 | `0x10 DISCONNECT` | drop (server-originated only) |
@@ -418,7 +422,9 @@ commands) and nothing else.
 
 ### 8.4 Disconnects and end of game
 
-- Client lost → `DISCONNECT(slot)` queued (F19); its `clientTime` no longer gates pacing.
+- Client lost → `DISCONNECT(slot)` queued (F19); its `clientTime` no longer gates pacing. Since
+  13 Sep 2026, when the bots are on and the engine is active, the base becomes a server bot instead
+  and no `DISCONNECT` is sent (§19.9).
 - Last real client gone → `reset()`: state LOBBY, all slots 1..7 empty, queue cleared, new random
   assignment for the next joiners. There is no in-game end detection (the server does not simulate);
   the game ends for the server when everybody has left.
@@ -595,9 +601,9 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `STRIKE_LIMIT` | `10` | soft violations before eviction |
 | `STRICT_SEQ` | `true` | a wrong sequence nibble is a hard violation (`false` = resync like the original server) |
 | `MERCENARY_RACE` | `0` | race of every fake player: 0 Human, 1 Gray |
-| `FAKE_PLAYERS` | `1` | fake humans including Mercenary (1..7), placed in random slots; `MIN_PLAYERS ≤ 8 − FAKE_PLAYERS` |
+| `FAKE_PLAYERS` | `2` (1 until 13 Sep 2026) | fake humans including Mercenary (1..7), the others in random slots; every one of them is a bot when `MERCENARY_AI` is on (§19.8). The default second one is **AI Marauder** (maintainer, 13 Sep 2026: a lone player can fight both, buy one, or set them against each other); `MIN_PLAYERS ≤ 8 − FAKE_PLAYERS` |
 | `MERCENARY_NAME` | `AI Mercenary` | display name of the fake host in slot 0 (`Mercenary` until 12 Sep 2026); at most 16 characters (F33) |
-| `FAKE_NAMES` | `AI Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` |
+| `FAKE_NAMES` | `AI Mercenary,AI Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` |
 | `DEBUG_MODE` | `false` | debug mode (also implied by `LOG_LEVEL=debug`): full map view for everybody at game start (F28) |
 | `FILL_EMPTY_WITH_AI` | `false` | empty slots become AI (`0` easy / `1` hard via `FILL_AI_TYPE`) |
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
@@ -606,6 +612,9 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `SYNC_CHECK` | `off` (`send` in `fly.toml` since 11 Sep 2026) | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
 | `RECORD_DIR` | unset | record every battle as JSON lines (sync frames, client checksums, engine checksums, MREADY, disconnects) for `tools/replay.js` (§18.4); independent of `SYNC_CHECK` |
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
+| `MERCENARY_AI` | `rusher` | the fake players in battle (§19.8): `rusher` = every fake human plays a rush and sells an alliance with shared vision for 1000; `off` = idle bases as before. Needs the engine (`SYNC_CHECK` `shadow` or `send`): their game player indices and their money exist only there |
+| `MERCENARY_ALLY_S` | `120` | seconds an alliance bought for 1000 lasts; payments arriving while one runs are returned (§19.8) |
+| `MERCENARY_THINK_TICKS` | `32` | decision interval of the rusher in game ticks (the original AI's 32, F45) |
 
 ---
 
@@ -1303,6 +1312,88 @@ above, so that the plan can be followed from scratch without repeating the disco
   is to be promoted later to a bit-exact `src/engine/ai.js` so that the engine survives a
   `DISCONNECT` takeover and AI-typed lobby slots (§19.6). Steps, configuration and risks in §19.
 
+**13 Sep 2026, AI Mercenary plays: a rusher and the 1000-money alliance (§19.8, F47, F48)**
+
+- Maintainer's request: the relay's Mercenary AI "must have rushing character", must ally with a
+  client (including visibility) for 2 minutes when the client sends it 1000 money, must return money
+  sent while somebody is already allied, must spell every decision aloud in the battlefield chat, and
+  must announce the offer at the start of the battle.
+- The money gift: the in-game diplomacy screen's "give 1000" button sends `0x0F(target)` after
+  deducting 1000 locally (`0x4334DD`-`0x433569`, F47). The relay had struck `0x0F` as a cheat since
+  version 2.0 (R10/F13 said it had no sender), which also made gifts between humans vanish while the
+  giver lost the money. `0x0F` is now queued like an order; `player > 7` strikes.
+- Alliance and shared vision are per-direction bits and take effect only when both sides set them
+  (F48). The Mercenary sets its side (`0x0D` twice) and asks the ally in chat to set theirs.
+- Implementation: `src/rusher.js` (strategy against the engine state), `src/mercenary.js` (deal,
+  chat, timers, wiring), settings `MERCENARY_AI` (`rusher`/`off`), `MERCENARY_ALLY_S` (120),
+  `MERCENARY_THINK_TICKS` (32); new command builders in `commands.js`; the lobby greeting announces
+  the deal when the Mercenary can play (`SYNC_CHECK` not off). 15 new tests (`test/mercenary.test.js`
+  with a fake engine, `test/rusher.test.js` in headless self-play on Armageddon: worker -> vent ->
+  barracks -> infantry -> a four-unit wave at the enemy HQ within 6000 ticks, allies never attacked,
+  recall when the target becomes an ally, no `rand()` and no history writes by a think, and one end-to-end run of the real engine inside a room); 208 tests.
+- Two engine bugs surfaced (§19.8): the DEPEND loader's field names did not match depend.c's readers
+  (every dependency check answered "unavailable"), and `objectDie` called `depRecompute` without the
+  player. Both fixed; neither touches a checksum.
+- Same day, third request: victory by allying with all remaining bots, and a leaving client's base
+  becoming a bot. Investigation (F49): the client ends a multiplayer battle when all alive players
+  are mutually allied (`0x40E260`; alive = any object but mines/towers, `0x40E1D4`), Victory for the
+  alive ones. Implemented (§19.9): the deal sets alliance and vision in both directions, so buying
+  every remaining bot wins; a client leaving a running (or loading) battle is taken over by a new
+  bot instead of `DISCONNECT` when the engine plays (money normalised `money -= spent`); a bot's
+  `isAlly` honours the game's own mutual alliances. 211 tests.
+- Same day, second request: "a permanent second rusher AI, so single client can play against, ally
+  or combine tactics". `FAKE_PLAYERS` now defaults to 2, the second fake is **AI Marauder**, and every
+  fake is a bot with its own rusher and its own alliance for sale (`Bots`/`AiPlayer` in
+  `src/mercenary.js`, `Room.bots`). Hall room sizes are shown without the fakes ("(0/6)"); tests of
+  the slot mechanics pin `FAKE_PLAYERS=1`. 209 tests.
+- **First live test of the bots, 13 Sep 2026** (local relay, `SYNC_CHECK=send RECORD_DIR=logs/replays
+  MERCENARY_AI=rusher`, one Classic client in room 1 Plink - O, 11 504 ticks, recording
+  `2026-09-13T12-11-09-941Z-room1-J8PLAY01.jsonl`): both rushers built and attacked (359 thinks each,
+  ~50 waves, 59 troops), 5 deals were bought and every one expired or ended correctly, no engine
+  assert, no stall. **Bug: allying with both bots did not end the battle.** The player (game player
+  6) held both alliances during ticks 8174..9157 and again from 11046 until leaving. Replaying the
+  recording through the engine (`scratch/probe_alliance.mjs`) shows matrix 0 rows 1 = {1,6}, 6 =
+  {1,6,7}, 7 = {6,7}: the human is mutually allied with both bots but the bots are not allied with
+  each other, and `game_over 0x40E260` compares every alive player with the *first* alive one (game
+  player 1 = AI Mercenary), which is not allied with 7 = AI Marauder. F49 and §19.9 corrected; fixed
+  the same day: bots sharing a paying ally ally with each other while both deals hold (pacts,
+  `Bots.syncPacts`), and, on the maintainer's request, a bot's action lines now go to its ally only
+  (chat mask). 2 new tests (213). Also seen: the
+  client sent no `0x08` because `MERCENARY_SLOT=0` kept the fake host as the lowest id (0 checksums
+  compared) — the next live test should run `MERCENARY_SLOT=7` to verify the engine as well.
+- **Second live test, 13 Sep 2026** (same setup, `MERCENARY_SLOT=0`, room 1 Plink - O, 11 028
+  ticks, recording `2026-09-13T12-56-01-427Z-room1-J8PLAY01.jsonl`): pacts, private action lines
+  and the defence in the loop. The client accepted the server's `0x08` checksums for the whole game
+  in `send` mode with two rushers' orders and the defence orders in the frames (a mismatch aborts
+  the client at once), no engine assert, no stall. Action lines were unheard without an ally and
+  went to the payer during the one deal (AI Marauder, ticks 2537..5264); only one bot was bought, so
+  the pact did not fire (matrices confirm 6↔7 only). The Mercenary defended six times against the
+  Marauder's trickle of single units; **weakness seen**: with nobody at home every alarm recalls the
+  entire sent army ("Only 0 at home against 1. Everybody back", then "32 more march" once clear), a
+  ping-pong that keeps the whole force walking; fixed right after: only the nearest units on their
+  way come back, three per intruder and at least four (`defendPerIntruder`, `defendMin`). The client
+  left by quitting (no echo for 5 s, player
+  7 alive with 17 objects at the end), so the takeover bot was created and the room reset.
+- **Third live test, 13 Sep 2026** (same setup, 12 812 ticks, recording
+  `2026-09-13T13-14-04-308Z-room1-J8PLAY01.jsonl`): **victory by alliance confirmed.** The player
+  bought AI Marauder at tick 12755 and AI Mercenary at 12800; the pact's four relations went out in
+  the same frame as the second deal, the replayed matrices show 1↔6, 1↔7 and 6↔7 all set at tick
+  12805 and `game_over` true, and the client closed its connection cleanly half a second later (the
+  results screen). Send-mode checksums accepted for the whole game, no assert, no stall. The bounded
+  recall worked ("1 at home against 1. 3 come back to defend the base.", 8 defences, no more
+  whole-army walks). The two bots fought each other for most of the game (38 "march on AI
+  Mercenary's base" lines), which prompted the maintainer's next request: bots allied by default
+  (§19.9, implemented right after).
+- **Fourth live test, 13 Sep 2026** (same setup, 8 355 ticks, recording
+  `2026-09-13T13-32-38-799Z-room1-J8PLAY01.jsonl`): **the standing peace works end to end.** Replayed
+  matrices: 1↔7 set from tick 9 (first frame); the player (6) bought AI Marauder at 3036 -> 7↔6 on
+  and 1↔7 off in the same frame, the Marauder marched on the Mercenary and the Mercenary defended
+  twice; the deal ran out at 5763 -> 7↔6 off, 1↔7 back on; AI Mercenary bought at 6165 -> 1↔6 on,
+  1↔7 off; AI Marauder bought again at 8345 while the Mercenary's deal still ran -> 7↔6 on and the
+  pact 1↔7 on in the same frame, `game_over` true at 8350, and the client closed cleanly half a
+  second later (Victory). Send-mode checksums accepted throughout, no assert, no stall, no bot line
+  reached the player without a deal. Nothing left open from the day's requests.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1579,7 +1670,7 @@ by default; the verification loop for further work is §18.4.
 
 ---
 
-## 19. Alive bots: the fake players play (plan of 12 Sep 2026, nothing implemented yet)
+## 19. Alive bots: the fake players play (plan of 12 Sep 2026; §19.8 implemented 13 Sep 2026)
 
 The maintainer asked on 12 Sep 2026 for the server's bots to come alive: AI Mercenary and the other
 fake humans (`FAKE_PLAYERS`) should build, harvest, defend and attack instead of sitting idle. This
@@ -1678,7 +1769,9 @@ setting; leave it out), team play (bots allied with each other through the lobby
 possible today with `TEAM_SET`, needs a lobby rule).
 
 Chat: the greeting line of AI Mercenary changes from "My base stays idle." to "I play too." when
-`BOTS=krusty`; no in-game chat from bots (R-decision 7 Sep 2026: the relay is nameless in battle).
+`BOTS=krusty`. (The 7 Sep 2026 rule that the relay is nameless in battle was lifted for the
+Mercenary on 13 Sep 2026: the maintainer wants every decision of its AI said aloud in the
+battlefield chat, §19.8. The relay's own lines stay nameless; the Mercenary speaks as a player.)
 
 ### 19.5 Steps
 
@@ -1714,6 +1807,139 @@ campaign triggers, so it is out of scope for multiplayer. Verification is the §
 recording of a game in which a player disconnects must replay clean. This stage is optional for
 "alive bots" but it is what makes them survive a disconnect and lets AI-typed slots coexist with
 `send`.
+
+### 19.8 The first living bot: AI Mercenary rushes and sells alliances (13 Sep 2026)
+
+The maintainer's request of 13 Sep 2026 shaped the first implementation, which is not the Krusty
+port of §19.2-§19.5 but a purpose-built character for the fake host alone:
+
+* **A rusher** (`src/rusher.js`, `MERCENARY_AI=rusher`): a worker first (base income is 3 per 16
+  ticks, `P.INCOME`; the economy is the vents: a worker standing on a vent tile for 50 ticks becomes
+  a mining tower, `renat.js idleVent`), then the barracks (DEPEND item slot 1 level 0 of the race),
+  then the cheapest buildable infantry non-stop (class-0 troop items, at most 3 in the queue), a
+  second worker once the first wave is out. The first wave leaves when four armed mobile units stand
+  at home; afterwards every pair follows; units are re-ordered every 400 ticks. Orders are the
+  original's `0x07` (one waypoint, the object list) + `0x05` order 7 (assault) per unit, `0x05` order
+  2 for workers and recalls, `0x09`/`0x0A` for purchases, all with the Mercenary's game player index
+  (`sync.slotToPlayer[MERCENARY_SLOT]`). Target: the nearest enemy base (HQ object `15q` while it
+  stands, then any standing building `15q+slot`, positions from the objects' raw x/z), else enemy
+  units the Mercenary's own vision bit shows (`grid.seenBy`), else nothing (troops go home).
+  Allies (lobby team or the deal below) are never targeted; when the target becomes an ally the
+  army is recalled. The rusher writes only `P.MONEY` of its player (F44), never calls `G.rand()` and
+  a test asserts that a think leaves the RNG index and the checksum history untouched. On Armageddon
+  in headless self-play (44 ms ticks): worker at tick 32, mining by ~500, barracks at ~900, the first
+  four-unit wave at ~1350 (about a minute), then a soldier every ~200 ticks.
+* **The deal** (`src/mercenary.js`): the Mercenary's first sync frame carries its offer in chat; a
+  `0x0F(mercenary)` from a client (F47) makes that client's game player its ally: `0x0D(m, c, 0, 1)`
+  and `0x0D(m, c, 1, 1)` go into the next frame, the alliance lasts `MERCENARY_ALLY_S` seconds of game
+  ticks (`round(s * 1000 / TICK_MS)`), then both bits are cleared and announced. While an alliance
+  runs, any `0x0F(mercenary)`, from a third player or from the ally itself, is **returned**:
+  `0x0F(payer)` in the next frame and -1000 on the Mercenary's ledger (the gift's +1000 lands when
+  its frame is executed, so the ledger nets to zero). The ally leaving the game or the engine stopping
+  ends the alliance. Because the bits are per direction (F48), the chat tells the ally to set its own
+  alliance and vision towards the Mercenary; the rusher itself stops targeting the ally at once.
+* **Chat** (`0x0E from=mercenary, mask 0xFF, "AI Mercenary: ..."`): the opening offer (two lines,
+  plus "And I rush." when the rusher runs), every purchase, every worker dispatch, the gathering
+  count, each wave and reinforcement, each retarget, each alliance event, and a farewell when the
+  engine is disabled mid-game ("I lost sight of the battle"). At most two lines per think (the client
+  keeps a queue of six messages); the relay's own lines stay nameless.
+* **Wiring**: `Room.mercenary`; `Room.beginRunning` -> `Mercenary.onRunning()` after `sync.start` and
+  `game.start`; `SyncCheck.onFrameIssued` -> `onAdvanced(engineTime)` after every frame (also when the
+  engine is inactive, so the Mercenary notices a disable); `Game.handle` forwards `0x0F` and calls
+  `onGift`; `Room.evict` -> `onClientLeft`. Any exception in a think disables the rusher for that game
+  and is logged; the deal and the relay go on. Without an active engine the Mercenary is idle and the
+  lobby greeting says so ("My base stays idle."); with it the greeting reads "I rush. Pay me 1000 in
+  battle and I am your ally for 120 s."
+* **Engine fixes found on the way**: `tables.js loadDepend` wrote `defined`/`params` while `city.js`
+  (depend.c) reads `active`/`a`/`b`/`c`, so every `dep_check_*` on real tables answered 2, invisible
+  to the checksum (money and the build menu are not in it), fatal for a bot; the loader now writes
+  both names. `combat.js objectDie` called `depRecompute(G)` without the player (`0x437D00` uses
+  `gs->local_player`, -1 on the server); it now passes it and `depRecompute` returns for a player
+  outside 0..7. Neither changes any checksum.
+* **Two bots by default** (same day, maintainer: "a permanent second rusher AI, so a single client
+  can play against, ally or combine tactics"): `FAKE_PLAYERS` defaults to 2 and every fake human is an
+  `AiPlayer` (`src/mercenary.js`: `Bots` = one `AiPlayer` per fake slot; `Room.bots`,
+  `Room.mercenary` = the fake host's bot). The second is **AI Marauder** (`FAKE_NAMES`), in a random
+  slot like any extra fake. Both run the same rusher and the same deal with their own alliance each;
+  they are rivals of each other like of everybody else (the nearest base is the target, so on a small
+  map they may well fight each other first). The fake host explains the deal in the first frame; the
+  others add "Same deal here: 1000 buys my alliance for 120 seconds. And I rush too. Pick your side."
+  Thinks are staggered by 8 ticks per bot. A `0x0F` is routed to the bot whose game player it names.
+  The lobby greeting reads "AI Marauder and I rush; 1000 in battle buys an alliance for 120 s." and
+  the hall shows the room size without the fakes ("(0/6)" on an 8-player map).
+* Not done: the Krusty port (§19.2-§19.6) remains the plan for a smarter bot. Real-client test
+  pending (the deal's chat texts, the visibility of a bot's vision on the ally's screen, and whether
+  two rushers leave the human enough room are what to watch).
+
+### 19.9 Alliances both ways, victory by alliance, and bots for players who leave (13 Sep 2026)
+
+Third request of the day: "if no other client is in battle anymore, then alliance with all remaining
+bots will bring a victory of the battle and end the game; when a client leaves a game, it must be
+switched to be the same fake human bot that can be allied with."
+
+* **Victory by alliance is the game's own rule** (F49): the client ends the battle, with Victory for
+  everybody alive, once all alive players are mutually allied. For that to work with the deal the
+  bots now set **both directions** of both matrices (`0x0D(bot, payer, ·, 1)` and `0x0D(payer, bot,
+  ·, 1)`, four commands in one group; the handler has no sender check) and clear all four at the
+  end. The payer no longer has to touch the diplomacy screen, the bot's troops stop shooting at once
+  (targeting reads the mutual byte), and buying the last remaining bot's alliance while the others
+  are still running ends the game. With two bots that is 2000 within two minutes; with one bot left,
+  1000. The opening chat says "both ways".
+  **Live test 13 Sep 2026 (§16): wrong with two bots.** `game_over` compares every alive player with
+  the *first* alive one only. Player 6 bought both AI Mercenary (game player 1) and AI Marauder (7);
+  the matrices held 1↔6 and 6↔7 but not 1↔7, and `first` = 1 was not allied with 7, so the battle went
+  on. For "ally with all remaining bots = Victory" the bots that share a paying ally must also set
+  the alliance between themselves for as long as both deals hold (four more `0x0D` per bot pair, and
+  the rushers must treat the other bot as an ally meanwhile). **Implemented the same day as
+  "pacts"** (`Bots.syncPacts`, run after every gift, every engine advance and every client leaving):
+  two active bots whose current allies are the same player get the four relations between their
+  players in the same frame as the second deal; when either deal ends (time, refund never, the ally
+  leaving) the pact's four relations are cleared with it. `AiPlayer.isAlly` honours the pact, so the
+  rushers stand down against each other and recall their waves. The pact is told to the common ally
+  ("AI Marauder and I both serve you now. We hold our fire on each other."), its end to whichever
+  ally remains ("My truce with ... is over."). A lone player who buys both bots within the two
+  minutes now makes {player, bot, bot} a full clique and the client's check fires.
+* **Actions go to the ally only** (maintainer, 13 Sep 2026, after the first live test: "AI bots must
+  send their actions only to the allied client"): the in-game chat command carries a player mask
+  (`0x0E from, to_mask, text`, bit *i* = game player *i*), so a bot's rusher lines are sent with the
+  mask of its current ally and are not sent at all while it has none (`AiPlayer.sayToAlly`, debug
+  log "bot: unheard"). The offer in the first frame and a takeover bot's introduction stay public
+  (`0xFF`); "X paid 1000", a refund and "the alliance is over" go to the player concerned.
+* **The bots keep the peace among themselves** (maintainer, 13 Sep 2026, after the third live test:
+  "bots must ally each other by default so there is no war between bots when not hired by anyone").
+  `Bots.syncPacts` now allies two active bots exactly when they serve the same master: both unhired
+  (the default, set in the first frame and whenever a takeover bot appears) or both bought by the
+  same player. A hired bot therefore turns on every bot that does not serve its ally ("My truce with
+  AI Marauder is over. I turn on it for you.", to the payer), and the peace returns when its deal
+  ends. A lone player fights two allied bots; buying one gives an ally against the other; buying
+  both wins (F49). The rushers honour the peace through `isAlly`, so no bot ever marches on another
+  unhired bot.
+* **The rusher defends its base** (maintainer, 13 Sep 2026, same conversation: the bots stay
+  rushers, "just tweak it to defend its base when it is attacked"): `Rusher.defend` runs before
+  `attack` in every think. Enemy units the own vision shows within `defendRadius` (10) tiles of an
+  own building are intruders; while any stand there the rush pauses (no wave, no re-orders), the
+  soldiers at home assault the intruder nearest to the HQ, and when they are fewer than
+  `defendPerIntruder` (3) per intruder, at least `defendMin` (4), the nearest units on their way are
+  recalled to make the number (dropped from `sent`; until the second live test the whole army came
+  back for a single scout, §16). Orders are refreshed every `defendReorderTicks`
+  (96) or when the nearest intruder moved more than two tiles; a base without soldiers says so once
+  per episode and keeps training. When the base is clear ("My base is clear. Back to the plan.") the
+  survivors count as fresh and the next think sends them as a wave. Test: two rushers on Armageddon,
+  the home guard (rushSize 99) meets the other's rush at its own HQ. 214 tests.
+* **A leaving client's base becomes a bot** (`Bots.takeOver`, `AiPlayer` with `takeover: true`)
+  instead of `DISCONNECT` (F19) when the bots are configured and the engine is active: the player
+  stays a human on the wire (no "lost, AI taking over" on the clients, no Krusty on any machine, so
+  the engine stays in step and `send` goes on), its money is normalised like the original's
+  DISCONNECT does (`money -= spent`, F44), and the new bot rushes and sells its alliance like the
+  fakes. It keeps the player's name on every screen and speaks as `AI <name>`; its first line is
+  "<name> left the battle. I run this base now: 1000 buys my alliance for 120 seconds. And I rush."
+  A client that leaves while everybody is loading (STARTING) is remembered and gets its bot when the
+  battle starts. Without the engine (or with `MERCENARY_AI=off`, or after a divergence) the room
+  falls back to `DISCONNECT` as before. A bot's `isAlly` also honours a mutual alliance the game
+  already has (lobby team, an alliance the leaver had made), so an inherited base does not turn on
+  its former allies.
+* Not done: the server has no end detection of its own (F49: the clients end the game and leave).
+  Real-client test pending.
 
 ### 19.7 Risks and open points
 

@@ -13,6 +13,7 @@ import { Game } from './game.js';
 import { Watchdog } from './watchdog.js';
 import { SyncCheck } from './synccheck.js';
 import { Recorder } from './recorder.js';
+import { Bots } from './mercenary.js';
 
 export { STATE, SLOT_TYPE, SLOTS };
 
@@ -54,6 +55,13 @@ export class Room {
       createGame: opts.engine?.createGame ?? null,
       loadMapJson: opts.engine?.loadMapJson ?? null,
     });
+    // the fake players in battle: rush + the 1000-money alliance (plan §19.8); need the engine
+    this.bots = new Bots(this);
+  }
+
+  /** The fake host's bot (AI Mercenary), for callers that only know about it. */
+  get mercenary() {
+    return this.bots.mercenary;
   }
 
   /** The engine factory ({ createGame, loadMapJson }) once it is loaded, or null when it is not available. */
@@ -168,11 +176,11 @@ export class Room {
 
   /**
    * What the hall shows about this room. `slots` is the number shown as the room's size: the map's
-   * player slots without Mercenary (fakes are idle bases, not participants); `seats` is what is
-   * really left for real players.
+   * player slots without the fake players (they are the server's, not seats); `seats` is what is
+   * really left for real players right now.
    */
   summary() {
-    return { id: this.id, map: this.map, state: this.state, players: this.clients.size, seats: this.seats(), slots: this.capacity - 1 };
+    return { id: this.id, map: this.map, state: this.state, players: this.clients.size, seats: this.seats(), slots: this.capacity - this.fakeSlots().length };
   }
 
   // ---- connections --------------------------------------------------------------------------
@@ -363,10 +371,16 @@ export class Room {
         this.say(`${name} left the lobby (${reason})`);
         break;
       case STATE.STARTING:
-      case STATE.RUNNING:
-        this.game.onClientLeft(client); // DISCONNECT inside the next sync frame (F19)
-        this.sync.onClientLeft(client, reason);
+      case STATE.RUNNING: {
+        this.bots.onClientLeft(client); // an alliance bought from a bot ends with the buyer
+        // the base becomes a server bot when the engine plays (§19.9); otherwise DISCONNECT hands it
+        // to the game's own AI on every client (F19)
+        const takenOver = this.bots.takeOver(client);
+        if (takenOver) client.pendingEchoes.clear();
+        else this.game.onClientLeft(client);
+        this.sync.onClientLeft(client, takenOver ? `${reason}; a bot took the base over` : reason);
         break;
+      }
       default:
         break;
     }
@@ -383,12 +397,16 @@ export class Room {
 
   reset() {
     this.log.info('room reset', { gamesPlayed: this.gamesPlayed });
-    if (this.state !== STATE.LOBBY) this.sync.stop('room reset');
+    if (this.state !== STATE.LOBBY) {
+      if (this.bots.active) this.log.info('bots summary', { bots: this.bots.summary() });
+      this.sync.stop('room reset');
+    }
     this.state = STATE.LOBBY;
     this.startingAt = 0;
     for (const c of this.clients) c.destroy();
     this.clients.clear();
     this.resetSlots();
+    this.bots.reset(); // one bot per (freshly placed) fake slot
     this.lobby.reset();
     this.game.reset();
   }
@@ -418,6 +436,7 @@ export class Room {
     this.sync.start(this.startSlots ?? this.slots);
     for (const c of this.players()) if (c.gamePlayer >= 0) this.sync.onMready(c, c.gamePlayer);
     this.game.start(now);
+    this.bots.onRunning();
     this.log.info('running', { game: this.gamesPlayed, players: this.players().length, tickMs: this.config.TICK_MS });
   }
 

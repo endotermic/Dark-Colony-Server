@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.js';
 
 test('config: fake player names and the MIN_PLAYERS limit', () => {
   const cfg = loadConfig({}, { FAKE_PLAYERS: 7, MIN_PLAYERS: 1 });
-  assert.deepEqual(cfg.FAKE_NAME_LIST, ['AI Mercenary', 'Renegade', 'Outlaw', 'Nomad', 'Drifter', 'Vagabond', 'Marauder']);
+  assert.deepEqual(cfg.FAKE_NAME_LIST, ['AI Mercenary', 'AI Marauder', 'Renegade', 'Outlaw', 'Nomad', 'Drifter', 'Vagabond']);
   assert.equal(loadConfig({}, { FAKE_PLAYERS: 3, FAKE_NAMES: 'AI Mercenary,X' }).FAKE_NAME_LIST[2], 'AI Mercenary 3');
   assert.throws(() => loadConfig({}, { FAKE_PLAYERS: 7, MIN_PLAYERS: 2 }), /MIN_PLAYERS/);
   assert.throws(() => loadConfig({}, { FAKE_PLAYERS: 8 }), /FAKE_PLAYERS/);

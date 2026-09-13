@@ -19,6 +19,16 @@ row shows your name; you can type it there.
 - It replaces the in-game host. Slot 0 is a fake human player, **AI Mercenary**, who greets every
   room with a chat line saying that it is an AI bot and the host; real players get random
   free slots, so their start positions differ from game to game.
+- **Two AI players, AI Mercenary and AI Marauder** (since 13 Sep 2026, when the server-side
+  engine is on): both rush (a worker on a vent, a barracks, cheap infantry and waves at the nearest
+  enemy base) and both sell an alliance: give one of them 1000 in the game's Diplomacy screen and it
+  is your ally with shared vision for two minutes (the bot sets the alliance in both directions, so
+  nothing to click). Money sent while it already has an ally comes back.
+  They are rivals of each other, so a lone player can fight both, buy one, or set them against each
+  other. The game itself ends a battle with Victory once every player still alive is allied, so
+  buying the alliance of every remaining bot wins the game. A player who leaves a battle is replaced
+  by another such bot playing that base. Every decision is announced in the battlefield chat.
+  `MERCENARY_AI=off` keeps the old idle bases, `FAKE_PLAYERS=1` removes the Marauder.
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
   first sees the room list in the lobby screen and picks a room with a chat command and READY; the
@@ -35,7 +45,7 @@ row shows your name; you can type it there.
   recorded games, see plan §18).
 - Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
   removed and announced to everybody else.
-- `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against idle bases.
+- `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against seven bots.
 
 Version 2.0 (September 2026) is a rewrite; version 1.x lives in the git history. Version 2.1 adds
 the rooms and the room-selection lobby; 2.2 the server-side battle engine (checksums in the sync
@@ -147,7 +157,7 @@ node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER/D4PLAY01.SC
    ```bash
    node src/index.js                                     # listens on 8888, seven rooms; one player may start alone
    LOG_LEVEL=debug node src/index.js                     # debug: every frame logged, full map view in battle
-   FAKE_PLAYERS=7 node src/index.js                      # solo game against seven idle fakes
+   FAKE_PLAYERS=7 node src/index.js                      # solo game against seven bots
    MIN_PLAYERS=2 node src/index.js                       # a battle needs at least two real players
    HALL=false node src/index.js                          # no room selection: straight into room 1
    ROOMS=D8PLAY01,J8PLAY02,D4PLAY01 node src/index.js    # three rooms with these maps

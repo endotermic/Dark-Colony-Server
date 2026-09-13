@@ -358,8 +358,11 @@ function loadBooms(json) {
 // | params[3]| +0x14  | int32[3] | kind 0/2: three values, kind 1: one value (+0x18/+0x1C stay 0)  |
 // | deps[5]  | +0x20  | int32[5] | dependency ids INCLUDING the -1 terminator, rest 0              |
 
+// `active`/`a`/`b`/`c` are the names city.js (depend.c) reads: +0x00, +0x14, +0x18, +0x1C. Until
+// 13 Sep 2026 the loader only wrote `defined` and `params`, so every dependency check on real
+// tables answered 2 (unavailable) — invisible to the checksum, fatal for a server-side bot.
 function zeroDepend(index) {
-  return { index, defined: 0, status: 0, cost: 0, button: 0, kind: 0, params: [0, 0, 0], deps: [0, 0, 0, 0, 0] };
+  return { index, defined: 0, active: 0, status: 0, cost: 0, button: 0, kind: 0, params: [0, 0, 0], a: 0, b: 0, c: 0, deps: [0, 0, 0, 0, 0] };
 }
 
 function loadDepend(json) {
@@ -371,6 +374,7 @@ function loadDepend(json) {
     if (r.index < 0) throw new Error(`depend item ${r.index}: negative id (the exe would write before the array)`);
     const d = items[r.index];
     d.defined = 1;
+    d.active = 1;
     d.status = 0;
     d.cost = r.cost;
     d.button = r.button;
@@ -378,6 +382,7 @@ function loadDepend(json) {
     if (r.kind === 0 || r.kind === 2) d.params = [r.params[0], r.params[1], r.params[2]];
     else if (r.kind === 1) d.params[0] = r.params[0];
     else throw new Error(`depend item ${r.index}: bad kind ${r.kind}`);
+    [d.a, d.b, d.c] = d.params;
     if (r.deps.length > MAX_DEPEND) throw new Error(`depend item ${r.index}: j<MAX_DEPEND`);
     for (let k = 0; k < r.deps.length; k++) d.deps[k] = r.deps[k];
   }

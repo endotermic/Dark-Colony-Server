@@ -29,8 +29,11 @@ export const DEFAULTS = Object.freeze({
   STRICT_SEQ: true,
   MERCENARY_NAME: 'AI Mercenary', // the fake host's display name (was 'Mercenary' until 12 Sep 2026)
   MERCENARY_RACE: 0, // race of every fake player: 0 Human, 1 Gray
-  FAKE_PLAYERS: 1, // fake human players including Mercenary (1..7); the rest of the slots are for real players
-  FAKE_NAMES: 'AI Mercenary,Renegade,Outlaw,Nomad,Drifter,Vagabond,Marauder,Raider',
+  // fake human players including Mercenary (1..7); the rest of the slots are for real players. Two since
+  // 13 Sep 2026 (maintainer): AI Mercenary and AI Marauder, both playing (MERCENARY_AI), so that a lone
+  // player can fight both, buy one, or set them against each other
+  FAKE_PLAYERS: 2,
+  FAKE_NAMES: 'AI Mercenary,AI Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
   FILL_EMPTY_WITH_AI: false,
   FILL_AI_TYPE: 0, // 0 easy, 1 hard
   ALLOW_PAUSE: true,
@@ -50,7 +53,15 @@ export const DEFAULTS = Object.freeze({
   // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every
   // tick, which RECORD_DIR/SYNC_CHECK=shadow compare with the engine. Real players never get slot 0.
   MERCENARY_SLOT: 0,
+  // The fake players in battle (13 Sep 2026, plan §19.8): `rusher` = every fake human plays a rush and
+  // sells an alliance (shared vision) for 1000 to whoever pays first; `off` = idle bases as before.
+  // Needs the engine (SYNC_CHECK shadow or send): their money and game player indices exist only there.
+  MERCENARY_AI: 'rusher',
+  MERCENARY_ALLY_S: 120, // seconds an alliance bought for 1000 lasts; later payments in that time are returned
+  MERCENARY_THINK_TICKS: 32, // decision interval of the rusher in game ticks (the original AI's 32)
 });
+
+export const MERCENARY_AI_MODES = ['off', 'rusher'];
 
 export const SYNC_CHECK_MODES = ['off', 'shadow', 'send'];
 
@@ -133,4 +144,8 @@ function validate(cfg) {
   cfg.SYNC_CHECK = String(cfg.SYNC_CHECK).trim().toLowerCase();
   if (!SYNC_CHECK_MODES.includes(cfg.SYNC_CHECK)) throw new Error(`SYNC_CHECK must be one of ${SYNC_CHECK_MODES.join(', ')}`);
   if (!Number.isInteger(cfg.MERCENARY_SLOT) || cfg.MERCENARY_SLOT < 0 || cfg.MERCENARY_SLOT > 7) throw new Error('MERCENARY_SLOT must be 0..7');
+  cfg.MERCENARY_AI = String(cfg.MERCENARY_AI).trim().toLowerCase();
+  if (!MERCENARY_AI_MODES.includes(cfg.MERCENARY_AI)) throw new Error(`MERCENARY_AI must be one of ${MERCENARY_AI_MODES.join(', ')}`);
+  if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');
+  if (!Number.isInteger(cfg.MERCENARY_THINK_TICKS) || cfg.MERCENARY_THINK_TICKS < 1) throw new Error('MERCENARY_THINK_TICKS must be >= 1');
 }

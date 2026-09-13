@@ -61,10 +61,13 @@ export class Lobby {
    */
   greeting() {
     const r = this.room;
-    return [
-      `Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`,
-      `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`,
-    ];
+    let merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`;
+    if (r.bots?.configured) {
+      const others = r.bots.others.map((b) => b.name);
+      const who = others.length ? `${others.join(', ')} and I rush; 1000 in battle buys an alliance` : 'I rush; 1000 in battle buys my alliance';
+      merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${who} for ${this.cfg.MERCENARY_ALLY_S} s.`;
+    }
+    return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`, merc];
   }
 
   /** The host's lobby state dump for a client in slot `s` (protocol doc §6.1), without the 'd'. */

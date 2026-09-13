@@ -530,7 +530,7 @@ export function objectDie(G, obj) {
   if (team <= 8) w8(gs, a + O.SELECT, u8(gs, a + O.SELECT) & ~((1 << team) & 0xff));
   if (obj < 120) {
     w32(gs, playerAddr(idiv(obj, 15)) + P.SLOT_HP + irem(obj, 15) * 4, 0);
-    City.depRecompute(G); // 0x437D00
+    City.depRecompute(G, i32(gs, GS.LOCAL_PLAYER)); // 0x437D00 (gs->local_player; display only)
     // 0x431F60(gs, type, 3, 1, x, z): death sound
   }
   const t = T(G, u8(gs, a + O.TYPE));

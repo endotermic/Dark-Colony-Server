@@ -233,7 +233,9 @@ test('tables: boom types (docs §2.4)', () => {
 
 test('tables: depend items (docs §15.1)', () => {
   const d0 = T.depend[0];
-  assert.deepEqual(d0, { index: 0, defined: 1, status: 0, cost: 2000, button: 206, kind: 0, params: [0, 0, 0], deps: [-1, 0, 0, 0, 0] });
+  assert.deepEqual(d0, { index: 0, defined: 1, active: 1, status: 0, cost: 2000, button: 206, kind: 0, params: [0, 0, 0], a: 0, b: 0, c: 0, deps: [-1, 0, 0, 0, 0] });
+  assert.deepEqual([T.depend[7].a, T.depend[7].b, T.depend[7].c], [6, 0, 0], 'the names city.js reads (depend.c +0x14/+0x18/+0x1C)');
+  assert.equal(T.depend[34].active, 0);
   assert.deepEqual(T.depend[3].deps, [2, 1, -1, 0, 0]);
   const d7 = T.depend[7]; // troop item: one param, +0x18/+0x1C stay 0
   assert.equal(d7.kind, 1);

@@ -18,7 +18,7 @@ test('the scenario title follows the game format so that the lobby finds the pla
 });
 
 test('a joiner gets the version first, then the host dump, in one write', () => {
-  const h = new Harness();
+  const h = new Harness({ FAKE_PLAYERS: 1 }); // the dump below is spelled out for the one fake
   const p = h.join('A');
   assert.equal(p.sock.out.length, 0); // everything was already read by the Peer constructor
   const cmds = p.takeCmds();
@@ -69,7 +69,7 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
 });
 
 test('slots 1..7 are handed out randomly and uniquely; the eighth connection is rejected', () => {
-  const h = new Harness();
+  const h = new Harness({ FAKE_PLAYERS: 1 });
   const peers = [];
   for (let i = 0; i < 7; i++) peers.push(h.join(`P${i}`));
   const slots = peers.map((p) => p.slot).sort();
@@ -84,7 +84,7 @@ test('slots 1..7 are handed out randomly and uniquely; the eighth connection is 
 });
 
 test('the injected random source picks the slot', () => {
-  const h = new Harness();
+  const h = new Harness({ FAKE_PLAYERS: 1 });
   h.randomSeq = [3, 0];
   const a = h.join('A');
   assert.equal(a.slot, 4); // free = [1..7], index 3
@@ -143,7 +143,7 @@ test('lobby policy: own slot only, host-owned settings dropped, CD flag rewritte
 });
 
 test('colour lock: cycling skips locked colours, READY on a taken colour is refused, a free colour makes it work', () => {
-  const h = new Harness({ MIN_PLAYERS: 3 });
+  const h = new Harness({ MIN_PLAYERS: 3, FAKE_PLAYERS: 1 });
   h.randomSeq = [0, 0]; // A -> slot 1 (colour 1), B -> slot 2 (colour 2)
   const a = h.join('A');
   const b = h.join('B');

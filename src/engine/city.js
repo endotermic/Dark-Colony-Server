@@ -228,6 +228,7 @@ export function depCheckTroop(G, player, item) {
  * the command handlers call it exactly where the original does (player == local player).
  */
 export function depRecompute(G, player) {
+  if (!(player >= 0 && player < 8)) return; // the server is nobody (local player -1): nothing to repaint
   const gs = G.gs;
   const pa = playerAddr(player);
   for (let i = 0; i < NUM_DEPEND; i++) {

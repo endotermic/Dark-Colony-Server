@@ -178,7 +178,13 @@ export class SyncCheck {
   onFrameIssued(a, until, groups) {
     const cmds = groups.length ? Buffer.concat(groups) : Buffer.alloc(0);
     this.recorder?.write({ type: 'frame', a, until, cmds: cmds.toString('hex') });
-    if (!this.active) return;
+    if (this.active) this.feed(until, cmds);
+    // the bots think on the freshly simulated state (or notice that the engine is gone); their
+    // commands go into the next frame
+    this.room.bots?.onAdvanced(this.engineTime);
+  }
+
+  feed(until, cmds) {
     const list = [];
     try {
       for (const c of splitCommands(cmds)) list.push(c.raw);
