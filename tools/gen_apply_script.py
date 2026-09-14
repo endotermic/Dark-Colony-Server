@@ -27,6 +27,54 @@ CD_BYTES = {'classic': [(0x431F, 0xEB), (0x509F, 0xEB)],
             'cw': [(0x431F, 0xEB), (0x781D9, 0x74), (0x507F, 0xEB)]}
 ORIGINALS = {'classic': os.path.join(GAME, 'DC - Classic', 'dc16original1998.exe'),
              'cw': os.path.join(GAME, 'DC - Council wars', 'engexp16original.exe')}
+GAME_DIR = {'classic': os.path.join(GAME, 'DC - Classic'), 'cw': os.path.join(GAME, 'DC - Council wars')}
+
+
+_LS_FILES = {}
+
+
+def _tree(g, *parts, pattern=None):
+    """Relative paths (backslashes, repository case) of the files the REPOSITORY holds under
+    <game>/<parts>, sorted - `git ls-files`, not the disk, so save games, minimap caches and other
+    files the game writes into those folders never end up in the list."""
+    if g not in _LS_FILES:
+        sub = os.path.relpath(GAME_DIR[g], GAME).replace('\\', '/')
+        r = subprocess.run(['git', '-C', GAME, 'ls-files', '--', sub], capture_output=True, text=True, check=True)
+        _LS_FILES[g] = [l[len(sub) + 1:] for l in r.stdout.splitlines() if l.startswith(sub + '/')]
+    prefix = '/'.join(parts) + '/' if parts else ''
+    out = []
+    for rel in _LS_FILES[g]:
+        if not rel.lower().startswith(prefix.lower()):
+            continue
+        name = rel.rsplit('/', 1)[-1]
+        if name.lower().endswith('.bak') or (pattern and not re.search(pattern, name, re.I)):
+            continue
+        out.append(rel.replace('/', '\\'))
+    return sorted(out, key=str.lower)
+
+
+def hd_data(g):
+    """Data files the 1024x768 exe needs (patches `resolution` + `hdpaths`): the INTRF_HD tree, the
+    re-baked logo banks and their FINs, and Council Wars' exp/intrf_hd overrides.  Enumerated from
+    the game repository at generation time so the list is exact."""
+    files = _tree(g, 'INTRF_HD') + _tree(g, 'SPRITES', pattern=r'_HD\.SPR$') + _tree(g, 'ANIMATE', pattern=r'_HD\.FIN$')
+    if g == 'cw':
+        files += _tree(g, 'exp', 'intrf_hd')
+    assert len(files) >= 60, (g, len(files))
+    return files
+
+
+def ozi_data(g):
+    """Data files the OZI MISSIONS mode needs: the whole ozi_ns/ overlay, the pack's base-set
+    additions in exp/ (animozi.dat, the new units, the tranozi transport) and the ozisave marker."""
+    files = _tree(g, 'ozi_ns') + _tree(g, 'ozisave')
+    files += _tree(g, 'exp', pattern=r'^animozi\.dat$')
+    files += _tree(g, 'exp', 'animate', pattern=r'^(dalg|spyo|reae|tranozi)\.fin$')
+    files += _tree(g, 'exp', 'sprites', pattern=r'^(dalg|spyo|reae|tranozi)\.spr$')
+    assert len(files) >= 390, (g, len(files))
+    return files
+
+
 TOOL_OF = {'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'ozi': 'patch_ozi_menu.py'}
@@ -182,6 +230,7 @@ to the menu; that one is inverted (75 -> 74, jne -> je).
 Nothing else changes: no code is added, no file access is redirected, one byte per site.'''),
  dict(id='resolution', name='1024x768 display', date='9 Sep 2026', tool='tools/patch_resolution.py (Dark-Colony-Server)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10', blocks=blocks_resolution,
+      requires=['hdpaths'], data=hd_data,
       desc='''The engine is hard-wired for 640x480: the DirectDraw display mode, the framebuffer stride
 (y*640 done as shl 7 + add), clip rectangles, the map viewport (20x15 tiles), the minimap
 position, the movie blit, the 44 code-positioned main-menu elements, the terrain light plane's
@@ -205,6 +254,7 @@ since 14 Sep 2026 in the INTRF_HD/ folder, read through the "Interface data from
 patch below (select both); with stock 640x480 data the menus draw in the top-left corner.'''),
  dict(id='hdpaths', name='Interface data from INTRF_HD (1024x768 files renamed)', date='14 Sep 2026', tool='tools/patch_hd_paths.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.17', blocks=blocks_hdpaths,
+      requires=['resolution'], data=hd_data,
       desc='''The 1024x768 menus, HUD frame, loading screens, briefing-marker lists and re-baked logo sprites
 used to replace the stock files under their stock names, so the untouched original exe could no
 longer run from the same folder.  They now live under their stock names in INTRF_HD/ (Council Wars
@@ -253,6 +303,7 @@ options screen and the speed negotiation read.  66 ms = 100 %, 44 ms = 150 % (th
 Cosmetic; pick it if you like the faster default.'''),
  dict(id='clock', name='Day/night clock hand re-anchored', date='13 Sep 2026', tool='tools/patch_clock.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.15', blocks=blocks_clock,
+      requires=['resolution'],
       desc='''The HUD's day/night hand is a sprite cell that clock.c blits by code with its bottom-right
 corner at (608,450) - two plain immediates that are neither 640 nor 480, so the resolution
 sweep did not touch them.  At 1024x768 that point lies inside the enlarged map view and the
@@ -270,6 +321,7 @@ per-frame restore path repairs the surfaces at the first frame.  The three push 
 absolute pointers, so their .reloc entries become type 0 ABSOLUTE padding.'''),
  dict(id='ozi', name='OZI MISSIONS menu mode (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.13', blocks=blocks_ozi, cw_only=True,
+      requires=['hdpaths'], data=ozi_data,
       desc='''Council Wars opens every data file through one helper that prefixes the name with the
 8-byte string at DGROUP 0x4826D0 ("exp/"); the wave loader has its own copy and the save
 folder name "esave" sits in two more slots.  A campaign *mode* is therefore the content of
@@ -443,6 +495,13 @@ W(r'''<#
     canonical order.  Use -All for every patch of the build.  With neither, the window opens
     (with the original preloaded when -Original was given).
 
+.PARAMETER IgnoreMissingData
+    Write the exe even though data files a chosen fix needs (the INTRF_HD folder, the ozi_ns
+    overlay, ...) are missing next to the output, or a fix the chosen ones depend on is not
+    selected.  Without it the script refuses, because such an exe fails at start-up or draws
+    garbage and the failure would look like a bug of the patch.  Each fix's Requires / Data
+    lists say what it needs; -List prints them.
+
 .PARAMETER Verify
     Instead of patching, inspect an existing exe: which build it is and which patches it carries.
 
@@ -471,6 +530,7 @@ param(
     [Parameter(ParameterSetName = 'Apply')] [switch] $All,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Overwrite,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Force,
+    [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreMissingData,
     [Parameter(ParameterSetName = 'List')] [switch] $List,
     [Parameter(ParameterSetName = 'List')] [switch] $Detail,
     [Parameter(ParameterSetName = 'Verify')] [string] $Verify
@@ -491,6 +551,7 @@ $Builds = @(
 
 for bd in build_data:
     B = bd['B']
+    g = B['g']
     W(f'''    # ---------------------------------------------------------------------------------------------
     #  {B['title']}
     # ---------------------------------------------------------------------------------------------
@@ -514,12 +575,22 @@ for bd in build_data:
             #  Changes    : {pd['nbytes']} bytes in {len(pd['edits']) + (1 if pd['special'] else 0)} edits''')
         for l in desc_lines:
             W(f'            #  {l}'.rstrip())
+        req = P.get('requires', [])
+        files = P['data'](g) if P.get('data') else []
         W(f'''            @{{
                 Id = {ps_str(P['id'])}; Name = {ps_str(P['name'])}; Date = {ps_str(P['date'])}
                 Tool = {ps_str(P['tool'])}; Doc = {ps_str(P['doc'])}
                 Description = @'
 {P['desc']}
 '@
+                # fixes that must be applied together with this one (the exe would not work otherwise)
+                Requires = @({', '.join(ps_str(r) for r in req)})
+                # data files this fix needs next to the exe ({len(files)}; listed from the repository when this
+                # script was generated) - the patcher refuses to write when any of them is missing
+                Data = @(''')
+        for fpath in files:
+            W(f'                    {ps_str(fpath)}')
+        W('''                )
                 Edits = @(''')
         for kind, off, old, new, note in pd['edits']:
             if pd['special'] and off > pd['special']['offset']:
@@ -669,6 +740,48 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     }
 }
 
+# The safeguard: before anything is written, every chosen fix must have (a) the fixes it depends on
+# chosen as well and (b) every data file it needs present under $GameDir (the folder the patched
+# exe will run from = where it is written).  Returns text lines describing the problems; empty = ok.
+# Without this an exe patched for 1024x768 in a folder without INTRF_HD/ fails at start-up or draws
+# the menus into the top-left corner, and the player would blame the patch.
+function Get-DataProblems($Build, [object[]] $Chosen, [string] $GameDir) {
+    $problems = @()
+    $chosenIds = @($Chosen | ForEach-Object { $_.Id })
+    foreach ($p in $Chosen) {
+        foreach ($need in @($p.Requires)) {
+            if ($chosenIds -notcontains $need) {
+                $other = $Build.Patches | Where-Object { $_.Id -eq $need }
+                $problems += ("fix '{0}' ({1}) only works together with fix '{2}' ({3}) - select both or neither" -f $p.Id, $p.Name, $need, $other.Name)
+            }
+        }
+        $missing = @()
+        foreach ($rel in @($p.Data)) { if (-not (Test-Path -LiteralPath (Join-Path $GameDir $rel))) { $missing += $rel } }
+        if ($missing.Count -gt 0) {
+            $total = 0; foreach ($d in @($p.Data)) { $total++ }
+            $shown = @($missing | Select-Object -First 8) -join ', '
+            if ($missing.Count -gt 8) { $shown += (', ... ({0} more)' -f ($missing.Count - 8)) }
+            $problems += ("fix '{0}' ({1}) needs {2} data files under '{3}', {4} are missing: {5}. Copy the game folder from the repository " +
+                          "(https://github.com/endotermic/Dark-Colony) or write the exe into the game folder there.") -f $p.Id, $p.Name, $total, $GameDir, $missing.Count, $shown
+        }
+    }
+    return $problems
+}
+
+# One-line summary of what a fix needs, for -List and the window.
+function Get-RequirementLines($Build, $Patch) {
+    $lines = @()
+    $req = @($Patch.Requires)
+    if ($req.Count -gt 0) { $lines += ('needs fix(es) ' + ($req -join ', ') + ' selected as well') }
+    $n = 0; $tops = @{}
+    foreach ($d in @($Patch.Data)) { $n++; $top = ($d -split '\\')[0]; if ($tops.ContainsKey($top)) { $tops[$top]++ } else { $tops[$top] = 1 } }
+    if ($n -gt 0) {
+        $parts = @($tops.Keys | Sort-Object | ForEach-Object { '{0}\ ({1})' -f $_, $tops[$_] })
+        $lines += ('needs {0} data files next to the exe: {1} - checked before writing' -f $n, ($parts -join ', '))
+    }
+    return $lines
+}
+
 function Write-PatchList([switch] $WithEdits) {
     foreach ($b in $Builds) {
         Write-Host ''
@@ -681,7 +794,11 @@ function Write-PatchList([switch] $WithEdits) {
             Write-Host ''
             Write-Host ("  {0}. [{1}] {2}  ({3}, {4} edits)" -f $n, $p.Id, $p.Name, $p.Date, (Get-EditCount $p)) -ForegroundColor Yellow
             foreach ($line in ($p.Description -split "`r?`n")) { Write-Host ("       " + $line) }
-            if ($WithEdits) { foreach ($line in (Get-EditLines $p)) { Write-Host ("       " + $line) -ForegroundColor DarkGray } }
+            foreach ($line in (Get-RequirementLines $b $p)) { Write-Host ("       * " + $line) -ForegroundColor Magenta }
+            if ($WithEdits) {
+                foreach ($line in (Get-EditLines $p)) { Write-Host ("       " + $line) -ForegroundColor DarkGray }
+                foreach ($d in @($p.Data)) { Write-Host ("       data  " + $d) -ForegroundColor DarkGray }
+            }
         }
     }
     Write-Host ''
@@ -869,6 +986,11 @@ function Show-PatcherWindow([string] $PreloadPath) {
             else { $para = if ($para) { "$para $l" } else { $l } }
         }
         if ($para) { $lines += $para }
+        $reqLines = @(Get-RequirementLines $g.Build $p)
+        if ($reqLines.Count -gt 0) {
+            $lines += @('', 'Prerequisites (checked before anything is written):')
+            foreach ($l in $reqLines) { $lines += ('  * ' + $l) }
+        }
         $lines += @('', 'Byte edits (file offset: old bytes -> new bytes):', '') + (Get-EditLines $p)
         $c.Info.Text = $lines -join "`r`n"
         $c.Info.SelectionStart = 0; $c.Info.SelectionLength = 0; $c.Info.ScrollToCaret()
@@ -890,6 +1012,15 @@ function Show-PatcherWindow([string] $PreloadPath) {
         if ((Test-Path $outPath) -and $confirmOverwrite) {
             $answer = [System.Windows.Forms.MessageBox]::Show($c.Form, "$outPath exists.`r`nReplace it?", 'Replace file?', 'YesNo', 'Question')
             if ($answer -ne 'Yes') { return $null }
+        }
+        $problems = @(Get-DataProblems $g.Build $chosen (Split-Path -Parent ([System.IO.Path]::GetFullPath($outPath))))
+        if ($problems.Count -gt 0) {
+            $c.Log.ForeColor = 'Firebrick'; $c.Log.Text = 'Nothing written: data files or dependent fixes are missing (see the message).'
+            [System.Windows.Forms.MessageBox]::Show($c.Form, (($problems | ForEach-Object { '* ' + $_ }) -join "`r`n`r`n") +
+                "`r`n`r`nAn exe written without them fails at start-up or draws garbage, which would look like a bug of the fix. " +
+                "Write the exe into the game folder from the repository, or run the script from the command line with -IgnoreMissingData.",
+                'Prerequisites missing - nothing written', 'OK', 'Warning') | Out-Null
+            return $null
         }
         try {
             $r = Invoke-PatchRun $g.Path $g.Build $chosen $outPath
@@ -978,6 +1109,17 @@ if (-not $Output) { $Output = Join-Path (Split-Path $origPath) $build.OutputName
 if ((Test-Path $Output) -and -not $Overwrite) { throw "output '$Output' exists; pass -Overwrite to replace it" }
 if ((Test-Path $Output) -and ((Resolve-Path $Output).Path -eq $origPath)) { throw 'refusing to overwrite the original' }
 
+$gameDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($Output))
+$problems = @(Get-DataProblems $build $chosen $gameDir)
+if ($problems.Count -gt 0) {
+    foreach ($pr in $problems) { Write-Warning $pr }
+    if (-not $IgnoreMissingData) {
+        throw ("nothing written: the chosen fixes need data files or other fixes that are not there (see the warnings above). " +
+               "An exe written anyway fails at start-up or draws garbage. Write it into the game folder from the repository, " +
+               "or pass -IgnoreMissingData if you know what you are doing.")
+    }
+    Write-Warning 'continuing because -IgnoreMissingData was given.'
+}
 Write-Host ''
 foreach ($p in @($available | Where-Object { $p = $_; ($chosen | Where-Object { $_.Id -eq $p.Id }) })) {
     Write-Host ("applying [{0,-10}] {1,-45} {2,3} edits" -f $p.Id, $p.Name, (Get-EditCount $p))

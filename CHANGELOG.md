@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Patcher safeguard** (14 Sep 2026, maintainer request; `tools/gen_apply_script.py`): every fix in
+  `Apply-DarkColonyPatches.ps1` now lists the fixes it only works together with (`Requires`) and the
+  data files it needs next to the exe (`Data`, enumerated from the repository with `git ls-files`:
+  60/65 files for 1024x768, 407 for OZI MISSIONS). Before writing, window and command line check both
+  and refuse with the list of what is missing, because an exe patched into a folder without
+  `INTRF_HD/` fails at start-up and looks like a bug of the patch. `-IgnoreMissingData` overrides on
+  the command line; `-List` shows the requirements.
+
 - **Game data: stock 640x480 and 1024x768 files side by side** (14 Sep 2026, maintainer request;
   `tools/split_hd_data.py`, `tools/patch_hd_paths.py`, doc `DC16_DISPLAY_AND_RESOLUTION.md` §10.17):
   the rebuilt menus, HUD frame, loading screens, briefing lists and re-baked logo sprites moved from
