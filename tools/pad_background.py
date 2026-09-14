@@ -62,7 +62,18 @@ import sys
 
 SIZE2 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$', re.M)
 SIZE4 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)([ \t]*\r?)$', re.M)
-BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/)?(\S+)', re.M | re.I)
+BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)', re.M | re.I)
+
+# Since 14 Sep 2026 the game folders hold the stock 640x480 files in INTRFACE / GAMESTAT and the
+# rebuilt 1024x768 files under the same names in INTRF_HD (Council Wars: exp/intrf_hd too), the
+# patched exe reads `intrf_hd/<name>` for exactly those files (patch_hd_paths.py) and the
+# original exe keeps working beside it.  Workflow for a rebuild: pad/paint a *copy* of the stock
+# game folder in place with this tool, paint_intro.py, logo_art.py and hud_layout.py as before,
+# then split_hd_data.py moves what differs from stock into INTRF_HD and retargets the
+# `background` lines.  `plan` / `verify` also accept an INTRF_HD folder directly: its GIFs are
+# looked up beside the scripts first and then in the sibling INTRFACE, its briefing lists are
+# the *SCENE.TXT files inside INTRF_HD itself.
+HD_DIR = 'intrf_hd'
 
 # Widget kinds whose 4th and 5th fields are x and y: <kind> <number> <desc> <x> <y> <w> <h> ...
 # `label` (static text: "Choose race", "Type in a name for your leader", "Rank", "ENTER SESSION
@@ -171,23 +182,35 @@ def scan_dialogs(intrface_dir, only=None):
     return out
 
 
-def base_intrface_dir(intrface_dir):
-    """For an `exp/intrface` override folder, the game root's INTRFACE; else None."""
+def base_intrface_dirs(intrface_dir):
+    """Where else a script's GIF may live: for an `exp/intrface` or `exp/intrf_hd` override folder
+    the game root's INTRF_HD and INTRFACE (in that order), for a root INTRF_HD the sibling
+    INTRFACE; else nothing."""
     d = os.path.abspath(intrface_dir)
     parent = os.path.dirname(d)
-    if os.path.basename(parent).lower() != OVERRIDE_PARENT:
-        return None
-    root = os.path.dirname(parent)
+    if os.path.basename(parent).lower() == OVERRIDE_PARENT:
+        root = os.path.dirname(parent)
+        wanted = (HD_DIR, 'intrface')
+    elif os.path.basename(d).lower() == HD_DIR:
+        root = parent
+        wanted = ('intrface',)
+    else:
+        return []
     names = {fn.lower(): fn for fn in os.listdir(root)}
-    fn = names.get('intrface')
-    return os.path.join(root, fn) if fn else None
+    return [os.path.join(root, names[w]) for w in wanted if w in names]
+
+
+def base_intrface_dir(intrface_dir):
+    """The game root's INTRFACE for an override folder (kept for callers that want one folder)."""
+    dirs = base_intrface_dirs(intrface_dir)
+    return dirs[-1] if dirs else None
 
 
 def find_gif(intrface_dir, name):
     """The background GIF `name` (as written in the script) beside the scripts, or in the base
-    INTRFACE when the scripts are `exp/` overrides. Case-insensitive; None if absent."""
+    INTRF_HD / INTRFACE when the scripts are `exp/` overrides. Case-insensitive; None if absent."""
     want = name.upper() + '.GIF'
-    for d in (intrface_dir, base_intrface_dir(intrface_dir)):
+    for d in [intrface_dir] + base_intrface_dirs(intrface_dir):
         if not d:
             continue
         names = {fn.upper(): fn for fn in os.listdir(d)}
@@ -197,7 +220,10 @@ def find_gif(intrface_dir, name):
 
 
 def gamestat_dir(intrface_dir):
-    """The sibling GAMESTAT folder, if this INTRFACE sits inside a game directory."""
+    """The sibling GAMESTAT folder, if this INTRFACE sits inside a game directory; an INTRF_HD
+    folder holds its own (letterboxed) *SCENE.TXT copies."""
+    if os.path.basename(os.path.abspath(intrface_dir)).lower() == HD_DIR:
+        return os.path.abspath(intrface_dir)
     parent = os.path.dirname(os.path.abspath(intrface_dir))
     names = {fn.lower(): fn for fn in os.listdir(parent)}
     fn = names.get('gamestat')

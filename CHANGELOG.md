@@ -4,6 +4,31 @@ Dates are the commit dates on `main`. Details of every finding and decision are 
 [`docs/RELAY_SERVER_PLAN.md`](docs/RELAY_SERVER_PLAN.md) (section 16 is the dated change log of the
 live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16_NETWORK_PROTOCOL.md).
 
+## Unreleased
+
+- **Game data: stock 640x480 and 1024x768 files side by side** (14 Sep 2026, maintainer request;
+  `tools/split_hd_data.py`, `tools/patch_hd_paths.py`, doc `DC16_DISPLAY_AND_RESOLUTION.md` §10.17):
+  the rebuilt menus, HUD frame, loading screens, briefing lists and re-baked logo sprites moved from
+  the stock names into `INTRF_HD/` (Council Wars also `exp/intrf_hd/`, `ozi_ns/intrf_hd/`;
+  `SPRITES/*_HD.SPR` + `ANIMATE/*_HD.FIN`), the stock files are back under their original names, and
+  the patched exes read `intrf_hd/...` through 30 rewritten path strings (patch id `hdpaths` in
+  `Apply-DarkColonyPatches.ps1`, regenerated). The untouched original exes now run from the same
+  folder. `build_ozi_overlay.py` writes the pack's screens and lists to `ozi_ns/intrf_hd/`;
+  `pad_background.py` accepts an `INTRF_HD` folder. First test: the Classic original runs; the
+  Council Wars original without its CD asserts on its own menu script (`widget.c` 152: the no-CD
+  path greys buttons the shipped `exp/intrface/bintroe` comments out - retail behaviour), a
+  CD-free 640x480 build (`-Patches cdcheck`, confirmed running) is left to the patcher and not
+  committed (maintainer decision), and Council Wars' own menu backdrops `exp/intrface/intrg.gif` /
+  `intro.gif` came from the CD. Both untouched originals run with the Council Wars CD image mounted
+  as `D:`. Rule since then: every file the original exes
+  read is byte-identical to the CD (inventory against the whole `/EXPENG/` tree). The OZI pack's base
+  set therefore moved off the stock names: `exp/anim.dat`, `tran.fin`, `tran.spr` are stock again,
+  the patched exe opens `exp/animozi.dat` (one more string edit in the `ozi` patch,
+  `patch_ozi_menu.py DGROUP_SITES`) with `tranozi.fin` / `tranozi.spr`, all written by
+  `build_ozi_overlay.py`. The original's CD test (`0x405E8C`) is documented: it needs
+  `<hbnfufl.a02 drive>:\dc\anim.dat` readable and the drive write-protected, which a mounted `.iso`
+  of the CD satisfies. OZI mode after the rename untested.
+
 ## 2.3 — 13 September 2026 (tag `v2.3.0`)
 
 The fake players play: two rusher bots (AI Mercenary, AI Marauder) that sell a two-minute alliance

@@ -7,21 +7,28 @@ layer).  Output is two things inside the Council Wars folder:
 
 1. Additions to the shared base set `exp/`, because the animation list, every FIN/SPR bank and the
    sound table are loaded once at start-up through the Council Wars prefix (patch_ozi_menu.py
-   explains why):
-     - the pack's three new units dalg / spyo / reae (FIN + SPR) and their `anim.dat` lines;
-     - the pack's transport `tran.fin` + `tran.spr` (a smoke animation and a real sprite for the
-       pack's "transmitter"/"Generator"; no Council Wars or Classic balance table uses TRAN);
-     - the main-menu label 8 "PLAY INTRO" -> "OZI MISSIONS" in `exp/intrface/bintroe`.
+   explains why).  Nothing the ORIGINAL exe reads is modified (maintainer requirement,
+   14 Sep 2026): `exp/anim.dat`, `tran.fin`, `tran.spr` stay stock, the patched exe opens
+   `exp/animozi.dat` instead (DGROUP string `anim.dat` -> `animozi.dat`, patch_ozi_menu.py):
+     - the pack's three new units dalg / spyo / reae (FIN + SPR), listed in `animozi.dat`;
+     - the pack's transport as `tranozi.fin` + `tranozi.spr` (bank field renamed; a smoke
+       animation and a real sprite for the pack's "transmitter"/"Generator"; no Council Wars or
+       Classic balance table uses TRAN), replacing the `tran.fin` line in `animozi.dat`;
+     - the main-menu label 8 "PLAY INTRO" -> "OZI MISSIONS" in `exp/intrf_hd/bintroe` (the
+       1024x768 override script; the stock `exp/intrface/bintroe` stays as it is for the
+       original exe, see split_hd_data.py).
    The sound table `sound2.dat` is left alone: it is a full 200-entry array and the pack's four
    replacements would overwrite gun sounds Council Wars uses.
 2. The overlay `ozi_ns/` (seven characters: it has to fit the 8-byte prefix slot in the exe) with
    everything the pack loads per game: 22 missions, balance tables, unit list, sound assignments,
    ambience, terrains (incl. the pack's gatlan / gjungle / special), story and credits texts.  The
    two scene lists are renamed `.kor` -> `.txt` (the Polish edition's extension; our exe appends
-   `.txt`).  Left out: the start-up-only files above (dead weight in the overlay), the pack's
-   640x480 interface screens (our 1024x768 menu, race-select and intro screens are copied in
-   instead, so pack mode looks identical), editor backups.  `ozisave/` is created for the pack's
-   own save games.
+   `.txt`) and written to `ozi_ns/intrf_hd/`, because the patched exe opens the briefing lists
+   as `intrf_hd/hxscene` (patch_hd_paths.py, 14 Sep 2026).  Left out: the start-up-only files
+   above (dead weight in the overlay), the pack's 640x480 interface screens (our 1024x768 menu,
+   race-select and intro screens are copied from `exp/intrf_hd` into `ozi_ns/intrf_hd` instead,
+   so pack mode looks identical), editor backups.  `ozisave/` is created for the pack's own
+   save games.
 
 The overlay only has to be complete relative to the game root, not to exp/: the pack was built on
 a Classic root and carries every Council Wars file its missions need (checked: the only exp/
@@ -42,11 +49,14 @@ import sys
 
 NEW_UNITS = ('dalg', 'spyo', 'reae')
 REPLACED = ('tran',)
+OZI_NAME = '%sozi'                  # pack version of a replaced stock bank: tran -> tranozi (7 chars)
+OZI_ANIM = 'animozi.dat'            # the patched exe's start-up list (patch_ozi_menu.py); anim.dat stays stock
 SKIP_DIRS = {'animate', 'sprites'}
 SKIP_FILES = {'anim.dat', 'telp.fin', 'sound/sound2.dat', 'intrface/maine', 'intrface/bintroe',
               'intrface/introe', 'intrface/shumane', 'intrface/intrg.gif', 'intrface/intro.gif'}
 SKIP_SUFFIXES = ('.bak', '.med')
 UI_FROM_EXP = ('bintroe', 'shumane', 'introe')
+HD_DIR = 'intrf_hd'                 # 1024x768 screens and briefing lists (split_hd_data.py / patch_hd_paths.py)
 OVERLAY = 'ozi_ns'
 SAVEDIR = 'ozisave'
 LABEL_OLD, LABEL_NEW = b'PLAY INTRO', b'OZI MISSIONS'
@@ -142,9 +152,17 @@ def base_set(game, pack, plan):
         spr = find_ci(os.path.join(pack, 'sprites'), unit + '.spr')
         if not fin or not spr:
             raise SystemExit('pack lacks %s.fin / %s.spr' % (unit, unit))
-        why = 'new unit' if unit in NEW_UNITS else 'replaces the unused stock transport'
-        plan.copy(fin, os.path.join(exp, 'animate', unit + '.fin'), why)
-        plan.copy(spr, os.path.join(exp, 'sprites', unit + '.spr'), why)
+        if unit in NEW_UNITS:
+            plan.copy(fin, os.path.join(exp, 'animate', unit + '.fin'), 'new unit')
+            plan.copy(spr, os.path.join(exp, 'sprites', unit + '.spr'), 'new unit')
+        else:
+            # The pack's transport replaces the stock one, but the stock files stay untouched for
+            # the original exe: the pack version goes in as <unit>ozi (bank field renamed, 7 chars
+            # + NUL: load_sprite_bank formats it as a C string) and only animozi.dat names it.
+            new = OZI_NAME % unit
+            data = open(fin, 'rb').read().replace(unit.encode().ljust(8, b'\0'), new.encode().ljust(8, b'\0'))
+            plan.write(os.path.join(exp, 'animate', new + '.fin'), data, "pack transport, bank '%s'" % new)
+            plan.copy(spr, os.path.join(exp, 'sprites', new + '.spr'), 'pack transport bank')
         for bank in fin_banks(fin):
             if bank.lower() == unit:
                 continue
@@ -152,24 +170,36 @@ def base_set(game, pack, plan):
                     or find_ci(os.path.join(game, 'SPRITES'), bank + '.spr')):
                 plan.notes.append('WARNING %s.fin needs sprite bank %s, not found' % (unit, bank))
 
-    anim = os.path.join(exp, 'anim.dat')
+    # exp/animozi.dat = the STOCK exp/anim.dat with the replaced units renamed and the new units
+    # appended; the patched exe opens it instead of anim.dat (patch_ozi_menu.py DGROUP_SITES).
+    anim = find_ci(exp, 'anim.dat')
     data = open(anim, 'rb').read()
     eol = b'\r\n' if b'\r\n' in data else b'\n'
-    have = {l.strip().lower() for l in data.split(eol)}
-    add = [u + '.fin' for u in NEW_UNITS if (u + '.fin').encode() not in have]
-    if add:
-        if not data.endswith(eol):
-            data += eol
-        data += eol.join(a.encode() for a in add) + eol
-        plan.write(anim, data, 'append ' + ', '.join(add))
+    lines = data.split(eol)
+    lines = [((OZI_NAME % l.strip().decode()[:-4]) + '.fin').encode() if l.strip().lower()[:-4].decode() in REPLACED
+             and l.strip().lower().endswith(b'.fin') else l for l in lines]
+    have = {l.strip().lower() for l in lines}
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [(u + '.fin').encode() for u in NEW_UNITS if (u + '.fin').encode() not in have]
+    plan.write(os.path.join(exp, OZI_ANIM), eol.join(lines) + eol,
+               'stock anim.dat + %s, %s' % (', '.join(OZI_NAME % u for u in REPLACED), ', '.join(NEW_UNITS)))
+    for stock in ('anim.dat', 'animate/tran.fin', 'sprites/tran.spr'):
+        p = find_ci(os.path.join(exp, *stock.split('/')[:-1]), stock.split('/')[-1])
+        if p and b'TRANSMOKEY' in open(p, 'rb').read() and stock != 'anim.dat':
+            plan.notes.append('WARNING exp/%s is the PACK version, restore the stock file (CD /EXPENG/EXP)' % stock)
+        if p and stock == 'anim.dat' and any(l.strip().lower() in {(u + '.fin').encode() for u in NEW_UNITS} for l in data.split(eol)):
+            plan.notes.append('WARNING exp/anim.dat lists pack units, restore the stock file (CD /EXPENG/EXP)')
 
-    menu = os.path.join(exp, 'intrface', 'bintroe')
+    menu = find_ci(os.path.join(exp, HD_DIR), 'bintroe')
+    if not menu:
+        raise SystemExit('missing exp/%s/bintroe (run split_hd_data.py first)' % HD_DIR)
     data = open(menu, 'rb').read()
     new = menu_script(data)
     if new != data:
         plan.write(menu, new, 'OZI MISSIONS (label 8), OZI LOAD (button 4 at 422,619), QUIT -> 645')
     if LABEL_NEW not in new or b'OZI LOAD' not in new:
-        plan.notes.append('WARNING exp/intrface/bintroe: menu rows not recognised, edit by hand')
+        plan.notes.append('WARNING exp/%s/bintroe: menu rows not recognised, edit by hand' % HD_DIR)
 
 
 MENU_ROWS = {
@@ -217,6 +247,9 @@ def overlay(game, pack, plan):
                 continue
             out = f[:-4] + '.txt' if key.startswith('gamestat/') and key.endswith('.kor') else f
             dst = os.path.join(dst_root, rel.replace('/', os.sep), out) if rel else os.path.join(dst_root, out)
+            if key.startswith('gamestat/') and 'scene' in key:
+                # the patched exe opens the briefing lists as `intrf_hd/<name>` + `.txt`
+                dst = os.path.join(dst_root, HD_DIR, out)
             produced.add(os.path.normcase(dst))
             if key.startswith('gamestat/') and 'scene' in key:
                 plan.write(dst, shift_scene_markers(open(os.path.join(dp, f), 'rb').read()),
@@ -224,10 +257,13 @@ def overlay(game, pack, plan):
             else:
                 plan.copy(os.path.join(dp, f), dst, 'overlay')
     for name in UI_FROM_EXP:
-        src = os.path.join(game, 'exp', 'intrface', name)
-        dst = os.path.join(dst_root, 'intrface', name)
+        src = find_ci(os.path.join(game, 'exp', HD_DIR), name)
+        if not src:
+            plan.notes.append('WARNING exp/%s/%s missing (run split_hd_data.py first)' % (HD_DIR, name))
+            continue
+        dst = os.path.join(dst_root, HD_DIR, name)
         produced.add(os.path.normcase(dst))
-        plan.copy(src, dst, '1024x768 screen from exp/')
+        plan.copy(src, dst, '1024x768 screen from exp/%s' % HD_DIR)
     # Briefings.  The scene loader plays `mission/h<n>` / `mission/g<n>` before every mission
     # through the wave loader, whose last resort after the overlay and the root is the CD path -
     # with no CD that is the "Please insert The Dark Colony Expansion Pak CD" prompt and an exit

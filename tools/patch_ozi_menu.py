@@ -236,6 +236,18 @@ def rebuild_reloc(data, relocs):
 
 
 # ------------------------------------------------------------------- checks
+# The start-up animation list is opened through the overlay helper as `anim.dat` (DGROUP 0x4824B8,
+# mode "rt" at 0x4824B4, reader 0x4051CC).  The pack's base set (three new units and its transport
+# `tranozi`) must not touch the stock `exp/anim.dat` / `tran.fin` / `tran.spr` that the ORIGINAL exe
+# reads (maintainer requirement 14 Sep 2026: every file the original reads stays original), so the
+# patched exe reads `exp/animozi.dat` instead: the 9-byte string has 3 bytes of slack before the
+# next string ("w" at 0x4824C4), which fits "animozi.dat" exactly.  build_ozi_overlay.py writes it.
+DGROUP_SITES = [
+    ('start-up animation list "anim.dat" -> "animozi.dat" (exp/animozi.dat = stock list + pack units)',
+     0x4824B8, [b'anim.dat\0\0\0\0'], b'animozi.dat\0'),
+]
+
+
 def resolve(data):
     sites, relocs = build()
     for va, s in zip(SLOTS, CW_STRINGS):
@@ -248,9 +260,18 @@ def resolve(data):
         off = va - AUTO_VA_TO_FILE
         have = bytes(data[off:off + len(new)])
         if have == new:
-            out.append((name, off, new, new, 'done'))
+            out.append((name, off, va, new, new, 'done'))
         elif have in olds:
-            out.append((name, off, have, new, 'stock' if have == olds[0] else 'v1'))
+            out.append((name, off, va, have, new, 'stock' if have == olds[0] else 'v1'))
+        else:
+            problems.append('%s @ file %#x: expected %s, found %s' % (name, off, olds[0].hex(), have.hex()))
+    for name, va, olds, new in DGROUP_SITES:
+        off = va - DGROUP_VA_TO_FILE
+        have = bytes(data[off:off + len(new)])
+        if have == new:
+            out.append((name, off, va, new, new, 'done'))
+        elif have in olds:
+            out.append((name, off, va, have, new, 'stock'))
         else:
             problems.append('%s @ file %#x: expected %s, found %s' % (name, off, olds[0].hex(), have.hex()))
     if problems:
@@ -280,8 +301,8 @@ def main(argv=None):
     if a.command == 'verify':
         return 0
 
-    for site, off, exp, new, kind in edits:
-        print('  %-56s file %#7x  VA %#x  %s' % (site, off, off + AUTO_VA_TO_FILE,
+    for site, off, va, exp, new, kind in edits:
+        print('  %-56s file %#7x  VA %#x  %s' % (site, off, va,
                                                   'done' if kind == 'done' else '%d bytes (%s)' % (len(new), kind)))
         if exp != new:
             print('      %s\n   -> %s' % (exp.hex(' '), new.hex(' ')))
@@ -296,7 +317,7 @@ def main(argv=None):
 
     bak = a.exe + '.ozi.bak'
     shutil.copyfile(a.exe, bak)
-    for site, off, exp, new, kind in edits:
+    for site, off, va, exp, new, kind in edits:
         data[off:off + len(new)] = new
     rebuild_reloc(data, relocs)
     open(a.exe, 'wb').write(data)

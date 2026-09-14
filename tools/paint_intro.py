@@ -52,6 +52,12 @@ none exists yet), re-bakes DCUK.SPR, DCUT.SPR and DCSS.SPR, and rewrites `bintro
 `BUTTONSE`, `DINTROE` and the `exp/intrface` overrides from their pristine copies.
 `pad_background.py` recognises the result (a script already at `size W H` for the target size)
 and leaves it alone; its `revert` restores the stock files.
+
+Since 14 Sep 2026 the game folders keep the stock files in INTRFACE / SPRITES and the 1024x768
+files in INTRF_HD / SPRITES/*_HD.SPR (doc 10.17, split_hd_data.py). Run this tool on a *copy* of
+the stock game folder (it works in place, as described above), then `split_hd_data.py apply` moves
+the results into INTRF_HD, renames the re-baked banks to DCSS_HD / DCUK_HD / DCUT_HD with matching
+ANIMATE/*_HD.FIN and retargets the scripts' `background` lines to `intrf_hd/`.
 """
 
 import argparse

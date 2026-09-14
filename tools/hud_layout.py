@@ -18,6 +18,10 @@ has to grow to 896x736, which means real artwork.
 The frame is 8.9% opaque; palette index 254 (black) is the erase colour that shows the map view
 through. Keep it exactly 254 in anything you draw, with no anti-aliasing at the hole boundary, or
 a halo appears along the edge of the map (section 10 stage 5 step 1).
+
+Since 14 Sep 2026 the rebuilt INTRFACE.GIF and MAINE ship in INTRF_HD/ (MAINE says
+`background intrf_hd/intrface`), the stock pair stays in INTRFACE/ for the original exe (doc
+10.17). Work on a copy of the stock INTRFACE folder and let split_hd_data.py move the results.
 """
 
 import argparse

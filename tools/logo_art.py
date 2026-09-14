@@ -25,7 +25,10 @@ letters with a hot highlight, the final letters. ANIMATE/DCUT.FIN is unchanged.
 
 Both `SPRITES/` (what the game draws through ANIMATE/*.FIN, see paint_intro.py) and `INTRFACE/`
 copies are written, with a .bak of the stock file beside each. paint_intro.py leaves the bank
-alone (SCREENS mode 'art'). Run order: paint_intro.py apply, then logo_art.py apply.
+alone (SCREENS mode 'art'). Run order: paint_intro.py apply, then logo_art.py apply, then (since
+14 Sep 2026, doc 10.17) split_hd_data.py, which turns the re-baked SPRITES/DCUT.SPR into
+SPRITES/DCUT_HD.SPR + ANIMATE/DCUT_HD.FIN and puts the stock bank back - work on a copy of the
+stock game folder.
 
 CLI
     python logo_art.py apply   GAME_DIR [--seed 3]

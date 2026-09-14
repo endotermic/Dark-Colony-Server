@@ -27,9 +27,10 @@ CD_BYTES = {'classic': [(0x431F, 0xEB), (0x509F, 0xEB)],
             'cw': [(0x431F, 0xEB), (0x781D9, 0x74), (0x507F, 0xEB)]}
 ORIGINALS = {'classic': os.path.join(GAME, 'DC - Classic', 'dc16original1998.exe'),
              'cw': os.path.join(GAME, 'DC - Council wars', 'engexp16original.exe')}
-TOOL_OF = {'resolution': 'patch_resolution.py', 'cursor': 'patch_cursor.py', 'pool': 'patch_pool.py',
-           'speed': 'patch_speed.py', 'clock': 'patch_clock.py', 'ddraw': 'patch_ddraw_lost.py', 'ozi': 'patch_ozi_menu.py'}
-PLAN_OF = {'resolution': 'resolution', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
+TOOL_OF = {'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
+           'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
+           'ddraw': 'patch_ddraw_lost.py', 'ozi': 'patch_ozi_menu.py'}
+PLAN_OF = {'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'ozi': 'ozi_menu'}
 _plans = {}
 
@@ -150,6 +151,13 @@ def blocks_clock(g):
     return [(int(m.group(1), 16), 4, 'clock_draw: imm32 of mov edx,ANCHOR_Y - bottom-right anchor y 450 (0x1C2) -> 738 (0x2E2)'),
             (int(m.group(2), 16), 4, 'clock_draw: imm32 of mov eax,ANCHOR_X - bottom-right anchor x 608 (0x260) -> 992 (0x3E0)')]
 
+def blocks_hdpaths(g):
+    t = plan(g, 'hd_paths'); out = []
+    for m in re.finditer(r'^\s+"([^"]+)" -> "([^"]+)"\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ 8 bytes: (.+)$', t, re.M):
+        out.append((int(m.group(3), 16), 8, 'DGROUP string "%s" -> "%s": %s' % (m.group(1), m.group(2), m.group(4).strip())))
+    assert len(out) == 30, len(out)
+    return out
+
 def blocks_cdcheck(g):
     if g == 'classic':
         return [(0x431F, 1, 'jne -> jmp right after "call 0x405E8C ; test al,al" (the CD-presence check returning a bool in al): always take the "CD present" path'),
@@ -192,9 +200,25 @@ Every edit swaps one immediate constant or one arithmetic opcode inside an exist
 instruction; no code is added and no instruction moves.  Council Wars is the same code at
 +0x60 (AUTO) / +0x28 (DGROUP) with three site fixups, hence the slightly different offsets.
 
-REQUIRES the rebuilt 1024x768 interface data (INTRFACE/, SPRITES/, the padded menu scripts)
-that ships in the repository next to the exe; with stock 640x480 data the menus draw in the
-top-left corner.'''),
+REQUIRES the rebuilt 1024x768 interface data that ships in the repository next to the exe -
+since 14 Sep 2026 in the INTRF_HD/ folder, read through the "Interface data from INTRF_HD"
+patch below (select both); with stock 640x480 data the menus draw in the top-left corner.'''),
+ dict(id='hdpaths', name='Interface data from INTRF_HD (1024x768 files renamed)', date='14 Sep 2026', tool='tools/patch_hd_paths.py',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.17', blocks=blocks_hdpaths,
+      desc='''The 1024x768 menus, HUD frame, loading screens, briefing-marker lists and re-baked logo sprites
+used to replace the stock files under their stock names, so the untouched original exe could no
+longer run from the same folder.  They now live under their stock names in INTRF_HD/ (Council Wars
+also exp/intrf_hd/ and ozi_ns/intrf_hd/), the stock 640x480 files are back in INTRFACE/ and
+GAMESTAT/, and the re-baked logo animations are SPRITES/DCSS_HD.SPR, DCUK_HD.SPR, DCUT_HD.SPR with
+matching ANIMATE/*_HD.FIN.  The game opens each of those files through a literal path in the data
+section ("intrface/bintro" plus the language letter, "gamestat/hscene" plus ".txt", ...), so this
+patch rewrites the 8-byte directory part of exactly the 30 strings whose files were rebuilt:
+"intrface" / "gamestat" -> "intrf_hd", same length, in place.  Fonts, text files, per-screen
+sprite lists without logo banks and every other file keep their stock path and single copy; the two
+lists that do name logo banks (INTRG.DAT, INTRO.DAT) are redirected to INTRF_HD copies that say
+dcuk_hd.fin etc.  No code changes.  With this patch dc16original1998.exe / engexp16original.exe
+(stock data) and the patched exe (INTRF_HD data) run side by side from one folder.  Only
+meaningful together with the 1024x768 patch, and REQUIRES the INTRF_HD/ folder from the repository.'''),
  dict(id='cursor', name='Windows pointer stays hidden', date='10 Sep 2026', tool='tools/patch_cursor.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.12', blocks=blocks_cursor,
       desc='''The game draws its own cursor and hides the Windows pointer with SetCursor(NULL), but two
@@ -264,18 +288,23 @@ the main menu:
     size field and the PE base-relocation directory size grow by 16, and 16 zero bytes of
     slack at the end of the .reloc section are dropped so the file size stays the same.  The
     two absolute operands that vanished with the old PLAY INTRO body become type 0 padding.
-REQUIRES the "DC - Council wars/ozi_ns/" overlay folder and the rewritten main-menu script
-(exp/intrface/bintroe) from the repository.  Because the .reloc insert shifts every later
-relocation entry, this patch is always applied last.'''),
+  * the start-up animation list is opened as "animozi.dat" instead of "anim.dat" (one 12-byte
+    string in the data section): exp/animozi.dat is the stock list plus the pack's three new
+    units and its transport as "tranozi", so the stock exp/anim.dat, tran.fin and tran.spr that
+    the original exe reads stay untouched.
+REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/animate/tranozi.fin,
+exp/sprites/tranozi.spr and the rewritten main-menu script (exp/intrf_hd/bintroe) from the
+repository.  Because the .reloc insert shifts every later relocation entry, this patch is always
+applied last.'''),
 ]
 
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16.exe', orig_name='dc16original1998.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes',
-      steps=['cdcheck', 'resolution', 'cursor', 'pool', 'speed', 'clock', 'ddraw']),
+      steps=['cdcheck', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw']),
  dict(id='CouncilWars', g='cw', exe='DCEXP16.EXE', orig_name='engexp16original.exe',
       title='Dark Colony - The Council Wars ENGEXP16.EXE (shipped as DCEXP16.EXE), 659968 bytes',
-      steps=['cdcheck', 'resolution', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
+      steps=['cdcheck', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
 ]
 
 def hexs(b):
@@ -423,7 +452,7 @@ W(r'''<#
     .\Apply-DarkColonyPatches.ps1 -List -Detail                 # every single byte edit
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Classic\dc16original1998.exe" -All
         (run from the root of the Dark-Colony repository, where this file lives)
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Classic\dc16original1998.exe" -Patches cdcheck,resolution,pool
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Classic\dc16original1998.exe" -Patches cdcheck,resolution,hdpaths,pool
     .\Apply-DarkColonyPatches.ps1 -Verify "DC - Classic\dc16.exe"
 
 .NOTES
