@@ -200,7 +200,8 @@ test('defaultRoomBases lists the seven default rooms, and maps/ holds exactly th
 });
 
 // The real files, when the game repository sits beside this one (as on the maintainer's machine).
-const REAL = path.resolve('..', 'Dark-Colony', 'DC - Classic', 'SCENARIO', 'MPLAYER', 'D8PLAY01.SCN');
+// Since 15 Sep 2026 the Classic game files live in the Council Wars folder (its root is the Classic data set).
+const REAL = path.resolve(process.env.DC_CLASSIC_DIR ?? path.join('..', 'Dark-Colony', 'DC - Council wars'), 'SCENARIO', 'MPLAYER', 'D8PLAY01.SCN');
 test('Armageddon converts as documented', { skip: !fs.existsSync(REAL) }, () => {
   const d = convertScenario(REAL);
   assert.equal(d.name, 'Armageddon');

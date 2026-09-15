@@ -97,7 +97,7 @@ All trademarks and copyrights are the property of their respective owners.
 
 Since 10 Sep 2026 this repository also holds the single-player side of the project, moved here from
 [Dark-Colony](https://github.com/endotermic/Dark-Colony) so that every note and tool about the game
-executable is in one place. The game files themselves (`DC - Classic/`, `DC - Council wars/`, the map
+executable is in one place. The game files themselves (`DC - Council wars/` - since 15 Sep 2026 the one folder both games run from; `DC - Classic/` was removed that day, everything it held is in the Council Wars folder - and the map
 editor) stay in Dark-Colony; the tools take a game directory or executable as an argument and need
 only a stock Python 3 (no third-party packages).
 
@@ -114,12 +114,12 @@ only a stock Python 3 (no third-party packages).
   [--out DIR] [--rooms] [--images] [--pretty]`; library + CLI, no dependencies). `maps/` holds the
   output for the seven maps of the default `ROOMS` only (plus `maps/index.json`); any other map is
   generated on request with the same command (maintainer decision, 11 Sep 2026).
-- `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `DCEXP16.EXE`
+- `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `engexp16new.exe`
   (verify / plan / apply, staged, byte-checked, keeps a `.bak`).
 - `tools/patch_cursor.py` - keeps the Windows mouse pointer hidden over the game window (the stock
   exe registers its window class with an uninitialised cursor handle and lets `DefWindowProc`
   restore it on every `WM_SETCURSOR`); verify / plan / apply, keeps a `.cursor.bak`.
-- `tools/patch_ozi_menu.py` - adds the "OZI MISSIONS" campaign mode to Council Wars' `DCEXP16.EXE`
+- `tools/patch_ozi_menu.py` - adds the "OZI MISSIONS" campaign mode to Council Wars' `engexp16new.exe`
   (the ozi_ns mission pack, 22 missions, selectable from the main menu in place of PLAY INTRO;
   verify / plan / apply, keeps a `.ozi.bak`); `tools/build_ozi_overlay.py` installs the pack's data
   (dry run / `--apply`). Section 10.13 of the display document explains both.
@@ -128,6 +128,9 @@ only a stock Python 3 (no third-party packages).
   the stock headroom (verify / plan / apply, keeps a `.pool.bak`).
 - `tools/patch_speed.py` - sets the default game speed (the tick length the game-state initialiser
   writes; 100 % -> 150 %) in both exes; the options slider still works (verify / plan / apply).
+- `tools/patch_movies.py` - makes the patched Classic exe play the Classic movies under their own
+  names (`AVI/DCINTRO.AVI`; the campaign lists in `INTRF_HD/` name `DCAENDING.AVI` / `DCHENDING.AVI`)
+  now that both games share the Council Wars folder (verify / plan / apply, Dark Colony only).
 - `tools/hud_layout.py` - redraws the in-game HUD frame for the new resolution (region geometry,
   tracing layers, the `MAINE` widget transform).
 - `tools/pad_background.py` - letterboxes the interface screens into a larger framebuffer (plan /
@@ -137,14 +140,14 @@ only a stock Python 3 (no third-party packages).
   `.SPR` sprite codec they share.
 
 ```bash
-python tools/patch_cursor.py verify "../Dark-Colony/DC - Classic/dc16.exe"
-python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
-python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
-python tools/patch_pool.py verify "../Dark-Colony/DC - Classic/dc16.exe"
-python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/DCEXP16.EXE"
+python tools/patch_cursor.py verify "../Dark-Colony/DC - Council wars/dc16new.exe"
+python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
+python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
+python tools/patch_pool.py verify "../Dark-Colony/DC - Council wars/dc16new.exe"
+python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
 python tools/build_ozi_overlay.py "../Dark-Colony/DC - Council wars"          # dry run
-node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER" --rooms --out maps   # regenerate maps/ (default rooms)
-node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER/D4PLAY01.SCN" > four_corners.json   # any other map, on request
+node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER" --rooms --out maps   # regenerate maps/ (default rooms)
+node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER/D4PLAY01.SCN" > four_corners.json   # any other map, on request
 ```
 
 ---

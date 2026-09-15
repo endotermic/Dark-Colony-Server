@@ -2,11 +2,11 @@
 //
 //   node tools/map2json.js <dir-or-.SCN> [...] [--out DIR] [--rooms] [--images] [--pretty]
 //
-//   node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER" --rooms --out maps
+//   node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER" --rooms --out maps
 //       the seven maps of the server's default ROOMS (src/config.js) -> maps/<BASE>.json + maps/index.json
-//   node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER" --out some/dir
+//   node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER" --out some/dir
 //       every scenario of the folder (not kept in the repository; generate on request)
-//   node tools/map2json.js "../Dark-Colony/DC - Classic/SCENARIO/MPLAYER/D8PLAY01.SCN"
+//   node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER/D8PLAY01.SCN"
 //       one scenario -> stdout
 //
 // A scenario is a set of files sharing a base name: .SCN (text: names, day/night, teams, objects),

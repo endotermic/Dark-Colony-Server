@@ -2346,6 +2346,89 @@ folder (GIFs looked up in the sibling `INTRFACE` as a fallback, lists inside the
 workflow from now on: pad/paint a **copy** of the stock game folder in place as before, then
 `split_hd_data.py` moves what differs into `INTRF_HD` and retargets the `background` lines.
 
+#### 10.18 One game folder: Classic lives in `DC - Council wars/` **(15 Sep 2026, maintainer decision; Classic original confirmed running there)**
+
+The Council Wars root has always been the complete Classic data set (the expansion is the `exp/`
+overlay), so the maintainer decided to retire the `DC - Classic/` folder. What changed:
+
+* **The untouched Classic exe is `DC - Council wars/dc16.exe`** — the 7 Jan 1998 build restored from
+  the game repository's first content commit (`02d62b2`, which shipped this very file in the Council
+  Wars folder as well; md5 `8fc93346…`, byte-identical to the former `DC - Classic/dc16original1998.exe`).
+  Its patched build is **`dc16new.exe`** beside it (`OutputName` of the Classic build in
+  `gen_apply_script.py`; the patcher rebuilds it byte-identically from `dc16.exe`, SHA-256 `0e9297c2…`,
+  checked under pwsh and PowerShell 5.1). The Council Wars pair was renamed the same day, the same
+  way: the untouched exe is back to its CD name **`ENGEXP16.EXE`** (was `engexp16original.exe`) and the
+  patched build is **`engexp16new.exe`** (was `DCEXP16.EXE` since 10 Sep 2026; earlier sections say
+  `DCEXP16` for it and its `+0x60` addresses). `Requires`/`Data` of the Classic fixes are now enumerated from the Council Wars folder
+  (60 files: `INTRF_HD\` 54, `SPRITES\` 3, `ANIMATE\` 3).
+* **Launched from that folder, the untouched Classic exe runs** (mode switch to 640×480, `error.log`
+  empty, exit 0 on quit) as long as a CD image with a `/DC/` tree is mounted on the drive named in
+  `HBNFUFL.A01` (`D:`; the Council Wars image has `/DC/ANIM.DAT`). Without it: "Please insert The
+  Dark Colony CD and Restart". The CD test needs `D:\dc\anim.dat` to open and `D:\dc\a<n>` to be
+  uncreatable (§10.17).
+* **Data copied from Classic** (every Classic file now has a byte-identical copy in the Council Wars
+  folder, checked by hashing both trees): `MISSION/` (30 briefing WAVs `H1..H15`, `G1..G15`, opened as
+  `mission/h%d` — without them a campaign mission made the wave loader fall back to the CD path and
+  quit), `ENCYCLO/` (75 files), `WALLPAPR/` (13 BMPs, not read by the exe), `SCENARIO/MULTI-~1/` (30
+  files: an older revision of seven jungle multiplayer maps, every `.MAP`/`.PTH`/`.SCN` differs from
+  `MPLAYER/`; never opened by the game, kept for the record), `SCENARIO/MPLAYER/PMAP.EXE` +
+  `PALETTE.GIF/RGB/RMP` + `PRIMES.DAT` + `J8PLAY07.MED`, `SCENARIO/ALL.JUS`, `VENT.JUS`, `DESERT.SET`,
+  `JUNGLE.SET` (map-editor files, no string for them in the exe), `DC16.ICO`, `ICON*.RC/RES`,
+  `SOUND/BEAT.WAV` (unreferenced; `SOUND2.DAT` names `BEAT2.WAV`), `INTRFACE/MULTIE~1.TXT`.
+* **Movies whose names clash**: Council Wars has its own `INTRO.AVI`, `AENDING.AVI`, `HENDING.AVI`,
+  so the Classic ones were added as **`AVI/DCINTRO.AVI`** (29.3 MB), **`DCAENDING.AVI`** (18.6 MB),
+  **`DCHENDING.AVI`** (20.5 MB). **Patch `movies`** (`patch_movies.py`, same day, Dark Colony only)
+  makes `dc16new.exe` play them. Only the intro is named in the exe: DGROUP `intro.avi` at
+  `0x004824A8` (file `0x7FCA8`), used by the start-up path `0x004053A7` and the PLAY INTRO handler
+  `0x004050FE` (`mov esi,4824A8h`), appended to `avi/` at `0x00482464`. Watcom aligned the next string
+  (`rt`, the fopen mode, at `0x004824B4`) to 4 bytes, so `intro.avi\0` + two padding zeros = 12 bytes
+  = `dcintro.avi\0`: rewritten in place, same address, no `.reloc` change (one 12-byte edit). The
+  endings are **data**: line 154 of the campaign lists `HSCENE.TXT` / `GSCENE.TXT` (`avi/hending.avi`
+  / `avi/aending.avi`, right after the last mission's `scenario/human/human15`), and the patched exe
+  reads those lists from `INTRF_HD/` (§10.17), where they now say `avi/dchending.avi` /
+  `avi/dcaending.avi`; the stock `GAMESTAT/` lists (read by the untouched exe, which therefore plays
+  Council Wars' movies in this folder) are unchanged. The tool refuses `DCEXP16.EXE` (its
+  `intro.avi` is the Council Wars intro) and edits the two lists only when `INTRF_HD/` exists beside
+  the exe, so the patcher generator's exe-only replay is unaffected. `dc16new.exe` SHA-256
+  `572646e4…` since. **Game test pending.** `split_hd_data.py` regenerates the INTRF_HD lists from
+  stock, so re-run `patch_movies.py apply` after any HD-data rebuild.
+* **Map editor in the same folder** (15 Sep 2026): `MAPED.EXE` (byte-identical to `DC\MAPED.EXE` on
+  the Dark Colony CD `DCUK`; the Council Wars CD carries no editor at all, and the Classic CD's
+  `EDITOR\` folder is just its InstallShield kit, `DATA.Z` 2.5 MB), the runtime `BWCC.DLL`,
+  `BWCC32.DLL`, `CW3215MT.DLL`, `readme.doc` and the fixed `maped_by_ozy_ns_v1.2PL.exe` (all from
+  the repository's `Dark Colony - Map editor/`, the installed result of that kit). The editor's own
+  `scenario/` mirror is content-identical to the game's `SCENARIO/`, so nothing else was needed.
+  Both CDs, for the record, carry `CVS/` folders in every data directory (developer leftovers).
+* **Name caveat (found in the smoke test, 15 Sep 2026):** the patched build was first called
+  `dc16patched.exe`. It starts (mode switch to 1024×768, `error.log` empty), but Windows'
+  installer-detection heuristic treats a manifest-less 32-bit exe whose file name contains "patch"
+  (also "setup", "update", "install") as a setup program: every launch showed a UAC prompt and the game
+  ran elevated (`Start-Process` reported "The operation was canceled by the user" when the prompt was
+  declined, and the running game could not be ended from a non-elevated process). The exe has no
+  manifest resource (`.rsrc` holds only the icon). The maintainer renamed it **`dc16new.exe`** the same
+  day; never use one of those words in a game exe name.
+* **Patcher resource check (15 Sep 2026, maintainer request):** `Apply-DarkColonyPatches.ps1` checks
+  every fix's `Data` files against the folder the exe is written to (`Get-UnavailableFixes`). A fix
+  whose files are missing, or which `Requires` such a fix (propagated until stable — `resolution` and
+  `hdpaths` require each other), is labelled `[RESOURCES NOT FOUND]` in the window, cannot be ticked
+  (the `ItemCheck` handler cancels the tick and the log line names the missing group), is skipped by
+  "Select all", and its panel opens with the reason; the check re-runs whenever the "Write to" path
+  changes. On the command line `-All` applies the available fixes and prints `skipping […] RESOURCES
+  NOT FOUND`; an explicit `-Patches` list naming an unavailable fix is still refused unless
+  `-IgnoreMissingData`. The resources are checked as separate groups: the interface files (60:
+  `INTRF_HD\` 54, `SPRITES\*_HD.SPR` 3, `ANIMATE\*_HD.FIN` 3) belong to `resolution`/`hdpaths`, the
+  three `AVI\DC*.AVI` to `movies` (the two INTRF_HD campaign lists it relies on are interface files),
+  the `ozi_ns` overlay + `exp/animozi.dat` etc. to `ozi`.
+* **`SCENARIO/HUMAN/HUMAN09.TRO` fixed**: the Council Wars copy (from the "real installation" commit
+  `e476eb4`) had `(b(1,3)&&==0)` in mission 9's trigger condition; the Classic copy has `(b(1,3)==0)`
+  and replaced it.
+* **Tools and tests**: `test/engine-anim.test.js`, `test/engine-tables.test.js`, `test/map2json.test.js`
+  read `DC - Council wars` (env `DC_CLASSIC_DIR` overrides); `data/classic/gamestat.json` /
+  `sprites.json` regenerated from it (only the recorded `source` folder name changed). Not copied:
+  the Classic `HBNFUFL.A01` (`d`; the Council Wars one says `D:`) and the untracked `.bak`
+  intermediates. `data/dc16-tables.json` / `dc16-vision.json` keep their historical "read from
+  `DC - Classic/dc16.exe`" note (the exe bytes are those of `dc16new.exe`).
+
 ## 11. Risks
 
 | Risk | Assessment |

@@ -11,7 +11,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const jsonPath = path.join(here, '..', 'data', 'classic', 'sprites.json');
 const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 const sprites = Anim.loadSprites(json);
-const gameDir = process.env.DC_CLASSIC_DIR ?? path.join(here, '..', '..', 'Dark-Colony', 'DC - Classic');
+// Since 15 Sep 2026 the Classic game files live in the Council Wars folder (its root is the Classic data set).
+const gameDir = process.env.DC_CLASSIC_DIR ?? path.join(here, '..', '..', 'Dark-Colony', 'DC - Council wars');
 const haveGame = fs.existsSync(path.join(gameDir, 'ANIM.DAT'));
 
 const typeIndex = (name) => json.types.findIndex((t) => t.name === name);

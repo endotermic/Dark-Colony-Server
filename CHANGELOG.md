@@ -6,6 +6,49 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **One game folder: Classic moves into `DC - Council wars/`, `DC - Classic/` removed** (15 Sep 2026, maintainer decision;
+  `tools/gen_apply_script.py`, the three tests that read the game folder, README). The untouched
+  Classic exe of 7 Jan 1998 is now `DC - Council wars/dc16.exe` (restored from the game repository's
+  first commit, byte-identical to the former `DC - Classic/dc16original1998.exe`) and the patcher
+  writes its patched build as `dc16new.exe` beside it (`OutputName`; all eight Classic fixes
+  still reproduce the published exe byte for byte, checked under pwsh and PowerShell 5.1). Everything
+  the Classic folder held that the Council Wars folder lacked was copied over (`MISSION/` briefings,
+  `ENCYCLO/`, `WALLPAPR/`, `SCENARIO/MULTI-~1/`, the `PMAP.EXE` map tool and its palette files, the
+  editor `.SET`/`.JUS` files, icon sources; the Classic movies that clash with Council Wars' own names
+  as `AVI/DCINTRO.AVI`, `DCAENDING.AVI`, `DCHENDING.AVI` for a future exe patch), and the Council
+  Wars copy of `SCENARIO/HUMAN/HUMAN09.TRO`, whose trigger condition carried a `&&==` typo, was
+  replaced by the Classic one. `test/engine-anim.test.js`, `test/engine-tables.test.js` and
+  `test/map2json.test.js` read `DC - Council wars` (override `DC_CLASSIC_DIR`); `data/classic/*.json`
+  regenerated from that folder (only the recorded source folder name changed). The untouched Classic
+  exe still needs a CD image with a `/DC/` tree on the drive named in `HBNFUFL.A01`.
+
+- **Classic movies under their own names** (15 Sep 2026; `tools/patch_movies.py`, patch id `movies`,
+  Dark Colony only, doc §10.18): `dc16new.exe` plays `AVI/DCINTRO.AVI` (the DGROUP string
+  `intro.avi` plus its two alignment padding zeros is exactly `dcintro.avi`, rewritten in place at
+  file `0x7FCA8`, no code or `.reloc` change) and the campaign lists `INTRF_HD/HSCENE.TXT` /
+  `GSCENE.TXT` (line 154) name `avi/dchending.avi` / `avi/dcaending.avi`; the stock `GAMESTAT/` lists
+  and Council Wars' own three movies are untouched. The tool refuses the Council Wars exe. Patcher
+  regenerated (Classic: nine fixes; `Data` = the three movies). Smoke test: the exe starts at 1024x768
+  with an empty `error.log`; the movies themselves are not yet checked in game. The patched build was
+  first named `dc16patched.exe`, which Windows' installer heuristic (manifest-less exe named `*patch*`)
+  takes for a setup program and runs elevated after a UAC prompt; the maintainer renamed it
+  **`dc16new.exe`** (patcher `OutputName`, docs and tests follow). The Council Wars pair follows the
+  same scheme: the untouched exe is back to its CD name **`ENGEXP16.EXE`** (was `engexp16original.exe`),
+  the patched build is **`engexp16new.exe`** (was `DCEXP16.EXE` since 10 Sep 2026); `git mv` in the game
+  repository, patcher regenerated, byte-identical rebuilds re-checked.
+
+- **Patcher: fixes without their resources are greyed out** (15 Sep 2026, maintainer request;
+  `tools/gen_apply_script.py` → `Get-UnavailableFixes`): the window checks every fix's `Data` files
+  against the "Write to" folder (re-checked when the path changes); a fix whose files are missing, or
+  which requires such a fix, is labelled `[RESOURCES NOT FOUND]`, cannot be ticked, is skipped by
+  "Select all" and explains itself in the detail panel. `-All` applies the available fixes and prints
+  the skipped ones; an explicit `-Patches` naming one is still refused unless `-IgnoreMissingData`.
+  Resources are checked as separate groups: interface files (`INTRF_HD\`, `*_HD` sprites/FINs) on
+  `resolution`/`hdpaths`, the `AVI\DC*.AVI` movies on `movies`, the `ozi_ns` overlay on `ozi`. Also copied into the Council Wars folder: the map editor `MAPED.EXE` (byte-identical
+  to `DC\MAPED.EXE` on the Dark Colony CD; the Council Wars CD has no editor, the Classic CD's
+  `EDITOR\` folder is only its InstallShield kit), `BWCC.DLL`, `BWCC32.DLL`, `CW3215MT.DLL`,
+  `readme.doc` and `maped_by_ozy_ns_v1.2PL.exe`.
+
 - **Patcher safeguard** (14 Sep 2026, maintainer request; `tools/gen_apply_script.py`): every fix in
   `Apply-DarkColonyPatches.ps1` now lists the fixes it only works together with (`Requires`) and the
   data files it needs next to the exe (`Data`, enumerated from the repository with `git ls-files`:
