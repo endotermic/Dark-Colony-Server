@@ -26,13 +26,16 @@ OUT = sys.argv[2]
 WORK = tempfile.mkdtemp(prefix='dcpatch_')
 
 CD_BYTES = {'classic': [(0x431F, 0xEB), (0x509F, 0xEB)],
-            'cw': [(0x431F, 0xEB), (0x781D9, 0x74), (0x507F, 0xEB)]}
+            'cw': [(0x431F, 0xEB), (0x781D9, 0x74), (0x507F, 0xEB)],
+            'maped': []}                       # the map editor has no CD check; its build starts at its first tool step
 # Since 15 Sep 2026 both games run from the Council Wars folder (maintainer decision): the originals keep
 # their stock names, "DC - Council wars/dc16.exe" and "ENGEXP16.EXE", and the patched builds are
 # "dc16new.exe" and "engexp16new.exe" beside them (the latter was DCEXP16.EXE from 10 to 15 Sep 2026).
 ORIGINALS = {'classic': os.path.join(GAME, 'DC - Council wars', 'dc16.exe'),
-             'cw': os.path.join(GAME, 'DC - Council wars', 'ENGEXP16.EXE')}
-GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.join(GAME, 'DC - Council wars')}
+             'cw': os.path.join(GAME, 'DC - Council wars', 'ENGEXP16.EXE'),
+             'maped': os.path.join(GAME, 'Dark Colony - Map editor', 'maped.exe')}
+GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.join(GAME, 'DC - Council wars'),
+            'maped': os.path.join(GAME, 'Dark Colony - Map editor')}
 
 
 _LS_FILES = {}
@@ -82,13 +85,22 @@ def ozi_data(g):
 
 TOOL_OF = {'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
-           'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'ozi': 'patch_ozi_menu.py'}
+           'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'ozi': 'patch_ozi_menu.py',
+           # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
+           'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
+           'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'ozi': 'ozi_menu'}
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'ozi': 'ozi_menu',
+           'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
+PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
 _plans = {}
 
-def run_tool(tool, cmd, exe):
-    r = subprocess.run([sys.executable, os.path.join(TOOLS, tool), cmd, exe], capture_output=True, text=True)
+def tool_of(step):
+    t = TOOL_OF[step]
+    return (t, []) if isinstance(t, str) else t
+
+def run_tool(tool, cmd, exe, args=()):
+    r = subprocess.run([sys.executable, os.path.join(TOOLS, tool), cmd, exe, *args], capture_output=True, text=True)
     if cmd == 'apply' and r.returncode != 0:
         raise SystemExit(f'{tool} apply failed on {exe}:\n{r.stdout}\n{r.stderr}')
     return r.stdout + r.stderr
@@ -103,15 +115,22 @@ def replay(g, steps):
         cur[off] = v
     open(work, 'wb').write(cur)
     # plans: patch_resolution identifies builds by MD5 and wants the CD-fixed exe; the others take the original
-    _plans[(g, 'resolution')] = run_tool('patch_resolution.py', 'plan', work)
+    if 'resolution' in steps:
+        _plans[(g, 'resolution')] = run_tool('patch_resolution.py', 'plan', work)
     orig_copy = os.path.join(WORK, f'{g}_orig.exe')
     open(orig_copy, 'wb').write(orig)
-    for step, tool in TOOL_OF.items():
-        if step != 'resolution' and step in steps:
-            _plans[(g, PLAN_OF[step])] = run_tool(tool, 'plan', orig_copy)
-    states = [('cdcheck', bytes(cur))]
-    for step in steps[1:]:
-        run_tool(TOOL_OF[step], 'apply', work)
+    for step in steps:
+        if step in ('cdcheck', 'resolution') or (g, PLAN_OF[step]) in _plans:
+            continue
+        tool, _args = tool_of(step)
+        _plans[(g, PLAN_OF[step])] = run_tool(tool, 'plan', orig_copy, PLAN_ARGS.get(PLAN_OF[step], []))
+    states = [('cdcheck', bytes(cur))] if CD_BYTES[g] else []
+    assert (steps[0] == 'cdcheck') == bool(CD_BYTES[g]), (g, steps[0])
+    for step in steps:
+        if step == 'cdcheck':
+            continue
+        tool, args = tool_of(step)
+        run_tool(tool, 'apply', work, args)
         states.append((step, open(work, 'rb').read()))
     return orig, states
 
@@ -218,6 +237,16 @@ def movie_data(g):
     for f in files:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), f
     return files
+
+def blocks_maped(fix):
+    """Block parser factory for the map-editor fixes: lines `  [<fix>] <note>  file 0x.. 1 byte: 58 -> 50`."""
+    def blocks(g):
+        out = []
+        for m in re.finditer(r'^\s+\[' + re.escape(fix) + r'\] (.+?)\s+file 0x([0-9a-f]+) 1 byte: ([0-9a-f]{2}) -> ([0-9a-f]{2})\s*$', plan(g, 'maped'), re.M):
+            out.append((int(m.group(2), 16), 1, m.group(1).strip(), bytes.fromhex(m.group(3)), bytes.fromhex(m.group(4))))
+        assert out, fix
+        return out
+    return blocks
 
 def blocks_hdpaths(g):
     t = plan(g, 'hd_paths'); out = []
@@ -384,6 +413,37 @@ REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/an
 exp/sprites/tranozi.spr and the rewritten main-menu script (exp/intrf_hd/bintroe) from the
 repository.  Because the .reloc insert shifts every later relocation entry, this patch is always
 applied last.'''),
+ # ---- map editor (maped.exe): the functional part of the ozi_ns editor, without its Polish resources
+ dict(id='blocksets', name='New Map: Atlantis, Training and Special block sets selectable', date='15 Sep 2026', tool='tools/patch_maped.py --fix blocksets',
+      doc='CLAUDE.md "Map editor notes" (Dark-Colony-development)', blocks=blocks_maped('blocksets'), editor_only=True,
+      desc='''The original editor greys out three of the five block-set buttons of the New Map dialog: Atlantis,
+Training Set and Special Set (the WS_DISABLED style bit, 0x08000000, is set in the dialog template).
+The code behind them is complete - the dialog's command table routes the three buttons to block sets
+2, 3 and 4 (atlantis.bts, htrain.bts, special.bts) exactly like Desert and Jungle - so this fix only
+clears that bit: one byte per button, in the DIALOG resource, no code changes.  This is what the
+"ozi_ns" editor did (together with a Polish translation and a renamed title, which stay out here).
+
+The editor loads the block set's palette window from scenario\\<set>.set and its tiles from
+<set>.bts.  The game itself ships only desert and jungle; atlantis.set, trainh.set, special.set and
+special.bts come with the ozi_ns mission pack.  Without them the editor answers "Can't open file" when
+one of the three buttons is pressed - nothing worse.'''),
+ dict(id='teams', name='Team Attributes: Team Colour and Allies selectable', date='15 Sep 2026', tool='tools/patch_maped.py --fix teams',
+      doc='CLAUDE.md "Map editor notes" (Dark-Colony-development)', blocks=blocks_maped('teams'), editor_only=True,
+      desc='''The Team Attributes dialog ships with its Team Colour group (eight radio buttons) and its Allies group
+(eight radio buttons) greyed out.  The dialog procedure reads both groups and writes them to the
+scenario (%TeamColour, %TeamAllies) - the code was always there.  This fix clears WS_DISABLED on the
+sixteen radio buttons and the two group boxes: 18 single-byte edits in the DIALOG resource.  The
+AI Slots group of the same dialog stays disabled, as in every version of the editor.'''),
+ dict(id='healer', name='Troop Attributes: Healer row usable', date='15 Sep 2026', tool='tools/patch_maped.py --fix healer',
+      doc='CLAUDE.md "Map editor notes" (Dark-Colony-development)', blocks=blocks_maped('healer'), editor_only=True,
+      desc='''In the Troop Attributes dialog the Healer row - its select radio button and its hit-points edit - is
+greyed out, although the dialog procedure reads the edit like those of the other units and the game
+knows the healing units (GAMESTAT.TXT rows 49 and 50).  Two single-byte edits clear WS_DISABLED.'''),
+ dict(id='troopsframe', name='Troop Attributes: close box instead of sizing border', date='15 Sep 2026', tool='tools/patch_maped.py --fix troopsframe',
+      doc='CLAUDE.md "Map editor notes" (Dark-Colony-development)', blocks=blocks_maped('troopsframe'), editor_only=True,
+      desc='''Cosmetic, taken over from the ozi_ns editor: the Troop Attributes dialog's frame style changes from
+WS_THICKFRAME (a sizing border, useless for a fixed layout) to WS_SYSMENU (a title-bar close box).
+One byte in the DIALOG template's style dword.'''),
 ]
 
 BUILDS = [
@@ -393,6 +453,9 @@ BUILDS = [
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
       steps=['cdcheck', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
+ dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
+      title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
+      steps=['blocksets', 'teams', 'healer', 'troopsframe']),
 ]
 
 def hexs(b):
@@ -511,7 +574,10 @@ W(r'''<#
     run from): "dc16.exe" (the untouched Dark Colony exe of the January 1998 update, 6 sections, entry
     point 0x4528DE; its patched build is written as "dc16new.exe") and "ENGEXP16.EXE"
     (ENGEXP16.EXE from the Council Wars CD; patched build "engexp16new.exe").  Both are committed untouched
-    in the repository.
+    in the repository.  The third build is the map editor "Dark Colony - Map editor\maped.exe" (the
+    original from the Dark Colony CD): its fixes clear the "disabled" flag on dialog controls the
+    original greyed out - the functional part of the ozi_ns editor, without the Polish translation -
+    and write "maped_ozi_ns_v1.2.exe".
 
     The script is complete in itself: it uses nothing but the .NET classes that ship with Windows
     PowerShell 5.1 / PowerShell 7 (System.IO.File, System.Security.Cryptography.SHA256, Windows Forms).
@@ -526,10 +592,11 @@ W(r'''<#
     patch in the fixed order below), and the sum of all patches is exactly the shipped exe.
 
 .PARAMETER Original
-    Path of the untouched original executable (dc16.exe or ENGEXP16.EXE).
+    Path of the untouched original executable (dc16.exe, ENGEXP16.EXE or the map editor's maped.exe).
 
 .PARAMETER Output
-    Where to write the patched copy.  Default: dc16new.exe / engexp16new.exe next to the original.
+    Where to write the patched copy.  Default: dc16new.exe / engexp16new.exe / maped_ozi_ns_v1.2.exe
+    next to the original.
     An existing file is not overwritten unless -Overwrite is given.
 
 .PARAMETER Patches
@@ -556,6 +623,7 @@ W(r'''<#
         (run from the root of the Dark-Colony repository, where this file lives; writes dc16new.exe)
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches cdcheck,resolution,hdpaths,pool
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All
+    .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> maped_ozi_ns_v1.2.exe)
     .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\dc16new.exe"
 
 .NOTES
@@ -905,7 +973,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
 
     $lblStatus = New-Object System.Windows.Forms.Label
     $lblStatus.Location = '110,40'; $lblStatus.Size = '860,36'; $lblStatus.Anchor = 'Top,Left,Right'
-    $lblStatus.Text = 'Pick dc16.exe (Dark Colony) or ENGEXP16.EXE (Council Wars) from the "DC - Council wars" folder - both are in the repository, untouched.'
+    $lblStatus.Text = 'Pick dc16.exe (Dark Colony) or ENGEXP16.EXE (Council Wars) from the "DC - Council wars" folder, or maped.exe from "Dark Colony - Map editor" - all three are in the repository, untouched.'
 
     # --- left: the fixes
     $grpFix = New-Object System.Windows.Forms.GroupBox
@@ -984,7 +1052,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $c.In.Text = $path
         if (-not $build) {
             $c.Status.ForeColor = 'Firebrick'
-            $c.Status.Text = "Not a build this script knows ($($data.Length) bytes). Use dc16.exe or ENGEXP16.EXE from the repository's DC - Council wars folder."
+            $c.Status.Text = "Not a build this script knows ($($data.Length) bytes). Use dc16.exe or ENGEXP16.EXE from the repository's DC - Council wars folder, or maped.exe from Dark Colony - Map editor."
             $c.List.Enabled = $false; $c.All.Enabled = $false; $c.Apply.Enabled = $false
             return
         }
@@ -1204,7 +1272,7 @@ Write-Host ("        {0} bytes, SHA-256 {1}" -f $data.Length, $sha)
 $build = Find-BuildBySha $sha
 if (-not $build) {
     $build = Find-BuildByContent $data
-    if (-not $build) { throw "This is not one of the two known original executables (size / layout mismatch)." }
+    if (-not $build) { throw "This is not one of the three known original executables (size / layout mismatch)." }
     if (-not $Force) {
         throw ("The SHA-256 is not that of the untouched {0} original. Start from {1} (in the repository), " +
                "or pass -Force to rely on the per-byte checks alone.") -f $build.Id, $build.OriginalName

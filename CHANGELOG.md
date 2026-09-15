@@ -40,6 +40,20 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   stays in `Dark Colony - Map editor/` (the Council Wars CD has no editor, the Classic CD's is
   byte-identical to that folder's `maped.exe`).
 
+- **Map editor build in the patcher** (15 Sep 2026; `tools/patch_maped.py`, `gen_apply_script.py` third
+  build `MapEditor`): a section-by-section diff showed that the ozi_ns editor
+  `maped_by_ozy_ns_v1.2PL.exe` has byte-identical CODE/`.idata`/`.edata`/`.reloc`/`.debug` sections -
+  no code fix; besides Polish DIALOG/MENU texts, an icon and retitled strings its only functional change
+  is the `WS_DISABLED` bit (0x08000000) cleared on controls the original greyed out. The patcher now
+  rebuilds exactly that, English, from `Dark Colony - Map editor\maped.exe` into
+  `maped_ozi_ns_v1.2.exe`: fixes `blocksets` (New Map: Atlantis / Training Set / Special Set buttons,
+  routed by the WM_COMMAND table at `0x4122A5` to `atlantis/htrain/special.bts`), `teams` (Team Colour +
+  Allies radio groups, read by the RACE procedure `0x41E7B9`), `healer` (Troop Attributes Healer row,
+  edit read at `0x41FE16`), `troopsframe` (THICKFRAME -> SYSMENU); 24 one-byte edits located by walking
+  the resource tree and the DLGTEMPLATEs. The generator learned builds without a CD-check step and
+  per-step tool arguments. The unlocked block sets need `scenario\atlantis.set`, `trainh.set`,
+  `special.set`, `special.bts` from the ozi_ns pack (not in the repository).
+
 - **Patcher: fixes without their resources are greyed out** (15 Sep 2026, maintainer request;
   `tools/gen_apply_script.py` → `Get-UnavailableFixes`): the window checks every fix's `Data` files
   against the "Write to" folder (re-checked when the path changes); a fix whose files are missing, or
