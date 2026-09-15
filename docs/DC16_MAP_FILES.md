@@ -102,7 +102,7 @@ Size = `776 + 1028*tile_count` (all four Classic sets check). The loader builds
 looked up through it (`0x452F2C`–`0x453297`, table argument `[ebp+10h]`). So the numbers in the
 `.MAP` (and in the JSON) are editor indices in `0..remap_count-1`, not positions in the tile bank;
 the JSON keeps them unchanged. `.SET` files beside the `.BTS` are the editor's own block sets
-(`\scenario\desert.set`, `LoadBlockSet`), unused by the game.
+(`\scenario\desert.set`, `LoadBlockSet`), unused by the game; their format is in section 3.3.
 
 ### 3.2 The attribute word
 
@@ -118,6 +118,56 @@ the JSON keeps them unchanged. `.SET` files beside the `.BTS` are the editor's o
 
 `attr >> 10` is not a property of the tile (1 623 of 1 969 background tiles occur with more than
 one class); it is a per-cell value the editor writes. The JSON keeps the raw word.
+
+### 3.3 `.SET` — the map editor's block set **(verified by data, 15 Sep 2026)**
+
+The editor paints terrain only from prefabricated *blocks*: the "Block Type" toolbar buttons (types
+0..17 with names in the `MAINMENU` resource - 0 Default, 1 Land, 2 CoastLine, 3 Forest, 4 Cliffs,
+5 Blocking, 6 Objects, 7 Buildings, 8 Runes, 9 Misc, 10..13 Cliff Front/Back/Right/Left, 14..17 River
+Vertical/Horizontal/Right/Left; `TOOLMAIN` has seven more unlabelled buttons, ids 137..143) filter the
+left-hand block pane, and a click pastes the selected block. The New Map dialog (`MAPSIZE`, controls
+14 Desert, 15 Jungle, 16 Atlantis, 21 Training Set, 22 Special Set) makes `LoadBlockSet` read
+`\scenario\desert.set`, `jungle.set`, `atlantis.set`, `trainh.set` or `special.set` (plus the matching
+`.bts`) from the editor's folder into a **static array of 1000 blocks** (`0x43599C`, `count * 0xC8C`
+bytes, count kept at `0x745C7C`). The game never opens a `.SET`. Only `desert.set` and `jungle.set`
+were ever shipped (the CD's `EDITOR\` kit has the same two); the ozi_ns pack's `atlantis.set` (2009)
+is `jungle.set` with the tile numbers of 189 of its 628 blocks renumbered, and 535 of its blocks still
+reference jungle tiles that do not exist in `ATLANTIS.BTS`.
+
+```
+u32 count
+count x BLOCK (3212 bytes)
+    u32 0, u32 0
+    u32 category                 block type 0..23; the editor writes it into attribute bits 10..15
+                                 of every pasted cell (24 389 of 24 944 matched cells agree)
+    u32 plane[6][10*10]          six 10x10 planes, row-major, row 0 = first row of the .MAP file
+        plane 0  background tile = BTS editor index + 1; 0 = cell not part of the block
+        plane 1  attribute bit 5 (0/1)
+        plane 2  foreground tile = BTS editor index + 1; 0 = none
+        plane 3  attribute bit 6 (0/1)
+        plane 4  foreground level = attribute bits 0..3 (0 without a foreground tile)
+        plane 5  ground code: 0 -> attr 0x080 (walkable), 1 -> 0x200 (blocking), 2 -> 0x000,
+                 3 -> 0x280 (blocking, bit 7 set), 4 -> 0x100 (bit 8)
+    u8  0[800]
+```
+
+Decoded by matching the stock `desert.set` against the 90 stock desert maps: 450 of its 655 blocks
+occur verbatim (background, foreground and attribute planes) in the maps, so the planes, the +1
+convention, the row order and the attribute mapping above are confirmed by data. A block is at most
+10x10 cells and may be sparse (a rock cluster keeps only its own cells). Stock block 0 is empty
+(category 0), block 1 is a 2x2 of one plain floor tile: the editor fills a new map with it.
+`tools/blockset.py` (`info` / `render` / `mine`) reads, verifies, renders and generates block sets;
+`mine` cuts the maps of one terrain into fill windows, prefab pieces and cliff windows per terrain
+class. **`Dark Colony - Map editor/scenario/atlantis.set`** (828 blocks, 14 classes, every tile
+reference valid) was generated that way on 15 Sep 2026 from the six stock Atlantis maps (HUMAN06/11/14,
+ALIEN09/14, A2PLAY01) and the five OZI-pack ones (tarr01/02/10, globo03/09), next to a copy of
+`ATLANTIS.BTS` as `atlantis.bts`; `maped_ozi_ns_v1.2.exe` loads it and shows the blocks in the pane
+(scripted New Map -> Atlantis -> Block Type 10, 15 Sep 2026). Regenerate rather than hand-edit:
+
+```
+python tools/blockset.py mine --bts "<game>/SCENARIO/ATLANTIS.BTS" --game "<game>" --terrain atlantis,gatlan \
+    --out "<Dark-Colony>/Dark Colony - Map editor/scenario/atlantis.set"
+```
 
 ## 4. `.MTG` — trigger ids **(verified)**
 
