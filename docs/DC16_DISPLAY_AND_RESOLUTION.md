@@ -2392,13 +2392,14 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   the exe, so the patcher generator's exe-only replay is unaffected. `dc16new.exe` SHA-256
   `572646e4…` since. **Game test pending.** `split_hd_data.py` regenerates the INTRF_HD lists from
   stock, so re-run `patch_movies.py apply` after any HD-data rebuild.
-* **Map editor in the same folder** (15 Sep 2026): `MAPED.EXE` (byte-identical to `DC\MAPED.EXE` on
-  the Dark Colony CD `DCUK`; the Council Wars CD carries no editor at all, and the Classic CD's
-  `EDITOR\` folder is just its InstallShield kit, `DATA.Z` 2.5 MB), the runtime `BWCC.DLL`,
-  `BWCC32.DLL`, `CW3215MT.DLL`, `readme.doc` and the fixed `maped_by_ozy_ns_v1.2PL.exe` (all from
-  the repository's `Dark Colony - Map editor/`, the installed result of that kit). The editor's own
-  `scenario/` mirror is content-identical to the game's `SCENARIO/`, so nothing else was needed.
-  Both CDs, for the record, carry `CVS/` folders in every data directory (developer leftovers).
+* **Map editor** (15 Sep 2026): the Council Wars CD carries no editor at all; the Classic CD (`DCUK`)
+  has `DC\MAPED.EXE`, byte-identical to the repository's `Dark Colony - Map editor/maped.exe`, and an
+  `EDITOR\` folder that is just its InstallShield kit (`DATA.Z` 2.5 MB; the repository folder is the
+  installed result: `BWCC.DLL`, `BWCC32.DLL`, `CW3215MT.DLL`, `readme.doc`). The editor's own
+  `scenario/` mirror is content-identical to the game's `SCENARIO/`. The files were copied into the
+  Council Wars folder and removed again the same day at the maintainer's request: the editor stays in
+  `Dark Colony - Map editor/`. Both CDs, for the record, carry `CVS/` folders in every data directory
+  (developer leftovers).
 * **Name caveat (found in the smoke test, 15 Sep 2026):** the patched build was first called
   `dc16patched.exe`. It starts (mode switch to 1024×768, `error.log` empty), but Windows'
   installer-detection heuristic treats a manifest-less 32-bit exe whose file name contains "patch"

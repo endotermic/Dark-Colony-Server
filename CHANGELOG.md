@@ -35,7 +35,10 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   **`dc16new.exe`** (patcher `OutputName`, docs and tests follow). The Council Wars pair follows the
   same scheme: the untouched exe is back to its CD name **`ENGEXP16.EXE`** (was `engexp16original.exe`),
   the patched build is **`engexp16new.exe`** (was `DCEXP16.EXE` since 10 Sep 2026); `git mv` in the game
-  repository, patcher regenerated, byte-identical rebuilds re-checked.
+  repository, patcher regenerated, byte-identical rebuilds re-checked. The map editor files copied
+  into the Council Wars folder the same day were removed again at the maintainer's request; the editor
+  stays in `Dark Colony - Map editor/` (the Council Wars CD has no editor, the Classic CD's is
+  byte-identical to that folder's `maped.exe`).
 
 - **Patcher: fixes without their resources are greyed out** (15 Sep 2026, maintainer request;
   `tools/gen_apply_script.py` → `Get-UnavailableFixes`): the window checks every fix's `Data` files
