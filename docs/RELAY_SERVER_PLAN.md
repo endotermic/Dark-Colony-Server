@@ -1482,6 +1482,13 @@ above, so that the plan can be followed from scratch without repeating the disco
   server engine is found by `tools/replay.js` on the same file. Not yet tried with the real game;
   the unit tests cover the lobby, the pinned seat, the byte-exact frames, the pacing of a recorded
   stall, the dropped orders and the checksum comparison (224 tests).
+- **Committed and deployed the same day** (Server `9e94196`, pushed; `fly deploy` at 12:46 UTC,
+  image `deployment-01M2T8SVT9A62HFSDJAQEZ4KHG`, machine version 184). The rolling update left the
+  machine in state **stopped** (event `stopped/update` right after `created/launch`; the old
+  process had exited cleanly on SIGINT) and it did not come back by itself; `fly machine start
+  d8927e5c5ee3d8` brought it up at 12:47 UTC, `listening` logged, `RECORD_LOG=on` in the
+  machine's environment. Check `fly status` after every deploy. `SYNC_CHECK` stays `send`
+  (maintainer's call); from now on every battle on Fly leaves a recording in the log.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
