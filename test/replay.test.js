@@ -112,10 +112,17 @@ test('the recorded frames go out byte for byte at the recorded pace; the watcher
   assert.ok(f[0].equals(want[0]), 'frame 0 exactly as recorded (TICK_SPEED, no server additions)');
   answerSync(me, f);
   me.send(build.orderSelected(6, 3)); // the watcher clicks something
+  me.send(build.cheat(1, 0)); // presses pause
+  me.send(build.chat(6, 0xff, 'Me: hello')); // chats
+  me.send(build.cheat(0, 0)); // a cheat flag: no strike in replay
   h.stepAfter(33);
   f = me.take();
+  assert.equal(f.length, 1, 'no standalone pause frame came back');
   assert.ok(f[0].equals(want[1]), 'frame 1 as recorded, the watcher\'s order is not in it');
-  assert.equal(rp.dropped, 1);
+  assert.equal(h.room.game.paused, false, 'the watcher cannot pause the replay');
+  assert.equal(rp.dropped, 4);
+  assert.deepEqual(rp.ignored, { ORDER_SEL: 1, CHEAT: 2, CHAT: 1 });
+  assert.equal(h.room.slots[4].client.strikes, 0, 'nothing the watcher sends is a violation');
   answerSync(me, f);
   me.send(build.sync(0x1234, 9)); // matches the recorded client checksum
   me.send(build.sync(0x9999, 10)); // does not

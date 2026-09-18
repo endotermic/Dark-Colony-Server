@@ -164,7 +164,7 @@ export class Game {
       if (!f) {
         if (!this.replayDone) {
           this.replayDone = true;
-          r.log.info('replay finished: all recorded frames sent', { frames: this.framesSent, lastUntil: this.lastIssuedUntil, dropped: rp.dropped, compared: rp.compared, divergedAt: rp.divergedAt });
+          r.log.info('replay finished: all recorded frames sent', { frames: this.framesSent, lastUntil: this.lastIssuedUntil, ignored: rp.ignored, compared: rp.compared, divergedAt: rp.divergedAt });
         }
         this.acc = 0;
         return;
@@ -207,6 +207,7 @@ export class Game {
 
   handle(client, cmds, now) {
     const r = this.room;
+    if (r.replay) return this.handleReplay(client, cmds, now);
     const cfg = this.cfg;
     const group = [];
     for (const cmd of cmds) {
@@ -260,13 +261,6 @@ export class Game {
           // never forwarded (R5); with the fake host in slot 0 nobody sends it anyway (F14). With
           // MERCENARY_SLOT > 0 the lowest real player does, and the engine compares (plan §18)
           r.sync.onClientSync(client, cmd);
-          if (r.replay) {
-            const div = r.replay.onClientSync(client.slot, cmd);
-            if (div && !r.replay.reported) {
-              r.replay.reported = true;
-              r.log.warn('replay diverged: the client checksum differs from the recorded one', div);
-            }
-          }
           break;
 
         case T.TICK_SPEED:
@@ -318,10 +312,56 @@ export class Game {
           else r.strike(client, `unexpected command ${typeName(cmd.type)}`);
       }
     }
-    if (group.length && !client.gone) {
-      // replay (§18.7): the frames are the recording's; the watcher's own orders would change the game
-      if (r.replay) r.replay.dropped += group.length;
-      else this.queueCommands(Buffer.concat(group));
+    if (group.length && !client.gone) this.queueCommands(Buffer.concat(group));
+  }
+
+  /**
+   * Replay mode (§18.7, maintainer 18 Sep 2026): everything the watcher sends is ignored except what
+   * keeps the stream flowing - the echoes and progress reports of the sync frames (pacing, lag) and
+   * the keep-alive - and leaving (the socket closes, the room resets). Orders, chat, gifts, pause,
+   * cheats: counted, never relayed, never a strike. Its 0x08 checksums are only compared with the
+   * recorded ones (diagnostics, nothing goes back).
+   */
+  handleReplay(client, cmds, now) {
+    const r = this.room;
+    const rp = r.replay;
+    for (const cmd of cmds) {
+      if (client.gone) return;
+      switch (cmd.type) {
+        case T.UNTIL: {
+          const d = decode(cmd);
+          if (d.a !== -1) {
+            const sentAt = client.pendingEchoes.get(d.a);
+            if (sentAt === undefined) return r.evict(client, `echo for unknown frame ${d.a}`);
+            client.pendingEchoes.delete(d.a);
+            client.latencyMs = now - sentAt;
+          } else {
+            if (!this.issued.has(d.until) || d.until <= client.reachedUntil) {
+              return r.evict(client, `bad progress report ${d.until} (last ${client.reachedUntil})`);
+            }
+            client.reachedUntil = d.until;
+            client.clientTime = d.until;
+          }
+          break;
+        }
+        case T.SYNC: {
+          r.sync.onClientSync(client, cmd);
+          const div = rp.onClientSync(client.slot, cmd);
+          if (div && !rp.reported) {
+            rp.reported = true;
+            r.log.warn('replay diverged: the client checksum differs from the recorded one', div);
+          }
+          break;
+        }
+        case T.KEEPALIVE:
+        case T.TICK_SPEED:
+        case T.TICK_MAXSPEED:
+        case T.TICK_DESSPEED:
+          break;
+        default:
+          rp.dropped++;
+          rp.ignored[typeName(cmd.type)] = (rp.ignored[typeName(cmd.type)] ?? 0) + 1;
+      }
     }
   }
 

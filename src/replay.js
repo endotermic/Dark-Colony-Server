@@ -6,9 +6,10 @@
 // player (REPLAY_SLOT, default the first one), which the connecting client takes. Its race, colour
 // and team are pinned to the recorded values, so the start shuffle and the whole simulation come
 // out as in the original battle. In battle the Game broadcasts the recorded sync frames byte for
-// byte (UNTIL(a, until), the server's 0x08, the commands) at the recorded pace; the client's own
-// orders are not relayed (they would change the game), its echoes and progress reports drive the
-// pacing as usual, and its 0x08 checksums, when it sends any, are compared with the recorded ones.
+// byte (UNTIL(a, until), the server's 0x08, the commands) at the recorded pace. Everything the
+// watcher sends is ignored (orders, chat, gifts, pause, cheats: never relayed, never a strike)
+// except the echoes and progress reports that pace the stream, the keep-alive, and leaving; its
+// 0x08 checksums, when it sends any, are only compared with the recorded ones.
 //
 // Since the frames carry the original server's 0x08 checksums (send mode), the client verifies the
 // replay itself: it aborts with "sync error" the moment its simulation leaves the recorded one.
@@ -48,7 +49,8 @@ export class Replay {
     this.seatWasFake = !real.includes(seat);
     this.map = mapEntry(start.map ?? {});
     this.cursor = 0;
-    this.dropped = 0; // client commands not relayed
+    this.dropped = 0; // watcher commands ignored (all but echoes, progress, keep-alive, 0x08)
+    this.ignored = {}; // the same by command name
     this.compared = 0;
     this.divergedAt = null;
     this.reported = false;

@@ -78,7 +78,7 @@ export class Lobby {
     return [
       `Replay${when}: ${rp.map.name}, ${Math.round(rp.lastUntil * rp.tickMs / 60000)} min.`,
       `You sit in ${rp.seatName}'s seat (slot ${rp.seat}); race, colour and team are fixed. Press READY.`,
-      'In battle your orders are not relayed: watch. A sync error means the replay diverged.',
+      'In battle everything you do is ignored, pause included: watch. A sync error = the replay diverged.',
     ];
   }
 

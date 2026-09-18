@@ -27,8 +27,10 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   with its recorded name, race, colour and team), the connecting client takes a recorded real
   player's seat with race, colour and team pinned, and in battle the recorded sync frames are
   broadcast byte for byte at the recorded pace, the original server's `0x08` included, so the game
-  itself verifies the replay (a "sync error" marks the first divergent tick). The watcher's orders
-  are dropped; its checksums, when it sends any, are compared with the recorded ones. One room, no
+  itself verifies the replay (a "sync error" marks the first divergent tick). Everything the
+  watcher sends is ignored except the frame echoes, keep-alives and leaving (orders, chat, gifts,
+  pause, cheats: never relayed, never a strike); its checksums, when it sends any, are compared
+  with the recorded ones. One room, no
   hall, no bots, the recorded speed. `REPLAY_FULL_MAP=on` reveals the whole map to the watcher
   with the game's own flag (a standalone `CHEAT(0, 0)` at start, F28), untested one-sided. Not yet
   tried with the real game.

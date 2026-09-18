@@ -1833,8 +1833,10 @@ the seat.
   its commands, the original server's `0x08` included) is broadcast byte for byte once
   `a_{k+1} - a_k` ticks of real time have accumulated (normally one; a recorded stall is
   reproduced as a pause of the same length) and nobody is `MAX_LAG` behind. The client's echoes
-  and progress reports work as in a live game, so lag and eviction behave normally. Its orders,
-  chat and gifts are counted and dropped (they would change the game); pause/resume still works.
+  and progress reports work as in a live game, so lag and eviction behave normally. Everything
+  else the watcher sends is ignored (maintainer, 18 Sep 2026: "completely ignored except exit"):
+  orders, chat, gifts, pause/resume and cheat flags are counted per command name and never
+  relayed, and none of them is a strike; only leaving (the socket closes) ends the viewing.
   Its `0x08`, sent when it is the lowest network id (recordings made with `MERCENARY_SLOT > 0`),
   is compared with the recorded client checksum of that tick and the first divergence is logged.
   After the last frame nothing more is sent; the watcher quits the game. The room resets when the
