@@ -1512,10 +1512,17 @@ above, so that the plan can be followed from scratch without repeating the disco
   not-ready `D:` (card reader / empty USB or optical drive / sleeping second disk) meant Windows'
   "No Disk" box behind the full-screen surface or a spin-up stall. New `tools/patch_nocd.py`
   (patcher fix `cddrive`, applied after `resolution` because `patch_resolution.py` checks its input
-  by MD5): two single-byte edits per exe — the probe returns at once, the `%c:\dc\` format string
-  becomes empty. Both repository exes re-patched, `Apply-DarkColonyPatches.ps1` regenerated, both
-  exes smoke-tested; display doc §10.19. The not-ready-drive case could not be reproduced on the
-  development PC (no drive `D:`); a test on an affected PC is pending.
+  by MD5). A first two-byte version (probe → `ret`, format string emptied) was rejected the same day
+  — "the game should not try to touch the CD path at all" — and became nine edits + two `.reloc`
+  entries per exe: the start-up block that opens HBNFUFL and builds the path is jumped over (near
+  `jmp`; a short `EB 9F` for the +0x9C hop crashed both exes in the smoke test and was caught before
+  commit), the probe call NOPped and the probe itself `ret`, the open helper / wave loader / movie
+  opener jump past their CD attempts, the dead format string zeroed, the "insert the CD" box
+  replaced by "FILE NOT FOUND / A sound file is missing - see error.log". The patched exes no longer
+  read `HBNFUFL.A0x`. Both repository exes re-patched, `Apply-DarkColonyPatches.ps1` regenerated;
+  tested on `subst` drives D/E/F/G with the game on G: and `anim.dat` in `D:\dc\` (stock exe writes
+  two probe files there in 14 s, patched exes none, and they start without the HBNFUFL files);
+  display doc §10.19. A not-ready (no-medium) drive cannot be simulated with `subst`.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

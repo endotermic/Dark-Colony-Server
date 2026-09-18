@@ -260,10 +260,14 @@ def blocks_hdpaths(g):
     return out
 
 def blocks_nocd(g):
-    out = []
-    for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ 1 byte: ([0-9a-f]{2}) -> ([0-9a-f]{2})\s*$', plan(g, 'nocd'), re.M):
-        out.append((int(m.group(2), 16), 1, m.group(1).strip(), bytes.fromhex(m.group(3)), bytes.fromhex(m.group(4))))
-    assert len(out) == 2, len(out)
+    t = plan(g, 'nocd'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2})\s*$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip(), old, new))
+    assert len(out) == 9, len(out)
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 11, len(out)
     return out
 
 def blocks_cdcheck(g):
@@ -288,14 +292,16 @@ Council Wars has a third test that runs while a game is in progress and throws t
 to the menu; that one is inverted (75 -> 74, jne -> je).
 
 Nothing else changes: no code is added, no file access is redirected, one byte per site.'''),
- dict(id='cddrive', name='No CD-drive access (a not-ready drive D: no longer hangs the game)', date='18 Sep 2026', tool='tools/patch_nocd.py',
+ dict(id='cddrive', name='No CD path at all (no HBNFUFL, no drive probe, no CD fallback, no "insert the CD")', date='18 Sep 2026', tool='tools/patch_nocd.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.19', blocks=blocks_nocd,
-      desc='''"No CD required" only ignores the ANSWER of the CD test.  The test itself still runs, and it
-runs often: at start-up the game reads the drive letter its installer recorded in HBNFUFL.A01 /
-HBNFUFL.A02 ("D:" in the repository), builds the path "D:\\dc\\" and probes it - it opens
-D:\\dc\\anim.dat and, if that exists, tries to create a file there to see whether the medium
-refuses writes.  The same probe is repeated every time a menu screen opens and periodically
-while a battle runs, and two loaders fall back to "D:\\dc\\<name>" when a file is missing locally.
+      desc='''"No CD required" only ignores the ANSWER of the CD test.  All the CD machinery stays in the
+exe and runs: at start-up the game opens HBNFUFL.A01 / HBNFUFL.A02 (the drive letter its
+installer recorded, "D:" in the repository; a missing file is a silent exit), builds the path
+"D:\\dc\\" and probes it - it opens D:\\dc\\anim.dat and, if that exists, tries to create a file
+there to see whether the medium refuses writes.  The same probe runs again every time a menu
+screen opens and periodically during a battle, two loaders fall back to "D:\\dc\\<name>" when a
+file is missing locally, the sound loader then asks to "insert The Dark Colony CD and Restart",
+and the movie opener falls back to the CD when the flag says the disc is in.
 
 The game never tells Windows to fail such accesses quietly (no SetErrorMode call), so when the
 letter D: belongs to a drive that is not ready - a card reader or a USB/optical drive without a
@@ -303,13 +309,20 @@ medium, a removable disk that was unplugged, a second hard disk that has spun do
 either shows its "No Disk / Please insert a disk into drive ..." box behind the full-screen game
 (a black screen that looks like a hang and reads like a CD request) or stalls the game for the
 seconds the disk needs to wake up, at start-up and at every menu.  Reported by players with more
-than one drive (18 Sep 2026).
+than one drive (18 Sep 2026); maintainer decision the same day: the game must not touch the CD
+path at all.
 
-Two single-byte edits per exe make the game drive-letter free: the probe function returns at
-once (its first instruction becomes "ret"; the "CD present" flag stays 0, which the "No CD
-required" bypasses assume anyway), and the path format string "%c:\\dc\\" loses its first
-character, so the CD path is the empty string and the fallbacks for a missing file retry the
-local name instead of opening a path on another drive.  No code moves, no relocation changes.'''),
+Nine edits per exe, all inside existing instructions and strings, plus two relocation entries:
+  * start-up: the two instructions that load the HBNFUFL name become a jump over the whole
+    block - HBNFUFL is never opened, no drive letter is read, no CD path is built; the two
+    absolute operands that vanish had .reloc entries, which become type-0 padding
+  * start-up: the "call cd_probe" becomes five NOPs; cd_probe itself starts with "ret" for the
+    two remaining callers (menu screens, in-game check)
+  * the generic file-open helper and the sound loader jump to their ordinary "file missing"
+    exits instead of trying "<CD path><name>"; the movie opener never takes its CD branch
+  * the dead "%c:\\dc\\" format string is zeroed; the sound loader's box now says
+    "FILE NOT FOUND / A sound file is missing - see error.log" instead of asking for the disc
+The patched exe no longer needs HBNFUFL.A01 / .A02 (the originals still do).  Nothing moves.'''),
  dict(id='resolution', name='1024x768 display', date='9 Sep 2026', tool='tools/patch_resolution.py (Dark-Colony-Server)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10', blocks=blocks_resolution,
       requires=['hdpaths'], data=hd_data,

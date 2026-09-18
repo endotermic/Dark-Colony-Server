@@ -2478,33 +2478,51 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   after 20 min) every probe waits for the spin-up: several seconds of freeze at start-up, again at
   every menu screen, again in game. All three go through the same `fopen("D:\dc\…")`.
 * **Fix = `tools/patch_nocd.py`** (verify / plan / apply, `.nocd.bak`, pattern-located, both
-  exes), **two single-byte edits per exe**, patcher fix **`cddrive`**:
-  1. `cd_probe` entry `0x405EAC` / `0x405E8C` (file `0x52AC` / `0x528C`): `push ebx` `53` → `ret`
-     `C3`. The probe returns before touching anything; the flag stays 0 (zeroed at `0x405FC6`
-     in the initialiser), which is what the `cdcheck` bypasses assume at the menu sites; the
-     in-game comparison sees "unchanged"; `0x401071` never takes the CD branch.
-  2. DGROUP `"%c:\dc\"` `0x482654` (file `0x7FE54` / `0x80054`): `25` → `00`. `cdpath` becomes
-     `""`, so the two missing-file fallbacks retry the *local* name and fail the way they always
-     did (an `error.log` line, the wave loader's box — whose "insert the CD" wording is unchanged
-     and now simply means "a WAV is missing").
-  No code moves, no `.reloc` change; the untouched originals keep probing (they need the CD).
-  In the patcher the fix is applied **right after `resolution`** (`cdcheck, resolution, cddrive,
-  hdpaths, …`), because `patch_resolution.py` identifies its input by MD5 and expects exactly the
-  `cdcheck`-fixed exe. Both repository exes re-patched (SHA-256 `dc16new.exe` `49d2430e…`,
-  `engexp16new.exe` `b4fcee80…`), `Apply-DarkColonyPatches.ps1` regenerated (`-Verify` reports
-  both as the fully patched executables), `dc16.asm` / `dcexp16.asm` regenerated. **Smoke test
-  18 Sep 2026:** both exes start from the game folder, are still running after 14 s and
-  `ERROR.LOG` stays empty. **Multi-drive test (same day, maintainer request):** `subst` drives
-  `D:` `E:` `F:` (empty folders) and `G:` = the Dark-Colony repository, game run from
-  `G:\DC - Council wars`, with a copy of `anim.dat` placed in `D:\dc\` so the probe's write test
-  becomes visible. Stock `dc16.exe`: alive after 14 s, and **two files `D:\dc\a84674`,
-  `D:\dc\a98159` (1 byte each) appeared** — the probe ran at start-up and again at the first menu
-  screen and wrote to the "hard disk" `D:`. `dc16new.exe` and `engexp16new.exe`: alive after
-  14 s, `ERROR.LOG` empty, **no file on `D:`** — the patched builds never touch the drive. A
-  not-ready drive (no medium) cannot be built with `subst`; that case rests on the trace above.
-* **Not done, for the record:** the `hbnfufl.a0x` dependency stays (a copy without the file
-  still exits silently through the `safefunc.c` line-137 assert); the wave loader's message text
-  was left alone; the stock leak of `D:\dc\a<n>` temp files on a writable `D:\dc\` is moot now.
+  exes), patcher fix **`cddrive`**. A first version (same morning, two bytes: probe → `ret`,
+  first byte of the format string → NUL) stopped the drive access but left the CD logic in place
+  (HBNFUFL still read, the path still built, the fallbacks still "trying" an empty CD path, the
+  disc still requested); the maintainer rejected that the same day — **"the game should not try
+  to touch the CD path at all"** — and the fix became **nine edits + two `.reloc` entries per exe**
+  (92 / 124 bytes), all inside existing instructions and strings, nothing moves:
+  1. start-up `0x405FB3` / `0x405F93` (file `0x53B3` / `0x5393`): `mov edx,"r"; mov eax,"hbnfufl.a0x"`
+     (10 bytes) → `jmp 0x406054` / `0x406034` (`E9 9C 00 00 00` + 5 NOP) straight to the `full`
+     marker check: HBNFUFL is never opened, no letter read, no `sprintf`, no probe. **The hop is
+     +0x9C, too far for a short `jmp`** — the first attempt used `EB 9F`, which is a *signed* short
+     jump of −97 into `cd_probe`; both patched exes died with exit −1 in the smoke test and the
+     tool was corrected. The two absolute operands vanished, so their HIGHLOW `.reloc` entries
+     (file `0x97A8A`/`0x97A8C` = `3FB4`/`3FB9`; CW `0x97C88`/`0x97C8A` = `3F94`/`3F99`) became type 0.
+  2. start-up `call cd_probe` `0x406074` / `0x406054` → 5 NOP.
+  3. `cd_probe` entry `0x405EAC` / `0x405E8C`: `push ebx` → `ret`, for the two callers that remain
+     (`load_interface`, in-game check). The flag `0x4A49B8` is `.bss`, stays 0.
+  4. DGROUP `"%c:\dc\"` `0x482654` (file `0x7FE54` / `0x80054`): 8 zero bytes (dead data).
+  5. open helper `0x4063DF` / `0x4063BF`: `je <try cdpath+name>` (`0F 84 6E FE FF FF`) → `jmp
+     0x4062DD` (`E9 F9 FE FF FF 90`), the ordinary "missing file" exit (quiet NULL or the
+     `FILE Error opening file` assert, as before).
+  6. wave loader `0x452AE9` / `0x452B49`: `jne 0x452BC6` (`0F 85 D7 00 00 00`) → `jmp` (`E9 D8 00 00
+     00 90`): after the two local `OpenFile`s the loader goes to its error exit; `esi` already
+     holds the handle or −1, so the found case is unchanged.
+  7. movie opener `0x401078`: `je 0x4010DD` (`74 63`) → `jmp` (`EB 63`): never the CD branch.
+  8. DGROUP `"CDROM NOT FOUND"` → `"FILE NOT FOUND"` (16 bytes) and `"Please insert The Dark
+     Colony CD and Restart"` (CW: `"…Expansion Pak CD - The Council Wars and Restart"`) → `"A sound
+     file is missing - see error.log"`, NUL-padded to 45 / 78 bytes: the box the wave loader
+     shows for a missing WAV tells the truth.
+  The patched exes **no longer read `HBNFUFL.A01`/`.A02`** (the originals still do; the files stay
+  in the repo for them). In the patcher the fix is applied **right after `resolution`**
+  (`cdcheck, resolution, cddrive, hdpaths, …`), because `patch_resolution.py` identifies its input
+  by MD5 and expects exactly the `cdcheck`-fixed exe. Both repository exes re-patched (SHA-256
+  `dc16new.exe` `c54f434f…`, `engexp16new.exe` `13c95489…`), `Apply-DarkColonyPatches.ps1`
+  regenerated (`-Verify` reports both as the fully patched executables), `dc16.asm` /
+  `dcexp16.asm` regenerated (all four jumps land on their targets).
+* **Tests (18 Sep 2026):** `subst` drives `D:` `E:` `F:` (empty folders) and `G:` = the Dark-Colony
+  repository, game run from `G:\DC - Council wars`, a copy of `anim.dat` in `D:\dc\` so the probe's
+  write test becomes visible. Stock `dc16.exe`: alive after 14 s and **two files `D:\dc\a<n>`
+  (1 byte each) appeared** — the probe ran at start-up and again at the first menu screen and
+  wrote to the "hard disk" `D:`. `dc16new.exe` and `engexp16new.exe`: alive after 14 s, `ERROR.LOG`
+  empty, **no file on `D:`**; the same two **with `HBNFUFL.A01`/`.A02` renamed away: alive after
+  14 s, `ERROR.LOG` empty** (the stock build exits through the `safefunc.c` line-137 assert without
+  them). A not-ready drive (no medium) cannot be built with `subst`; that case rests on the trace.
+* **Left as it was:** the in-game check `0x411386`ff and `0x410A10` still *read* the flag (always
+  0, no file access); the stock leak of `D:\dc\a<n>` temp files on a writable `D:\dc\` is moot.
 
 ## 11. Risks
 
@@ -2528,9 +2546,10 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
 |---|---|
 | `0x00488DB4` / `0x00488DB8` | **screen width / height globals (`DGROUP`)** |
 | `0x0040117F`ff | `main.c`; full-screen rect at `0x004010E5` |
-| `0x00405F88` (CW `0x00405F68`) | `safefunc.c` start-up: reads `HBNFUFL.A01`/`.A02`, builds the CD path `%c:\dc\` (`0x00482654`) into `0x004A48B0`, `full` marker → `0x00488DF5`, calls `cd_probe` (§10.19) |
+| `0x00405F88` (CW `0x00405F68`) | `safefunc.c` start-up: reads `HBNFUFL.A01`/`.A02`, builds the CD path `%c:\dc\` (`0x00482654`) into `0x004A48B0`, `full` marker → `0x00488DF5`, calls `cd_probe`; **patched: `jmp` from `0x00405FB3` to the `full` check, probe call NOPped** (`cddrive`, §10.19) |
 | `0x00405EAC` (CW `0x00405E8C`) | `cd_probe`: `fopen <CD>anim.dat` + write test `<CD>a<rand>` → flag `0x004A49B8`; re-run by `load_interface` (`0x00423223`) and in game (`0x0041138D`); **patched to `ret`** (`cddrive`, §10.19) |
 | `0x00405E8C` / `0x00405EA0` (CW `0x00405E6C` / `0x00405E80`) | CD-flag getter / CD-path getter (wave loader fallback `0x00452AEF`, `0x00452B5B`; generic helper `0x00406253`) |
+| `0x004063DF` / `0x00452AE9` / `0x00401078` (CW `0x004063BF` / `0x00452B49` / `0x00401078`) | CD-path fallbacks of the open helper, the wave loader and the movie opener; **patched to `jmp` past the CD attempt** (`cddrive`, §10.19); wave loader box strings `0x00487DE0` / `0x00487DF0` (CW `+8`) |
 | `0x00406FD0` / `0x00406FF0` | `avi_begin` / `avi_end` (mode cycle) |
 | `0x004073C4` | clear back buffer for movie (stock: 640×480, pitch `0x500` literals; patched to read the Lock description, §10.8) |
 | `0x00407068` | `avi_create_surfaces`: flip chain (`0x489718`/`0x48971C`, flag `0x488E0C`=1) or plain primary + 320×180 movie surface `0x488E00` (`0x004071F7`ff) |

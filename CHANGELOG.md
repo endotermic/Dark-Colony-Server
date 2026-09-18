@@ -6,22 +6,28 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
-- **Game exes: no CD-drive access at all** (18 Sep 2026, maintainer report "all Dark Colony
-  executables request the CD and hang on multi-hard-drive systems"; `tools/patch_nocd.py`, patcher
-  fix `cddrive`, doc `DC16_DISPLAY_AND_RESOLUTION.md` §10.19): the `cdcheck` bypass only ignored the
-  answer of the CD test. The probe itself still ran in every build - `fopen("D:\dc\anim.dat")` with
-  the drive letter from `HBNFUFL.A01`/`.A02`, plus a write test on that drive, at start-up, at every
-  menu screen and periodically in game, and two loaders fell back to `D:\dc\<name>` for a missing
-  file - and the game never calls `SetErrorMode`, so a not-ready drive D: (card reader or USB/optical
-  drive without a medium, an unplugged removable disk, a spun-down second hard disk) produced
-  Windows' "No Disk / Please insert a disk into drive ..." box behind the full-screen surface or a
-  spin-up stall. Two single-byte edits per exe: the probe returns at once (`push ebx` -> `ret`) and
-  the CD path format string `%c:\dc\` becomes empty. `dc16new.exe` and `engexp16new.exe` in the
-  Dark-Colony repository carry it (SHA-256 `49d2430e…` / `b4fcee80…`), `Apply-DarkColonyPatches.ps1`
-  regenerated; both exes smoke-tested (start, run, empty `error.log`) and tested on `subst` drives
-  D/E/F/G with the game on G: and a copy of `anim.dat` in `D:\dc\`: the stock exe wrote two probe
-  files to `D:\dc\` within 14 s, the patched exes wrote nothing. The not-ready-drive case itself
-  (no medium) cannot be simulated with `subst` and rests on the trace.
+- **Game exes: no CD path at all** (18 Sep 2026, maintainer report "all Dark Colony executables
+  request the CD and hang on multi-hard-drive systems", then "the game should not try to touch the
+  CD path at all"; `tools/patch_nocd.py`, patcher fix `cddrive`, doc `DC16_DISPLAY_AND_RESOLUTION.md`
+  §10.19): the `cdcheck` bypass only ignored the answer of the CD test. The machinery itself still
+  ran in every build - `HBNFUFL.A01`/`.A02` read for the drive letter, `fopen("D:\dc\anim.dat")` plus
+  a write test on that drive at start-up, at every menu screen and periodically in game, a
+  `D:\dc\<name>` fallback in two loaders and the movie opener, "Please insert The Dark Colony CD"
+  from the sound loader - and the game never calls `SetErrorMode`, so a not-ready drive D: (card
+  reader or USB/optical drive without a medium, an unplugged removable disk, a spun-down second hard
+  disk) produced Windows' "No Disk / Please insert a disk into drive ..." box behind the full-screen
+  surface or a spin-up stall. Nine edits + two `.reloc` entries per exe, nothing moves: the start-up
+  block that opens HBNFUFL and builds the path is jumped over, the probe call is NOPped and the probe
+  itself returns at once, the three fallbacks jump past their CD attempt, the dead `%c:\dc\` string
+  is zeroed and the sound loader's box says "FILE NOT FOUND / A sound file is missing - see
+  error.log". The patched exes no longer need `HBNFUFL.A0x`. `dc16new.exe` and `engexp16new.exe` in
+  the Dark-Colony repository carry it (SHA-256 `c54f434f…` / `13c95489…`), `Apply-DarkColonyPatches.ps1`
+  regenerated. Tested on `subst` drives D/E/F/G with the game on G: and a copy of `anim.dat` in
+  `D:\dc\`: the stock exe wrote two probe files to `D:\dc\` within 14 s, the patched exes wrote
+  nothing and also start without the HBNFUFL files. The not-ready-drive case itself (no medium)
+  cannot be simulated with `subst` and rests on the trace. (A first two-byte version the same
+  morning - probe `ret` + first format byte zeroed - was replaced; an intermediate build with a
+  short `jmp` for a +0x9C hop crashed in the smoke test and never left the working tree.)
 
 - **Battle recordings in the log** (18 Sep 2026, maintainer requirement after a player's "sync
   error" report that left no evidence; `src/logrecorder.js`, `tools/logs2replay.js`, config
