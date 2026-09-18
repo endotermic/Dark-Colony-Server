@@ -35,6 +35,7 @@ export class Game {
     this.stallSince = 0;
     this.lastSpeedRefresh = 0;
     this.framesSent = 0;
+    this.replayDone = false;
   }
 
   start(now) {
@@ -52,6 +53,13 @@ export class Game {
       c.clientTime = 0;
       c.reachedUntil = 0;
       c.pendingEchoes.clear();
+    }
+    if (this.room.replay) {
+      // replay (§18.7): the recorded frames carry their own TICK_SPEED. The optional map reveal goes
+      // out on its own: the client holds a non-UNTIL frame and executes it with the next sync frame
+      // (F6), so the flag is set from the first recorded tick without touching a recorded frame
+      if (this.cfg.REPLAY_FULL_MAP || this.cfg.DEBUG) this.room.broadcast(build.cheat(0, 0));
+      return;
     }
     // first sync frame: lock the speed (F11); in debug mode reveal the whole map (F28)
     const head = [build.tickSpeed(this.cfg.TICK_MS)];
@@ -94,6 +102,7 @@ export class Game {
     this.lastStep = now;
     const n = Math.min(255, Math.floor(this.acc / cfg.TICK_MS));
     if (n <= 0) return;
+    if (this.room.replay) return this.stepReplay(now, n);
     const until = this.time + n + cfg.LOOKAHEAD;
     if (until - this.minClientTime() >= cfg.MAX_LAG) {
       // somebody is too far behind: stall, but do not build up a burst (§9.5 handles eviction)
@@ -137,6 +146,55 @@ export class Game {
     this.lastIssuedUntil = until;
     this.time += n;
     this.framesSent++;
+    this.pruneIssued();
+  }
+
+  /**
+   * Replay mode (§18.7): broadcast the recorded sync frames byte for byte at the recorded pace.
+   * Frame k stands for the ticks between its `a` and the next frame's `a` (normally one); it goes
+   * out once that many ticks of real time have accumulated and nobody is MAX_LAG behind.
+   */
+  stepReplay(now, n) {
+    const r = this.room;
+    const rp = r.replay;
+    const cfg = this.cfg;
+    let budget = n;
+    while (budget > 0) {
+      const f = rp.peek();
+      if (!f) {
+        if (!this.replayDone) {
+          this.replayDone = true;
+          r.log.info('replay finished: all recorded frames sent', { frames: this.framesSent, lastUntil: this.lastIssuedUntil, dropped: rp.dropped, compared: rp.compared, divergedAt: rp.divergedAt });
+        }
+        this.acc = 0;
+        return;
+      }
+      if (f.until - this.minClientTime() >= cfg.MAX_LAG) {
+        this.acc = Math.min(this.acc, cfg.TICK_MS);
+        if (!this.stallSince) {
+          this.stallSince = now;
+          r.log.warn('stalled', { until: f.until, minClientTime: this.minClientTime(), slowestSlot: this.slowestClient()?.slot });
+        }
+        return;
+      }
+      if (this.stallSince) {
+        r.log.info('stall over', { stalledMs: Math.round(now - this.stallSince) });
+        this.stallSince = 0;
+      }
+      const next = rp.peekNext();
+      const span = Math.max(1, next ? next.a - f.a : 1);
+      if (span > budget) break;
+      budget -= span;
+      this.acc -= span * cfg.TICK_MS;
+      for (const c of r.players()) c.pendingEchoes.set(f.a, now);
+      r.broadcast(Buffer.concat([build.until(f.a, f.until), f.cmds]));
+      r.sync.onFrameIssued(f.a, f.until, f.cmds.length ? [f.cmds] : []);
+      this.issued.add(f.until);
+      this.lastIssuedUntil = f.until;
+      this.time = next ? next.a : f.a + span;
+      this.framesSent++;
+      rp.advance();
+    }
     this.pruneIssued();
   }
 
@@ -202,6 +260,13 @@ export class Game {
           // never forwarded (R5); with the fake host in slot 0 nobody sends it anyway (F14). With
           // MERCENARY_SLOT > 0 the lowest real player does, and the engine compares (plan §18)
           r.sync.onClientSync(client, cmd);
+          if (r.replay) {
+            const div = r.replay.onClientSync(client.slot, cmd);
+            if (div && !r.replay.reported) {
+              r.replay.reported = true;
+              r.log.warn('replay diverged: the client checksum differs from the recorded one', div);
+            }
+          }
           break;
 
         case T.TICK_SPEED:
@@ -253,7 +318,11 @@ export class Game {
           else r.strike(client, `unexpected command ${typeName(cmd.type)}`);
       }
     }
-    if (group.length && !client.gone) this.queueCommands(Buffer.concat(group));
+    if (group.length && !client.gone) {
+      // replay (§18.7): the frames are the recording's; the watcher's own orders would change the game
+      if (r.replay) r.replay.dropped += group.length;
+      else this.queueCommands(Buffer.concat(group));
+    }
   }
 
   onClientLeft(client) {

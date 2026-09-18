@@ -42,7 +42,12 @@ row shows your name; you can type it there.
 - Cheats and the `0x08` checksum command are never forwarded. Since the fake host is the lowest
   network id no client sends checksums; the server can compute them itself with its own port of the
   game's battle engine (`SYNC_CHECK=send`, off by default while the port is being verified against
-  recorded games, see plan §18).
+  recorded games, see plan §18). Every battle also leaves a compact recording in the log
+  (`RECORD_LOG`, on Fly); `node tools/logs2replay.js --fetch dark-colony-server --replay` rebuilds
+  and replays the battles of the last week from Fly's Logs API (plan §18.6). A recording also
+  plays back into the real game: `REPLAY_FILE=<file.jsonl> node src/index.js`, then connect
+  dc16.exe to the local server, press READY and watch the recorded battle from a recorded
+  player's seat (plan §18.7).
 - Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
   removed and announced to everybody else.
 - `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against seven bots.

@@ -294,3 +294,40 @@ test('RECORD_DIR writes a JSON-lines recording of the battle', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('RECORD_LOG writes the recording as compact "replay" log lines that decode back', async () => {
+  const { createLogger } = await import('../src/log.js');
+  const { decodeLogRecordings, parseLogLine, LogRecorder } = await import('../src/logrecorder.js');
+  const out = [];
+  const log = createLogger('info', { write: (s) => out.push(s) });
+  const eng = fakeEngine();
+  const h = new Harness({ SYNC_CHECK: 'shadow', RECORD_LOG: true }, { engine: eng, log });
+  assert.ok(h.room.sync.recorder instanceof LogRecorder);
+  const [a, b] = startBattle(h);
+  h.stepAfter(33);
+  answerSync(a, a.take());
+  answerSync(b, b.take());
+  a.send(build.sync(1234, 3));
+  h.stepAfter(33);
+  a.take();
+  b.take();
+  h.room.reset();
+  const objs = out.map(parseLogLine).filter((o) => o?.msg === 'replay');
+  assert.ok(objs.length >= 4 && objs.length <= 8, `${objs.length} replay lines`);
+  assert.ok(objs.every((o) => o.room === undefined || o.room === h.room.id));
+  const recs = decodeLogRecordings(objs);
+  assert.equal(recs.size, 1);
+  const lines = [...recs.values()][0].lines;
+  assert.equal(lines[0].type, 'start');
+  assert.equal(lines[0].tickMs, 33);
+  assert.equal(lines[0].lobby.slots[0].name, 'AI Mercenary');
+  const frames = lines.filter((l) => l.type === 'frame');
+  assert.equal(frames.length, 2);
+  assert.deepEqual([frames[0].a, frames[0].until, frames[1].a, frames[1].until], [0, 9, 1, 10]);
+  assert.equal(frames[0].cmds.slice(0, 2), '11', 'TICK_SPEED in frame 1');
+  assert.equal(lines.filter((l) => l.type === 'engine').length, 0, 'engine checksums are recomputed, not logged');
+  assert.ok(lines.some((l) => l.type === 'rx08' && l.slot === a.slot && l.tick === 3 && l.checksum === 1234), 'the client checksum itself');
+  assert.ok(lines.some((l) => l.type === 'mismatch' && l.tick === 3 && l.client === 1234));
+  assert.equal(lines.at(-1).type, 'end');
+  assert.equal(lines.at(-1).mismatches, 1);
+});

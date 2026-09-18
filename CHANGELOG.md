@@ -6,6 +6,33 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Battle recordings in the log** (18 Sep 2026, maintainer requirement after a player's "sync
+  error" report that left no evidence; `src/logrecorder.js`, `tools/logs2replay.js`, config
+  `RECORD_LOG`, plan §18.6 and F50): with `RECORD_LOG=on` every battle is written into the log as
+  compact `msg: "replay"` lines that keep everything the clients received: every sync frame byte
+  for byte (UNTIL, the server's `0x08` checksums as hex runs, the commands), every client `0x08`,
+  the events; only the per-tick engine checksum lines are left out (`tools/replay.js` recomputes
+  them). Every line carries the recording id, so simultaneous battles in several rooms stay
+  apart. 4-11 KB per game-minute, no line above a few KB (the twelve local file
+  recordings, 8.8 MB, become 487 KB and decode back to byte-identical frames). `node tools/logs2replay.js --fetch dark-colony-server --since 7d --replay`
+  pages Fly's Logs API (about seven days of history; `fly logs` alone shows the last 100 lines),
+  rebuilds `logs/replays/<start>-room<n>-<map>.jsonl` per battle and replays each; it also reads
+  `fly logs` captures (text or `--json`) and Logs API documents. Dropped log lines are detected
+  (`seq`) and the lost frames reconstructed empty with a note. `fly.toml` sets `RECORD_LOG = "on"`
+  (deploy pending). `RECORD_DIR` is unchanged and works beside it.
+
+- **Replay mode** (18 Sep 2026, maintainer requirement; `src/replay.js`, config `REPLAY_FILE` /
+  `REPLAY_SLOT`, plan §18.7): `REPLAY_FILE=<recording.jsonl> node src/index.js` plays a recording
+  back to a real dc16.exe. The room is the recorded lobby (same map, every recorded human a fake
+  with its recorded name, race, colour and team), the connecting client takes a recorded real
+  player's seat with race, colour and team pinned, and in battle the recorded sync frames are
+  broadcast byte for byte at the recorded pace, the original server's `0x08` included, so the game
+  itself verifies the replay (a "sync error" marks the first divergent tick). The watcher's orders
+  are dropped; its checksums, when it sends any, are compared with the recorded ones. One room, no
+  hall, no bots, the recorded speed. `REPLAY_FULL_MAP=on` reveals the whole map to the watcher
+  with the game's own flag (a standalone `CHEAT(0, 0)` at start, F28), untested one-sided. Not yet
+  tried with the real game.
+
 - **One game folder: Classic moves into `DC - Council wars/`, `DC - Classic/` removed** (15 Sep 2026, maintainer decision;
   `tools/gen_apply_script.py`, the three tests that read the game folder, README). The untouched
   Classic exe of 7 Jan 1998 is now `DC - Council wars/dc16.exe` (restored from the game repository's

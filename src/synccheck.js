@@ -72,7 +72,7 @@ export class SyncCheck {
       titleDigit: r.map.players,
     };
     if (this.recorder) {
-      this.recorder.open(r.id, {
+      const rec = this.recorder.open(r.id, {
         version: 1,
         map: { file: r.map.file, name: r.map.name, terrain: r.map.terrain, players: r.map.players },
         tickMs: r.config.TICK_MS,
@@ -82,6 +82,8 @@ export class SyncCheck {
         lobby,
         players: r.players().map((c) => ({ slot: c.slot, name: c.name })),
       });
+      // the id (or file) every "replay" line of this battle carries, beside the room's own lines
+      this.log.info('recording', { rec, players: r.players().map((c) => c.name) });
     }
     if (this.mode === 'off') return;
     if (!this.createGame || !this.loadMapJson) {

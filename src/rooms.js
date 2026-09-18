@@ -5,10 +5,14 @@ import { Room } from './room.js';
 import { childLogger } from './log.js';
 
 export class RoomPool {
-  constructor(config, log, now, random) {
+  /** `opts.replay` (a Replay, plan §18.7) makes the pool a single room that plays that recording back. */
+  constructor(config, log, now, random, opts = {}) {
     this.config = config;
     this.log = log;
-    this.rooms = config.ROOM_LIST.map((map) => new Room(config, childLogger(log, { room: map.index }), now, random, { id: map.index, map }));
+    this.replay = opts.replay ?? null;
+    this.rooms = this.replay
+      ? [new Room(config, childLogger(log, { room: 1 }), now, random, { id: 1, map: this.replay.map, replay: this.replay })]
+      : config.ROOM_LIST.map((map) => new Room(config, childLogger(log, { room: map.index }), now, random, { id: map.index, map }));
   }
 
   /** Room by 0-based index. */

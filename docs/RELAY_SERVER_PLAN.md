@@ -84,6 +84,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F47 | **`0x0F` has a legitimate sender: the diplomacy screen's "give 1000" button.** The in-game diplomacy panel (`0x4334DD`: button ids 154..195, `(id - 154) / 6` = row = the other players in order, `% 6` = column) sends, for column 4, `0x0F(target)` through `0x40C730` **after** checking `money > 1000` and deducting 1000 locally (`0x43352B`/`0x43354E`); the handler `0x41DBB0` adds 1000 only on the machine whose local player is `target`. Columns 0 and 1 toggle the alliance / shared-vision bit towards that player (`0x41E94C` get, `0x40C598` -> `0x0D(me, target, column, !current)`). | `0x4334DD`-`0x4335E7`, `0x40C730`, `0x41DBB0` | The relay must forward `0x0F` (until 13 Sep 2026 it struck it as a cheat, so a gift between humans vanished and the giver still lost the 1000). For the Mercenary the engine's ledger receives it (local player -1: `cmdBonus` adds for any target) |
 | F48 | **Alliance and vision are per-direction bits that must match.** `0x0D(pa, pb, which, on)` sets bit `pb` of byte `pa` in matrix `which` (`0x41E928`); `game_tick` derives the alliance byte `gs+0x46F54[10a+b]` and the vision mask bit from `0x41E970(matrix, a, b)` = bit `b` of byte `a` **and** bit `a` of byte `b`. Targeting (`collide.c`) and the shared-vision mask read those derived values. A one-sided "alliance" therefore changes nothing until the other side sets its bit too. | `0x41D7AC`, `0x41E928`, `0x41E970`, `0x419BB0` | The Mercenary sets its two bits towards its ally and tells the ally in chat to set theirs; its own rusher never targets the ally regardless (`isAlly`), but the game's auto-fire only stops once the bits match |
 | F49 | **End of a multiplayer battle.** Every UI frame the client (`0x40ACD5`, game types 1/2) calls `game_over 0x40E260(gs)`: walk players 0..7, `first` = the first one for which `player_alive 0x40E1D4(gs, p)` holds; every further alive player must be **mutually allied** with `first` (`0x41E970(matrix 0, first, p)`, both bits) or the game goes on; with no unallied alive pair it returns 1. `player_alive` = any living object (`life ∉ {0, 10}`) of team `p` other than mines (types 45/46), deployed towers (41/42) and the city's tower slot (`obj < 120 && obj % 15 == 5`): buildings, workers and mining towers all count. When the check fires the client sets `gs+0x471C8 = 1`, and `stat(0, 0)` = its own player if it is still alive (`ui+0x13B == 0`, set earlier when `player_alive(me)` first failed, `0x40AC2A`) else 8; `run_game` then shows the results screen (`0x404964`), which prints **Victory** (`0x482430`) when `stat(0, 0) == local player`, **Defeat** otherwise (`0x404A83`). Alliances therefore end the game: once all alive players are mutually allied, every one of them has won. | `0x40AB40`-`0x40AD3C`, `0x40E1D4`, `0x40E260`, `0x404964` | **The check is a star, not a set of pairs the player is in**: every alive player is compared with `first` (the lowest alive game player index), so with two rival bots alive a lone player allied with both does NOT win — the two bots are not allied with each other (first live test 13 Sep 2026, §16: matrix rows 1↔6 and 6↔7 set, 1↔7 clear, `game_over` false while both deals overlapped). Victory by alliance therefore needs the bots that share a paying ally to ally with each other too (or one bot left); done the same day as the "pacts" of `Bots.syncPacts` (§19.9). A lone player against a single remaining bot wins for 1000. The server does not need an end detection of its own: the clients leave when they show the results screen and the room resets |
+| F50 | **What survives on Fly.** The machine (`d8927e5c5ee3d8`, no volume) keeps nothing on disk across a restart or deploy, and `fly logs` shows only the last 100 lines. But Fly's Logs API (`GET https://api.fly.io/api/v1/apps/<app>/logs?next_token=<ns>`, header `Authorization: FlyV1 <flyctl token>`, 100 entries a page, paging forward from `next_token` = a nanosecond Unix time) holds about **seven days** of the app's stdout: on 18 Sep 2026 it paged back to 12 Sep 01:18 UTC. The server wrote 602 lines / 119 KB in the 24 h before (10 battles started; mostly hall joins/leaves by port scanners and the 30 s stats lines). No line-size or rate limit is documented; the recorder keeps its lines below a few KB anyway. | Fly Logs API, checked 18 Sep 2026 | A battle recording that must be recoverable after a player's report has to be in the log and small: `RECORD_LOG` (§18.6). Recover within a week with `tools/logs2replay.js --fetch`; for longer keeping add a log shipper or a volume |
 | F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
 ---
@@ -611,6 +612,10 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `LOG_LEVEL` | `info` | `debug` logs every frame |
 | `SYNC_CHECK` | `off` (`send` in `fly.toml` since 11 Sep 2026) | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
 | `RECORD_DIR` | unset | record every battle as JSON lines (sync frames, client checksums, engine checksums, MREADY, disconnects) for `tools/replay.js` (§18.4); independent of `SYNC_CHECK` |
+| `RECORD_LOG` | `false` (`on` in `fly.toml` since 18 Sep 2026) | record every battle into the **log** as compact `msg: "replay"` lines (§18.6), lossless for what the clients received: every sync frame byte for byte (UNTIL, the server's `0x08`, the commands) in chunks of 256 frames / 3000 hex characters, every client `0x08`, the events; only the engine's per-tick checksum lines are left out. 4-11 KB per game-minute (about 10 in `send` mode), lines of at most a few KB. `node tools/logs2replay.js --fetch dark-colony-server` rebuilds the recordings from Fly's Logs API (about seven days of history, F50) for `tools/replay.js`. Works beside `RECORD_DIR` |
+| `REPLAY_FILE` | unset | **replay mode** (§18.7): play this recording (a `RECORD_DIR` file or one rebuilt by `tools/logs2replay.js`) back to a real client. One room, no hall, no bots, the recorded speed; the lobby is the recorded one and the recorded sync frames are broadcast byte for byte. `SYNC_CHECK=send` becomes `shadow` (the frames already carry the original checksums) |
+| `REPLAY_SLOT` | `-1` | replay mode: the recorded human whose seat the connecting client takes (`-1` = the first recorded real player); race, colour and team of that seat are pinned to the recording |
+| `REPLAY_FULL_MAP` | `false` | replay mode: reveal the whole map to the watcher. `CHEAT(0, 0)` (the game's own full-map flag, F28) goes out as a standalone frame at battle start; the recorded frames stay untouched. Untested one-sided (18 Sep 2026): if the flag reaches the simulation the client aborts with a sync error within a few ticks, and the option must stay off |
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 | `MERCENARY_AI` | `rusher` | the fake players in battle (§19.8): `rusher` = every fake human plays a rush and sells an alliance with shared vision for 1000; `off` = idle bases as before. Needs the engine (`SYNC_CHECK` `shadow` or `send`): their game player indices and their money exist only there |
 | `MERCENARY_ALLY_S` | `120` | seconds an alliance bought for 1000 lasts; payments arriving while one runs are returned (§19.8) |
@@ -1402,6 +1407,82 @@ above, so that the plan can be followed from scratch without repeating the disco
   two-monitor start-up fix of the game exes, `tools/patch_ddraw_lost.py`, display doc §10.16). The
   lobby greeting reads `Welcome to Dark Colony server 2.3.` (`VERSION_SHORT`). Deployed to Fly.
 
+**18 Sep 2026, player reports: "sync error" kicked everybody; aliens "cannot build" some things**
+
+- Reports reached the maintainer second-hand (no log, no screenshot): a battle ended for every player
+  with the game's own "sync error" abort, and players of the Gray race saw odd limits on what they
+  could build. Investigation of the same day, nothing changed on the server yet:
+- **Fly kept no evidence of the battle.** `fly logs` shows only the last ~100 lines (18 Sep: all of
+  them hall joins by port scanners, `bad frame: invalid frame length 1351/1869/3907`, and Fly proxy
+  EOFs); the Logs API does hold about seven days of the app's log (F50, found later the same day),
+  but the machine `d8927e5c5ee3d8` (image of 15 Sep 2026, v182) has no volume and `RECORD_DIR` was
+  unset, so no recording of any live battle exists. The incident itself cannot be reconstructed.
+- **Mechanism of the kick (F14, F39, §18):** `fly.toml` runs `SYNC_CHECK=send`: every sync frame
+  carries the server engine's `0x08 (checksum, tick)`, each client compares it with its own history
+  and aborts on the first difference. With the fake host in slot 0 no client sends `0x08`, so the
+  server cannot notice that its engine diverged (`SyncCheck.onClientSync` never runs) and keeps
+  sending wrong checksums until every client is gone. A single divergence anywhere in the port ends
+  the battle for all players; the relay itself is unaffected.
+- **The engine was never verified with the Gray race.** All eleven recordings in `logs/replays/`
+  (11 and 13 Sep 2026) have every slot at race 0; the "every building and every unit type" game of
+  11 Sep was Human only; the engine tests mention race 1 three times (scenario loading only). Alien
+  buildings (`unitdef` rows 2/3, pod type `0x5D`, alien build animations), alien units and their
+  specials (abduction/stealing/cloak, night rule in `missile.js`) are ported but unconfirmed.
+  Checked again today against `dc16.asm`: the `0x09` handler `0x41CAA4` (type lookup by `level`
+  without race, refund with race 0) and `build_slot` `0x4450F4` (row `race*2+level`, funky tower
+  `0x51`->`0x70`) match `engine/commands.js` / `city.js` line by line, so the *building command*
+  itself is not the divergence; it must be somewhere in the alien game that follows.
+- **No server-side cause for the build limits was found.** The relay forwards `0x09`/`0x0A`/`0x0C`
+  untouched (`RELAY_IN_GAME`), the seven room maps have `%Depend -1` in every TEAM block, the
+  shared game folder's `GAMESTAT/*.TXT` and `INTRFACE`/`INTRF_HD` scripts are identical to the
+  retired `DC - Classic` copies apart from CRLF line endings and the `movies` rename in
+  `?SCENE.TXT`, and the lobby `'f'` handler `0x40EE10` applies whatever race comes back. Either the
+  players describe the kick that followed their build, or it is the game's own DEPEND rules.
+- **Recommended, maintainer's decision:** (1) `SYNC_CHECK=shadow` on Fly (edit `fly.toml`, `fly
+  deploy`): the engine keeps running for the bots, no `0x08` is sent, the game's own desync check
+  is inert again as before 11 Sep and nobody is kicked; (2) one recorded Gray-race game with
+  `MERCENARY_SLOT=7 SYNC_CHECK=shadow RECORD_DIR=logs/replays` (locally, as on 11 Sep) so that
+  `tools/replay.js` shows the first mismatching tick; (3) `send` again only when it replays clean.
+  Longer term a Fly volume for `RECORD_DIR` (or log shipping), otherwise the next report is as blind
+  as this one.
+- **Same day, maintainer requirement: recordings must be recoverable from the Fly log**, without
+  swamping it. Done as `RECORD_LOG` (§18.6, `src/logrecorder.js`, `tools/logs2replay.js`, F50):
+  the file recorder's events become compact `msg: "replay"` log lines - the start header, every
+  sync frame as broadcast (UNTIL, the server's `0x08` as 4-hex-character runs, the commands), every
+  client `0x08` (runs, first sender per tick), the events (`mready`, `mismatch`, `left`, `end`,
+  ...); only the per-tick engine checksum lines are left out (`tools/replay.js` recomputes them, and
+  in `send` mode they are the `0x08` of the next frame). A first version stripped the `0x08` and
+  sampled the client checksums; the maintainer asked for the full broadcast package, so that a
+  battle replays locally exactly - the decoded frames are now byte-identical to the payloads sent.
+  Every line carries the recording id `rec` (start time + room), so simultaneous battles in several
+  rooms do not mix; the room's own `recording` line names the id. Measured on the twelve local
+  recordings (1.5-9.4 min each): 8.8 MB of files become 487 KB of log, 4-11 KB per game-minute (about 10 in `send` mode with two
+  bots playing, 7 with a real client's checksums in `shadow` mode), 30-55 lines for an 8-10 minute
+  battle, the longest line 3.2 KB; all twelve decode back to byte-identical frames and identical
+  client checksums, and the five with client checksums replay to the same verdict with the same
+  number of compared ticks. `node tools/logs2replay.js
+  --fetch dark-colony-server --since 7d --replay` pages the Logs API (24 h = 602 lines in 8 pages,
+  3 s), writes `logs/replays/<start>-room<n>-<map>.jsonl` per battle and replays each. Dropped log
+  lines are detected through `seq` and the lost frames are reconstructed empty with a note.
+  `fly.toml` sets `RECORD_LOG = "on"`; not deployed yet, `SYNC_CHECK` unchanged (the decision above
+  is still open). 220 tests.
+- **Same day, third requirement: a recording must play back into a real dc16.exe.** "Save the
+  replay to a file, run the local relay server, connect with the real game, and the replay happens
+  as one of the clients." Done as **replay mode** (§18.7, `src/replay.js`, `REPLAY_FILE` /
+  `REPLAY_SLOT`): the server rebuilds the recorded lobby (the same map, every recorded human as a
+  fake with its recorded name, race, colour and team, AI and empty slots as recorded), seats the
+  connecting client in a recorded real player's chair with race, colour and team pinned, and in
+  battle broadcasts the recorded sync frames byte for byte at the recorded pace instead of building
+  its own; the watcher's orders are dropped, its echoes and progress reports pace the stream as
+  usual, its `0x08` checksums (when it is the lowest network id) are compared with the recorded
+  client checksums and the first divergence is logged; a differing MREADY game player index is
+  logged too. The frames carry the original server's `0x08`, so the client itself aborts with "sync
+  error" the moment its simulation leaves the recorded one - which is the point: a battle that
+  desynced on Fly can be watched locally, and the tick where the real game disagrees with the
+  server engine is found by `tools/replay.js` on the same file. Not yet tried with the real game;
+  the unit tests cover the lobby, the pinned seat, the byte-exact frames, the pacing of a recorded
+  stall, the dropped orders and the checksum comparison (224 tests).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1675,6 +1756,99 @@ bytes", the ring walk of the rally). Still to be exercised: player-versus-player
 units and buildings, artifacts, more than two players. After a `DISCONNECT` the AI takes over a
 base and the engine stops sending for that game (`ai.js` is not ported). `SYNC_CHECK` stays `off`
 by default; the verification loop for further work is §18.4.
+
+### 18.6 Recordings that survive on Fly: `RECORD_LOG` (18 Sep 2026)
+
+The first player report of a "sync error" (§16, 18 Sep 2026) could not be examined: the Fly
+machine has no volume, `RECORD_DIR` was unset, and `fly logs` shows only the last 100 lines. Fly
+does keep the app's stdout for about seven days in its Logs API (F50), so the maintainer's
+requirement is that a battle can be rebuilt from the log alone, without flooding the log.
+
+- **What must be kept** (maintainer, 18 Sep 2026: "the full package which has been broadcasted
+  including checksums, so we can precisely replay the game locally"): the start header (map, tick
+  length, lobby slots, ~800 bytes), every sync frame byte for byte - `UNTIL(a, until)`, the server's
+  `0x08 (checksum, tick)`, the commands - and every `0x08` a client sent. Only the file recorder's
+  per-tick `engine` lines are dropped: in `send` mode the same values are the `0x08` of the next
+  frame, otherwise `tools/replay.js` recomputes them. The compression is in the encoding, not in
+  leaving data out: regular frames (until = previous + 1, a = until - LOOKAHEAD - 1) cost nothing,
+  a checksum costs 4 hex characters, and the frames' commands are stored as they are.
+- **Format** (`src/logrecorder.js`): JSON log lines `msg: "replay"` with `rec` (recording id =
+  start time in base 36 + `r` + room; every line of a battle carries it, so several rooms can
+  record into the same log at once, and the room's `recording` log line names it), `seq` (0, 1, 2,
+  ...; a gap = a dropped line) and `ev`: `start`, `frames` (a chunk: `u0` = until of the first
+  frame, `n` frames, `look` = LOOKAHEAD + 1, `x` = `[i, a, until]` of the frames that are not
+  "previous until + 1, a = until - look", `s` = `[i0, hex]` runs of the server's `0x08` checksums,
+  4 hex characters per frame, for a `0x08` that is the first command and carries tick = the previous
+  until, `sx` = `[i, checksum, tick]` for any other first-command `0x08`, `c` = `[i, hex]` the
+  frames' remaining commands untouched, `r` = `[tick0, slot, hex]` runs of client checksums, 4 hex
+  characters per tick, first sender per tick), `rx` (client runs without a chunk), and the file
+  recorder's `mready`, `left`, `note`, `assert`, `mismatch`, `pause`, `resume`, `end` unchanged. A
+  chunk closes after 256 frames or 3000 hex characters, so no line exceeds a few KB. `LOOKAHEAD + 1`
+  comes from the header, not from the first frame: a recording of 18 Sep starts with `UNTIL(0, 10)`.
+  Decoding rebuilds each frame's payload byte for byte (`build.sync` for the checksum head).
+- **Cost**: 4-11 KB per game-minute (measured; about 10 in `send` mode), 30-55 lines for a
+  ten-minute battle, so an hour-long eight-player battle is roughly 0.6-1 MB and ten of them a day
+  about 10 MB, against 602 lines / 119 KB the server logged in the 24 h before (F50).
+  `fly logs` (the 100-line tail) gets noisier; filter with `grep -v '"replay"'`.
+- **Recovery**: `node tools/logs2replay.js --fetch dark-colony-server [--since 7d] [--raw FILE]
+  [--out logs/replays] [--list] [--replay]` pages the Logs API (token from `--token`,
+  `FLY_API_TOKEN` or `fly auth token`), or takes files: a `fly logs` capture (text or `--json`), a
+  Logs API document or the server's stdout. Each recording becomes `<start>-room<n>-<map>.jsonl`
+  in the file recorder's format; `--replay` runs `tools/replay.js` on it. Missing `seq` values are
+  reported, the frames of a lost chunk between two chunks are reconstructed empty (timeline intact,
+  commands lost) with a `note`; a lost first chunk or start line cannot be repaired.
+- **Verified** against the twelve local file recordings: every one round-trips to byte-identical
+  frames and identical client checksums (8.8 MB -> 487 KB), and the ones with client checksums
+  replay to the same verdict; a 24 h fetch of the live app ran (8 pages, 3 s, no recordings yet
+  because the build is not deployed). Still to do: deploy, then fetch a real battle back and replay
+  it.
+
+### 18.7 Replay mode: a recording played back into a real dc16.exe (18 Sep 2026)
+
+Maintainer requirement of 18 Sep 2026: save a recording to a file, run the relay server locally,
+connect with the real game, and the recorded battle plays as if one were one of its players.
+`REPLAY_FILE=<recording.jsonl> node src/index.js` (`src/replay.js`) does that; `REPLAY_SLOT` picks
+the seat.
+
+- **Lobby.** The room is built from the recording's `start` header, not from `ROOMS`: the same
+  map (the shipped table, or the recorded name and terrain for an unknown file), every recorded
+  human as a fake with its recorded name, race, colour and team, AI and empty slots as recorded.
+  One seat stays free: that of the recorded real player (`REPLAY_SLOT`, default the first one in
+  the header's `players`; a bot's seat is allowed too). The connecting client gets exactly that
+  slot, with the recorded race, colour and team; changing them in the lobby is answered with the
+  recorded values (`'f'` race, `COLOUR_SET`, `TEAM_SET`) and a chat line. Nobody else can join.
+  `MIN_PLAYERS` is 1, no hall, no bots (`MERCENARY_AI=off`), `TICK_MS`/`LOOKAHEAD` from the
+  recording, `SYNC_CHECK=send` becomes `shadow`.
+- **Start.** READY starts the countdown as usual. The client's MREADY game player index is compared
+  with the recorded one for that slot; a difference is logged (the lobby differed, the battle
+  will diverge).
+- **Battle.** `Game.stepReplay` replaces the frame builder: recorded frame k (`UNTIL(a_k, u_k)` +
+  its commands, the original server's `0x08` included) is broadcast byte for byte once
+  `a_{k+1} - a_k` ticks of real time have accumulated (normally one; a recorded stall is
+  reproduced as a pause of the same length) and nobody is `MAX_LAG` behind. The client's echoes
+  and progress reports work as in a live game, so lag and eviction behave normally. Its orders,
+  chat and gifts are counted and dropped (they would change the game); pause/resume still works.
+  Its `0x08`, sent when it is the lowest network id (recordings made with `MERCENARY_SLOT > 0`),
+  is compared with the recorded client checksum of that tick and the first divergence is logged.
+  After the last frame nothing more is sent; the watcher quits the game. The room resets when the
+  client leaves, ready for the next viewer.
+- **Verification is the client's own.** In a `send`-mode recording every frame carries the
+  original server engine's checksum; the real game compares it with its own history and aborts
+  with "sync error" at the first difference. A replay that runs to the end therefore proves that
+  the real game reproduces the recorded battle from the recorded lobby and frames - and a replay
+  that aborts shows the tick. Against the *engine*, `node tools/replay.js <file>` on the same
+  recording gives the corresponding verdict offline (§18.4).
+- **Whole map.** By default the watcher sees the recorded player's fog of war. `REPLAY_FULL_MAP=on`
+  sends `CHEAT(0, 0)` (flag 0 = full map view, F28) to the watcher as a standalone frame when the
+  battle starts; the client holds a non-UNTIL frame and executes it with the next sync frame (F6),
+  so the map is open from the first recorded tick and no recorded frame changes. Whether the flag
+  stays display-only when only one machine has it is untested: debug mode always gave it to every
+  client. If the watcher's game aborts with a sync error within the first ticks with the option on
+  and runs without it, the flag reaches the simulation and the option must stay off.
+- **Limits.** The recording must hold every frame from the start (a lost first chunk in a log
+  recording cannot be repaired, §18.6). The watcher sees the battle from the recorded player's
+  seat and cannot act. Names are not pinned (the client keeps its own; nothing in the simulation
+  reads them). Not yet tried with the real game (18 Sep 2026); covered by `test/replay.test.js`.
 
 ---
 

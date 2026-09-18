@@ -13,6 +13,7 @@ import { Game } from './game.js';
 import { Watchdog } from './watchdog.js';
 import { SyncCheck } from './synccheck.js';
 import { Recorder } from './recorder.js';
+import { LogRecorder, teeRecorders } from './logrecorder.js';
 import { Bots } from './mercenary.js';
 
 export { STATE, SLOT_TYPE, SLOTS };
@@ -26,7 +27,7 @@ export class Room {
    * @param log      logger (log.js)
    * @param now      monotonic clock in ms (injectable for tests)
    * @param random   random integer in [0, n) (injectable for tests)
-   * @param opts     { id: 1-based room number, map: entry of config.ROOM_LIST }
+   * @param opts     { id: 1-based room number, map: entry of config.ROOM_LIST, engine, replay: a Replay (replay.js) }
    */
   constructor(config, log, now = () => performance.now(), random = (n) => randomInt(n), opts = {}) {
     this.config = config;
@@ -34,10 +35,12 @@ export class Room {
     this.now = now;
     this.random = random;
     this.id = opts.id ?? 1;
-    this.map = opts.map ?? config.ROOM_LIST[0];
+    this.replay = opts.replay ?? null; // replay mode (plan §18.7): the lobby and the frames come from a recording
+    this.map = opts.map ?? this.replay?.map ?? config.ROOM_LIST[0];
     // occupied slots (fakes, AI and real players) may not exceed the map's player count (F22)
     this.capacity = this.map.players;
     this.minPlayers = Math.max(1, Math.min(config.MIN_PLAYERS, this.capacity - config.FAKE_PLAYERS));
+    if (this.replay) this.minPlayers = 1; // the one client in the recorded player's seat
     this.state = STATE.LOBBY;
     this.clients = new Set();
     this.startingAt = 0;
@@ -51,7 +54,10 @@ export class Room {
     // index.js (enginebridge.js) and handed in through setEngine(); tests inject a fake one.
     this.sync = new SyncCheck(this, {
       mode: config.SYNC_CHECK,
-      recorder: config.RECORD_DIR ? new Recorder(config.RECORD_DIR, this.log) : null,
+      recorder: teeRecorders([
+        config.RECORD_DIR ? new Recorder(config.RECORD_DIR, this.log) : null,
+        config.RECORD_LOG ? new LogRecorder(this.log) : null,
+      ]),
       createGame: opts.engine?.createGame ?? null,
       loadMapJson: opts.engine?.loadMapJson ?? null,
     });
@@ -103,6 +109,13 @@ export class Room {
   }
 
   resetSlots() {
+    if (this.replay) {
+      // the recorded lobby: every recorded human a fake with its recorded name, race, colour and
+      // team, AI and empty slots as recorded, the replayed player's seat left free (§18.7)
+      const slots = this.replay.lobbySlots();
+      for (let s = 0; s < SLOTS; s++) this.slots[s] = slots[s];
+      return;
+    }
     const cfg = this.config;
     for (let s = 0; s < SLOTS; s++) this.slots[s] = this.emptySlot(s);
     // the fake host "Mercenary" sits in MERCENARY_SLOT (0 unless a diagnostic session moves it so
@@ -131,6 +144,7 @@ export class Room {
 
   /** Free slots a real player or a relocated fake may take: never slot 0 (the lowest network id, F14). */
   seatableSlots() {
+    if (this.replay) return this.freeSlots().filter((sl) => sl.slot === this.replay.seat); // the recorded player's seat only
     return this.freeSlots().filter((sl) => sl.slot > 0);
   }
 
@@ -212,6 +226,13 @@ export class Room {
     slot.race = 0;
     slot.colour = this.freeColour(s);
     slot.team = s;
+    if (this.replay) {
+      // pinned to the recording: the start shuffle and the simulation depend on them
+      const rec = this.replay.seatSlot;
+      slot.race = rec.race;
+      slot.colour = rec.colour;
+      slot.team = rec.team;
+    }
     // Present, not ready. A client from the hall pressed READY to get here and its READY button stays
     // pressed (no lobby message can release it, F36), so its first click in the room sends status 1,
     // a no-op, and the second one readies it. The maintainer prefers that to an automatic start.

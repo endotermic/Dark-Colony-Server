@@ -49,6 +49,23 @@ export const DEFAULTS = Object.freeze({
   // Record every battle (sync frames, client checksums, engine checksums) as JSON lines into this
   // directory for offline replay with tools/replay.js; '' = off. Independent of SYNC_CHECK.
   RECORD_DIR: '',
+  // Record every battle into the LOG as compact "replay" lines (src/logrecorder.js: start header,
+  // every sync frame byte for byte incl. the server's 0x08, every client 0x08, events; only the
+  // per-tick engine checksum lines are left out) so that a battle played on Fly - no volume, root
+  // file system lost on restart - can be rebuilt from the Logs API with tools/logs2replay.js up to a
+  // week later and replayed exactly (plan §18.6). About 10 KB per game-minute in send mode.
+  RECORD_LOG: false,
+  // Replay mode (plan §18.7): play this recording (a RECORD_DIR file, or one rebuilt from the Fly
+  // log by tools/logs2replay.js) back to a real dc16.exe. One room, no hall, no bots; the lobby is
+  // the recorded one, the connecting client sits in REPLAY_SLOT (-1 = the first recorded real
+  // player) with the recorded race, colour and team, and the recorded sync frames are broadcast
+  // byte for byte. '' = normal server.
+  REPLAY_FILE: '',
+  REPLAY_SLOT: -1,
+  // Replay mode: reveal the whole map to the watcher with the game's own flag (CHEAT(0, 0), F28),
+  // sent as a standalone frame at battle start, the recorded frames untouched. Untested one-sided:
+  // if the flag reaches the simulation the client aborts with a sync error within a few ticks.
+  REPLAY_FULL_MAP: false,
   // Lobby slot of the fake host. 0 (default) makes it the lowest network id, so no client sends
   // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every
   // tick, which RECORD_DIR/SYNC_CHECK=shadow compare with the engine. Real players never get slot 0.
@@ -144,6 +161,7 @@ function validate(cfg) {
   cfg.SYNC_CHECK = String(cfg.SYNC_CHECK).trim().toLowerCase();
   if (!SYNC_CHECK_MODES.includes(cfg.SYNC_CHECK)) throw new Error(`SYNC_CHECK must be one of ${SYNC_CHECK_MODES.join(', ')}`);
   if (!Number.isInteger(cfg.MERCENARY_SLOT) || cfg.MERCENARY_SLOT < 0 || cfg.MERCENARY_SLOT > 7) throw new Error('MERCENARY_SLOT must be 0..7');
+  if (!Number.isInteger(cfg.REPLAY_SLOT) || cfg.REPLAY_SLOT < -1 || cfg.REPLAY_SLOT > 7) throw new Error('REPLAY_SLOT must be -1..7');
   cfg.MERCENARY_AI = String(cfg.MERCENARY_AI).trim().toLowerCase();
   if (!MERCENARY_AI_MODES.includes(cfg.MERCENARY_AI)) throw new Error(`MERCENARY_AI must be one of ${MERCENARY_AI_MODES.join(', ')}`);
   if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');

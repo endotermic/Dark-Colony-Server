@@ -10,12 +10,19 @@ import { RoomPool } from './rooms.js';
 import { Hall } from './hall.js';
 import { VERSION } from './version.js';
 import { loadEngine } from './enginebridge.js';
+import { loadReplay, replayConfig } from './replay.js';
 
 const STEP_INTERVAL_MS = 5;
 const WATCHDOG_INTERVAL_MS = 500;
 
 export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
-  const pool = new RoomPool(config, log);
+  // replay mode (plan §18.7): one room that plays a recording back to a real client
+  const replay = config.REPLAY_FILE ? loadReplay(config.REPLAY_FILE, { slot: config.REPLAY_SLOT }) : null;
+  if (replay) {
+    config = replayConfig(config, replay);
+    log.info('replay mode', replay.summary());
+  }
+  const pool = new RoomPool(config, log, undefined, undefined, { replay });
   const hall = new Hall(pool, config, log);
   // the battle engine (plan §18) is loaded in the background; rooms start as plain relays until then
   const engineReady = config.SYNC_CHECK !== 'off' ? loadEngine(log).then((e) => pool.setEngine(e)) : Promise.resolve();
@@ -47,6 +54,8 @@ export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
   return {
     pool,
     hall,
+    replay,
+    config,
     rooms: pool.rooms,
     room: pool.rooms[0],
     server,
@@ -70,18 +79,20 @@ if (isMain) {
   const srv = startServer(config, log);
   srv.listening.then((addr) =>
     log.info('listening', {
+      ...(srv.config !== config ? { mode: 'replay' } : {}),
       version: VERSION,
       port: addr.port,
-      hall: config.HALL,
-      rooms: config.ROOM_LIST.map((m) => `${m.index}:${m.file} ${m.name}`),
+      hall: srv.config.HALL,
+      rooms: srv.config.ROOM_LIST.map((m) => `${m.index}:${m.file} ${m.name}`),
       marqueeMs: config.MARQUEE_MS,
-      tickMs: config.TICK_MS,
+      tickMs: srv.config.TICK_MS,
       minPlayers: config.MIN_PLAYERS,
       fakePlayers: config.FAKE_PLAYERS,
       debug: config.DEBUG,
-      syncCheck: config.SYNC_CHECK,
+      syncCheck: srv.config.SYNC_CHECK,
       recordDir: config.RECORD_DIR || undefined,
       mercenarySlot: config.MERCENARY_SLOT,
+      replay: config.REPLAY_FILE || undefined,
     }),
   );
   const shutdown = (signal) => {

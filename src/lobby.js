@@ -61,6 +61,7 @@ export class Lobby {
    */
   greeting() {
     const r = this.room;
+    if (r.replay) return this.replayGreeting();
     let merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`;
     if (r.bots?.configured) {
       const others = r.bots.others.map((b) => b.name);
@@ -68,6 +69,17 @@ export class Lobby {
       merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${who} for ${this.cfg.MERCENARY_ALLY_S} s.`;
     }
     return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`, merc];
+  }
+
+  /** Replay mode (§18.7): what the room is and what the client may (not) do. */
+  replayGreeting() {
+    const rp = this.room.replay;
+    const when = rp.summary().recordedAt ? ` of ${String(rp.summary().recordedAt).slice(0, 16).replace('T', ' ')}` : '';
+    return [
+      `Replay${when}: ${rp.map.name}, ${Math.round(rp.lastUntil * rp.tickMs / 60000)} min.`,
+      `You sit in ${rp.seatName}'s seat (slot ${rp.seat}); race, colour and team are fixed. Press READY.`,
+      'In battle your orders are not relayed: watch. A sync error means the replay diverged.',
+    ];
   }
 
   /** The host's lobby state dump for a client in slot `s` (protocol doc §6.1), without the 'd'. */
@@ -138,6 +150,12 @@ export class Lobby {
             break;
           }
           if (slot.status === 2) break; // the game ignores it for ready slots
+          if (r.replay) {
+            // pinned (§18.7): the client applies whatever race comes back (0x40EE10)
+            r.broadcast(build.race(slot.race, s));
+            r.say('replay: the race is fixed by the recording');
+            break;
+          }
           slot.race = d.value;
           r.broadcast(build.race(d.value, s));
           break;
@@ -150,6 +168,11 @@ export class Lobby {
             break;
           }
           if (slot.status === 2) break;
+          if (r.replay) {
+            r.broadcast(build.colourSet(slot.colour, s));
+            r.say('replay: the colour is fixed by the recording');
+            break;
+          }
           // mirror of the client's handler: add delta until a colour that no ready slot holds
           let c = slot.colour;
           for (let i = 0; i < 8; i++) {
@@ -168,6 +191,11 @@ export class Lobby {
             break;
           }
           if (slot.status === 2) break;
+          if (r.replay) {
+            r.broadcast(build.teamSet(slot.team, s));
+            r.say('replay: the team is fixed by the recording');
+            break;
+          }
           slot.team = (slot.team + d.value) % 8;
           r.broadcast(build.teamCycle(d.value, s));
           break;
@@ -321,6 +349,12 @@ export class Lobby {
           client.mready = true;
           client.gamePlayer = d.player;
           r.log.info('client loaded', { id: client.id, slot: client.slot, gamePlayer: d.player });
+          if (r.replay) {
+            const rec = r.replay.expectedGamePlayer(client.slot);
+            if (rec !== null && rec !== d.player) {
+              r.log.warn('replay: start shuffle differs from the recording, the battle will diverge', { slot: client.slot, recorded: rec, client: d.player });
+            }
+          }
           this.checkAllLoaded(now);
           break;
         }
