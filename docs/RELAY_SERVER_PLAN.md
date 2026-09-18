@@ -1522,7 +1522,12 @@ above, so that the plan can be followed from scratch without repeating the disco
   read `HBNFUFL.A0x`. Both repository exes re-patched, `Apply-DarkColonyPatches.ps1` regenerated;
   tested on `subst` drives D/E/F/G with the game on G: and `anim.dat` in `D:\dc\` (stock exe writes
   two probe files there in 14 s, patched exes none, and they start without the HBNFUFL files);
-  display doc §10.19. A not-ready (no-medium) drive cannot be simulated with `subst`.
+  display doc §10.19. A not-ready (no-medium) drive cannot be simulated with `subst`. Then, same
+  day, "the patcher should contain only one CD fix": `cdcheck` (the three hand-patched 2025 bytes)
+  and `cddrive` merged into **`nocd`**, all produced by `patch_nocd.py`, first in the order;
+  `patch_resolution.py` identifies its input by size when the MD5 is not the 2025 one. Exe bytes
+  unchanged. HBNFUFL.A0x answer for the originals: the first character is the letter of the drive
+  holding the CD (or the mounted CD image), `D:` in the repository.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

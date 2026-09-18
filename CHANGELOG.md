@@ -28,6 +28,11 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   cannot be simulated with `subst` and rests on the trace. (A first two-byte version the same
   morning - probe `ret` + first format byte zeroed - was replaced; an intermediate build with a
   short `jmp` for a +0x9C hop crashed in the smoke test and never left the working tree.)
+  **One CD fix** (same day, maintainer requirement): the patcher's `cdcheck` (the three hand-patched
+  2025 bytes, applied by the generator itself) and `cddrive` merged into **`nocd`**, produced entirely
+  by `patch_nocd.py` (the 2025 bytes are now pattern-located sites of the tool; the Council Wars
+  C-runtime byte stays Council Wars only). `patch_resolution.py` accepts its input by size when the
+  MD5 is not the 2025 one. Exe bytes unchanged; `-Patches nocd` alone gives the CD-free 640x480 build.
 
 - **Battle recordings in the log** (18 Sep 2026, maintainer requirement after a player's "sync
   error" report that left no evidence; `src/logrecorder.js`, `tools/logs2replay.js`, config

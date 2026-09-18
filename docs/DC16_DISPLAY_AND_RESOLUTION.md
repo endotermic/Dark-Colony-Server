@@ -2523,6 +2523,22 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   them). A not-ready drive (no medium) cannot be built with `subst`; that case rests on the trace.
 * **Left as it was:** the in-game check `0x411386`ff and `0x410A10` still *read* the flag (always
   0, no file access); the stock leak of `D:\dc\a<n>` temp files on a writable `D:\dc\` is moot.
+* **One CD fix (same day, maintainer requirement "the patcher should contain only one CD fix"):**
+  the patcher's `cdcheck` (the three hand-patched 2025 bytes — `0x404F1F`, `0x405C9F` / `0x405C7F`
+  jne→jmp, Council Wars `0x478DD9` jne→je — which the generator used to apply itself) and `cddrive`
+  are merged into **`nocd`**, produced entirely by `patch_nocd.py` (the 2025 bytes are
+  pattern-located sites of the tool; 13 / 14 edits incl. the two `.reloc` entries), first in the
+  order. `patch_resolution.py identify()` accepts the input by size (659456 / 659968) when the MD5
+  is not the 2025 CD-fixed one. Exe bytes unchanged (same SHA-256); `-Patches nocd` alone builds the
+  CD-free 640x480 exe (SHA-256 `e64c215d…` for Classic).
+* **`HBNFUFL.A01` / `.A02` for the untouched originals:** the file is what the installer wrote — the
+  first character is the **letter of the drive that holds the CD** (or a mounted CD image with a
+  `/DC/` tree: `D:\dc\anim.dat` must exist and the drive must refuse to create `D:\dc\a<n>`), the
+  rest (`:\r\n\x1a`) is ignored; `fgetc` reads one byte, case does not matter. The repository keeps
+  `D:` because the maintainer's CD image mounts as `D:`. If the CD drive has another letter, edit
+  the first byte; a letter that does not exist makes the probe fail instantly and the original then
+  behaves as "no CD" (greyed menu, Council Wars asserts in `widget.c`) — the patched exes ignore the
+  file entirely.
 
 ## 11. Risks
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Remove the CD path from Dark Colony completely (dc16.exe / ENGEXP16.EXE builds).
+"""The one CD fix: no CD required and no CD path at all (dc16.exe / ENGEXP16.EXE builds).
 
-The `cdcheck` patch only bypasses the *result* of the CD test.  All the CD machinery stays in the
+Since 18 Sep 2026 this tool is the whole CD fix (patcher id `nocd`), maintainer request: "one CD fix
+which correctly fixes it".  It carries the historical 2025 `cdcheck` bytes - the two menu tests of
+the "CD present" flag (`call cd_flag ; test al,al ; jne` at 0x00404F1F and 0x00405C9F / 0x00405C7F,
+jne -> jmp) and, for Council Wars only, the inverted C-runtime jne at 0x00478DD9 that stopped the
+expansion from throwing the player out of a running game - and everything below.
+
+Those bypasses alone only ignore the *result* of the CD test.  All the CD machinery stays in the
 exe and runs, in every build, patched or not:
 
   * `safefunc.c` start-up (0x00405F88 Classic / 0x00405F68 Council Wars) opens HBNFUFL.A01
@@ -44,10 +50,11 @@ Edits per exe (all inside existing instructions / strings; nothing moves):
      "A sound file is missing - see error.log", NUL-padded to the original length: the box the wave
      loader shows for a missing WAV tells the truth.
 
-HBNFUFL.A01 / .A02 are no longer read by the patched exes (the originals still need them).  All
-sites are found by byte pattern / string, so one tool serves both builds; it refuses to run unless
-every site is found exactly once.  An exe carrying the 18 Sep 2026 two-byte form of this fix
-(probe `ret` + first format byte zeroed) is upgraded in place.
+HBNFUFL.A01 / .A02 are no longer read by the patched exes (the originals still need them: the first
+character is the letter of the drive that holds the CD).  All sites are found by byte pattern /
+string, so one tool serves both builds; it refuses to run unless every site is found exactly once.
+An exe carrying only the 2025 `cdcheck` bytes, or the 18 Sep 2026 two-byte form of the drive fix
+(probe `ret` + first format byte zeroed), is upgraded in place.
 
 CLI
     python patch_nocd.py verify EXE
@@ -153,9 +160,25 @@ def sites_for(img):
              else wave + 5 + struct.unpack_from('<i', d, f(wave) + 1)[0])
     # 7. movie opener: je after "test al,al" on the CD flag
     rb = img.find('E8 ?? ?? ?? ?? 84 C0 ?? 63 E8 ?? ?? ?? ?? 8D BD ?? ?? ?? ?? 89 C6 57', 'movie opener CD fallback', 7)
+    # 0. the three historical `cdcheck` bytes (2025): the two menu tests of the "CD present" flag
+    menu1 = img.find('8B 45 F0 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 ?? 66 BB 01 00 00 00', 'start-up CD test', 15)
+    menu2 = img.find('89 45 F8 E8 ?? ?? ?? ?? 84 C0 ?? 12 BB 01 00 00 00', 'main-menu CD test', 10)
     init_old = bytes(d[f(init):f(init) + 10])
     init_stock = init_old[:1] == b'\xBA' and init_old[5:6] == b'\xB8'
     sites = [
+        ('start-up CD test: jne -> jmp after "call cd_flag ; test al,al" (the game starts without the disc)',
+         f(menu1), [b'\x75'], b'\xEB'),
+        ('main-menu CD test: jne -> jmp after the same test (the CD-gated menu buttons stay enabled)',
+         f(menu2), [b'\x75'], b'\xEB'),
+    ]
+    if size == 659968:
+        # Council Wars only (the historical third `cdcheck` byte): a jne in C-runtime code that the 2025
+        # hand patch inverted because the expansion threw the player out of a running game without the
+        # disc; kept byte-identical to the build that has been played since.
+        crt = img.find('53 51 89 C3 89 D1 8C DA E8 ?? ?? ?? ?? 85 C0 ?? 09 89 CA 89 D8 E8', 'in-game CD test (CRT)', 15)
+        sites.append(('in-game CD test (Council Wars only): jne -> je in the C-runtime write path, the 2025 hand patch that stopped the expansion from throwing the player out of a running game',
+                      f(crt), [b'\x75'], b'\x74'))
+    sites += [
         ('start-up: mov edx,"r" / mov eax,"hbnfufl.a0x" -> jmp to the "full" marker check (HBNFUFL is not opened, no drive letter, no CD path, no probe)',
          f(init), [init_old] if init_stock else [], jmp_rel32(init, full) + NOP * 5),
         ('start-up: call cd_probe -> 5 NOPs', f(probe_call), [b'\xE8' + struct.pack('<i', probe - (probe_call + 5))], NOP * 5),

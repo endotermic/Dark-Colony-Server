@@ -16,9 +16,10 @@ patch_*.py tools beside this file.  The generated script is validated here:
 the sum of the per-patch edits must reproduce every intermediate exe, and the end result is
 hashed into the script as the reference for "all patches applied".  Re-run after adding a patch
 (add it to PATCHES/BUILDS below, with a block parser for its plan output).  The OZI patch is
-kept last because its 16-byte .reloc insert shifts every later relocation entry; `cddrive`
-(patch_nocd.py, 18 Sep 2026) is applied right after `resolution`, not before it, because
-patch_resolution.py identifies its input by MD5 and expects exactly the cdcheck-fixed exe.
+kept last because its 16-byte .reloc insert shifts every later relocation entry.  The CD fix is
+ONE patch, `nocd` (patch_nocd.py; maintainer requirement 18 Sep 2026): it carries the three
+hand-patched 2025 bytes (formerly `cdcheck`) and the removal of the whole CD path; it goes first,
+and patch_resolution.py accepts the resulting exe by size (its MD5 table only knows the 2025 state).
 """
 import re, struct, hashlib, sys, os, shutil, subprocess, tempfile
 
@@ -27,9 +28,6 @@ GAME = sys.argv[1]
 OUT = sys.argv[2]
 WORK = tempfile.mkdtemp(prefix='dcpatch_')
 
-CD_BYTES = {'classic': [(0x431F, 0xEB), (0x509F, 0xEB)],
-            'cw': [(0x431F, 0xEB), (0x781D9, 0x74), (0x507F, 0xEB)],
-            'maped': []}                       # the map editor has no CD check; its build starts at its first tool step
 # Since 15 Sep 2026 both games run from the Council Wars folder (maintainer decision): the originals keep
 # their stock names, "DC - Council wars/dc16.exe" and "ENGEXP16.EXE", and the patched builds are
 # "dc16new.exe" and "engexp16new.exe" beside them (the latter was DCEXP16.EXE from 10 to 15 Sep 2026).
@@ -85,14 +83,14 @@ def ozi_data(g):
     return files
 
 
-TOOL_OF = {'cddrive': 'patch_nocd.py',
+TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
-PLAN_OF = {'cddrive': 'nocd',
+PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
@@ -113,26 +111,17 @@ def replay(g, steps):
     """Return (original bytes, [(step, bytes after that step)]) and fill _plans[(g, plan name)]."""
     orig = open(ORIGINALS[g], 'rb').read()
     work = os.path.join(WORK, f'{g}.exe')
-    cur = bytearray(orig)
-    for off, v in CD_BYTES[g]:
-        assert cur[off] == 0x75, hex(off)
-        cur[off] = v
-    open(work, 'wb').write(cur)
-    # plans: patch_resolution identifies builds by MD5 and wants the CD-fixed exe; the others take the original
-    if 'resolution' in steps:
-        _plans[(g, 'resolution')] = run_tool('patch_resolution.py', 'plan', work)
+    open(work, 'wb').write(orig)
+    # every plan is taken on an untouched copy of the original (the plans describe stock -> patched bytes)
     orig_copy = os.path.join(WORK, f'{g}_orig.exe')
     open(orig_copy, 'wb').write(orig)
     for step in steps:
-        if step in ('cdcheck', 'resolution') or (g, PLAN_OF[step]) in _plans:
+        if (g, PLAN_OF[step]) in _plans:
             continue
         tool, _args = tool_of(step)
         _plans[(g, PLAN_OF[step])] = run_tool(tool, 'plan', orig_copy, PLAN_ARGS.get(PLAN_OF[step], []))
-    states = [('cdcheck', bytes(cur))] if CD_BYTES[g] else []
-    assert (steps[0] == 'cdcheck') == bool(CD_BYTES[g]), (g, steps[0])
+    states = []
     for step in steps:
-        if step == 'cdcheck':
-            continue
         tool, args = tool_of(step)
         run_tool(tool, 'apply', work, args)
         states.append((step, open(work, 'rb').read()))
@@ -265,64 +254,48 @@ def blocks_nocd(g):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
         assert len(old) == len(new) == int(m.group(3))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip(), old, new))
-    assert len(out) == 9, len(out)
+    assert len(out) == (11 if g == 'classic' else 12), (g, len(out))      # 2/3 historical cdcheck bytes + 9 CD-path sites
     out += reloc_lines(t, '.reloc table: ')
-    assert len(out) == 11, len(out)
+    assert len(out) == (13 if g == 'classic' else 14), (g, len(out))
     return out
-
-def blocks_cdcheck(g):
-    if g == 'classic':
-        return [(0x431F, 1, 'jne -> jmp right after "call 0x405E8C ; test al,al" (the CD-presence check returning a bool in al): always take the "CD present" path'),
-                (0x509F, 1, 'jne -> jmp after the same CD test in the main-menu builder: the menu buttons that are greyed out without the CD stay enabled')]
-    return [(0x431F, 1, 'jne -> jmp right after "call 0x405E8C ; test al,al" (the CD-presence check returning a bool in al): always take the "CD present" path'),
-            (0x507F, 1, 'jne -> jmp after the same CD test in the main-menu builder: the menu buttons that are greyed out without the CD stay enabled'),
-            (0x781D9, 1, 'jne -> je: the second CD check, run later, that threw the player out of a running game; inverted so it passes without the disc')]
 
 # ----------------------------------------------------------------------------------------------
 # patch catalogue (canonical application order)
 # ----------------------------------------------------------------------------------------------
 PATCHES = [
- dict(id='cdcheck', name='No CD required', date='28-30 Sep 2025', tool='hand-patched (commits f6246e1, 314ae66 in endotermic/Dark-Colony)',
-      doc='CLAUDE.md "Patches applied so far"', blocks=blocks_cdcheck,
+ dict(id='nocd', name='No CD: the game neither needs the disc nor touches the CD path', date='28-30 Sep 2025 / 18 Sep 2026', tool='tools/patch_nocd.py',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.19; CLAUDE.md "Patches applied so far" (the 2025 bytes)', blocks=blocks_nocd,
       desc='''The game refuses to start, and greys out most main-menu buttons, when it cannot find its
-CD in a drive.  One function (VA 0x405E8C) answers "is the CD here?" with a bool in al and every
-caller does "test al,al ; jne ok".  Turning that conditional jump (opcode 75) into an
-unconditional jump (opcode EB) makes the game behave as if the disc were always present.
-Council Wars has a third test that runs while a game is in progress and throws the player back
-to the menu; that one is inverted (75 -> 74, jne -> je).
+CD in a drive.  This one fix removes the whole CD business from the exe:
 
-Nothing else changes: no code is added, no file access is redirected, one byte per site.'''),
- dict(id='cddrive', name='No CD path at all (no HBNFUFL, no drive probe, no CD fallback, no "insert the CD")', date='18 Sep 2026', tool='tools/patch_nocd.py',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.19', blocks=blocks_nocd,
-      desc='''"No CD required" only ignores the ANSWER of the CD test.  All the CD machinery stays in the
-exe and runs: at start-up the game opens HBNFUFL.A01 / HBNFUFL.A02 (the drive letter its
-installer recorded, "D:" in the repository; a missing file is a silent exit), builds the path
-"D:\\dc\\" and probes it - it opens D:\\dc\\anim.dat and, if that exists, tries to create a file
-there to see whether the medium refuses writes.  The same probe runs again every time a menu
-screen opens and periodically during a battle, two loaders fall back to "D:\\dc\\<name>" when a
-file is missing locally, the sound loader then asks to "insert The Dark Colony CD and Restart",
-and the movie opener falls back to the CD when the flag says the disc is in.
+  1. The two menu tests of the "CD present" flag ("call cd_flag ; test al,al ; jne ok") become
+     unconditional jumps (opcode 75 -> EB): the game starts and keeps every menu button without
+     the disc.  Council Wars has a third test that threw the player out of a running game; that
+     one is inverted (75 -> 74).  These are the three bytes hand-patched in 2025.
+  2. Those bypasses alone only ignore the ANSWER of the test.  Until 18 Sep 2026 the machinery
+     itself still ran: at start-up the game opened HBNFUFL.A01 / HBNFUFL.A02 (the drive letter
+     its installer recorded, "D:" in the repository; a missing file was a silent exit), built the
+     path "D:\\dc\\" and probed it - it opened D:\\dc\\anim.dat and, if that existed, tried to
+     create a file there to see whether the medium refuses writes.  The same probe ran again at
+     every menu screen and periodically during a battle, two loaders fell back to "D:\\dc\\<name>"
+     when a file was missing locally, the sound loader then asked to "insert The Dark Colony CD
+     and Restart", and the movie opener fell back to the CD when the flag said the disc was in.
+     The game never tells Windows to fail such accesses quietly (no SetErrorMode call), so when
+     the letter D: belonged to a drive that was not ready - a card reader or a USB/optical drive
+     without a medium, an unplugged removable disk, a second hard disk that had spun down -
+     Windows showed its "No Disk / Please insert a disk into drive ..." box behind the full-screen
+     game (a black screen that looks like a hang and reads like a CD request) or the game stalled
+     for the seconds the disk needed to wake up.  Reported by players with more than one drive.
+     Now: the start-up instructions that load the HBNFUFL name become a jump over the whole block
+     (HBNFUFL is never opened, no letter, no path, no probe; the two absolute operands that vanish
+     had .reloc entries, which become type-0 padding), the "call cd_probe" becomes five NOPs and
+     cd_probe itself starts with "ret" for its two remaining callers, the file-open helper and the
+     sound loader jump to their ordinary "file missing" exits instead of trying "<CD path><name>",
+     the movie opener never takes its CD branch, the dead "%c:\\dc\\" string is zeroed, and the
+     sound loader's box says "FILE NOT FOUND / A sound file is missing - see error.log".
 
-The game never tells Windows to fail such accesses quietly (no SetErrorMode call), so when the
-letter D: belongs to a drive that is not ready - a card reader or a USB/optical drive without a
-medium, a removable disk that was unplugged, a second hard disk that has spun down - Windows
-either shows its "No Disk / Please insert a disk into drive ..." box behind the full-screen game
-(a black screen that looks like a hang and reads like a CD request) or stalls the game for the
-seconds the disk needs to wake up, at start-up and at every menu.  Reported by players with more
-than one drive (18 Sep 2026); maintainer decision the same day: the game must not touch the CD
-path at all.
-
-Nine edits per exe, all inside existing instructions and strings, plus two relocation entries:
-  * start-up: the two instructions that load the HBNFUFL name become a jump over the whole
-    block - HBNFUFL is never opened, no drive letter is read, no CD path is built; the two
-    absolute operands that vanish had .reloc entries, which become type-0 padding
-  * start-up: the "call cd_probe" becomes five NOPs; cd_probe itself starts with "ret" for the
-    two remaining callers (menu screens, in-game check)
-  * the generic file-open helper and the sound loader jump to their ordinary "file missing"
-    exits instead of trying "<CD path><name>"; the movie opener never takes its CD branch
-  * the dead "%c:\\dc\\" format string is zeroed; the sound loader's box now says
-    "FILE NOT FOUND / A sound file is missing - see error.log" instead of asking for the disc
-The patched exe no longer needs HBNFUFL.A01 / .A02 (the originals still do).  Nothing moves.'''),
+Every edit sits inside an existing instruction or string; nothing moves.  The patched exe no
+longer needs HBNFUFL.A01 / .A02 (the untouched originals still read the drive letter from them).'''),
  dict(id='resolution', name='1024x768 display', date='9 Sep 2026', tool='tools/patch_resolution.py (Dark-Colony-Server)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10', blocks=blocks_resolution,
       requires=['hdpaths'], data=hd_data,
@@ -495,10 +468,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['cdcheck', 'resolution', 'cddrive', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['cdcheck', 'resolution', 'cddrive', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),
@@ -667,7 +640,7 @@ W(r'''<#
     .\Apply-DarkColonyPatches.ps1 -List -Detail                 # every single byte edit
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All
         (run from the root of the Dark-Colony repository, where this file lives; writes dc16new.exe)
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches cdcheck,resolution,hdpaths,pool
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches nocd,resolution,hdpaths,pool
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All
     .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> maped_ozi_ns_v1.2.exe)
     .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\dc16new.exe"
@@ -833,7 +806,7 @@ function Get-EditCount($Patch) { $n = 0; foreach ($e in $Patch.Edits) { $n++ }; 
 
 function Find-BuildBySha([string] $Sha) { foreach ($b in $Builds) { if ($b.OriginalSha256 -eq $Sha) { return $b } }; return $null }
 
-# Guess the build of an arbitrary exe from its size and the state of the cdcheck edits.
+# Guess the build of an arbitrary exe from its size and the state of the first patch's edits (nocd).
 function Find-BuildByContent([byte[]] $Data) {
     foreach ($b in $Builds) {
         if ($Data.Length -ne $b.Size) { continue }

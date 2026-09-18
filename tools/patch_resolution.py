@@ -564,6 +564,14 @@ def identify(data, path):
     if (w, h) != (640, 480):
         raise SystemExit('%s: already patched to %d x %d. Restore the .bak to get back to '
                          'stock before patching to a different size.' % (path, w, h))
+    # Since 18 Sep 2026 the CD fix (`patch_nocd.py`, patcher id `nocd`) is applied before this tool
+    # and touches bytes outside the 165 sites, so the MD5 of the input is no longer the one of the
+    # 2025 CD-fixed exe.  The two builds this tool knows have unique sizes (Classic 7 Jan 1998
+    # 659456 bytes, Council Wars ENGEXP16.EXE 659968 bytes; the Aug 1997 Classic CD pressing is
+    # 660480), and every site's stock bytes are still checked before anything is written.
+    by_size = {659456: 'aa0a646b1234d1d9815a2b7480fd080b', 659968: '50419d438427d31341057e9723724f66'}
+    if len(data) in by_size:
+        return BUILDS[by_size[len(data)]]
     raise SystemExit('%s: md5 %s is not a build I know, though it is stock 640 x 480. It is '
                      'probably a build I have no AUTO offsets for (Council Wars dc16.exe is '
                      'one such). Re-derive the sites in Ghidra before patching it.'
