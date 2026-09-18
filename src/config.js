@@ -63,8 +63,9 @@ export const DEFAULTS = Object.freeze({
   REPLAY_FILE: '',
   REPLAY_SLOT: -1,
   // Replay mode: reveal the whole map to the watcher with the game's own flag (CHEAT(0, 0), F28),
-  // sent as a standalone frame at battle start, the recorded frames untouched. Untested one-sided:
-  // if the flag reaches the simulation the client aborts with a sync error within a few ticks.
+  // sent as a standalone frame at battle start, the recorded frames untouched. The flag REACHES the
+  // simulation (18 Sep 2026: sync error at tick 3944 with it, clean run without): only for a short
+  // look at the opening, a full viewing needs it off (plan §18.7).
   REPLAY_FULL_MAP: false,
   // Lobby slot of the fake host. 0 (default) makes it the lowest network id, so no client sends
   // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every

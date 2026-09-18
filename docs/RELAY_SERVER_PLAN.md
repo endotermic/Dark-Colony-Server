@@ -63,7 +63,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F25 | Lobby init on every entry (`0x410C48`–`0x410DA0`): all 8 slots get type 3, colour 0, race 0, team = index, lock flag 0, and the colour-lock table entry is cleared; then slot 0 status := 1. Colours are set only by `'l'`, which applies unconditionally (`0x40F030`), as do `'n'` team (`0x40F0A0`) and `'f'` race (`0x40EE10`). Wire order of these two-byte messages is (value, player). | disassembly | The join dump must carry `'l'` for every slot (it does); default colours are all 0 until then |
 | F26 | The lobby chat handler appends a line to a 2 KiB buffer and word-wraps at the 41-column chat window (`0x40ECE4`); long lines are safe. The chat input allows 255 characters (`intrface/MULTIE`). | `0x40ECE4` | Mercenary's lines may exceed 41 characters |
 | F27 | Only Classic `dc16.exe` plays over the network; the Council Wars executable has no working network play. | maintainer | All clients are the same build; the "mixed builds" risk does not arise |
-| F28 | `CHEAT(a, b)` with `a ∉ {1,2}` toggles the client flag `gs+0x46F50+b` (`b` 0..3, handler `0x41CE9C`); the chat cheat "slag net" toggles flag 0 the same way (`0x41DB9E`). Flag 1 is the pause flag, flag 2 has no readers, flags 0 and 3 are tested at the end of the fog-of-war mask routine (`0x445A77`, `0x445A89`), which then reveals everything (`0x4457D0`): **flag 0 = full map view**. All four flags are cleared at game init (`0x40C40F`) and stored in save games. | disassembly, confirmed live 7 Sep 2026 | Debug mode puts `CHEAT(0, 0)` into the first sync frame, so every client sees the whole map from the first tick (the maintainer confirmed the full map was visible from the start) |
+| F28 | `CHEAT(a, b)` with `a ∉ {1,2}` toggles the client flag `gs+0x46F50+b` (`b` 0..3, handler `0x41CE9C`); the chat cheat "slag net" toggles flag 0 the same way (`0x41DB9E`). Flag 1 is the pause flag, flag 2 has no readers, flags 0 and 3 are tested at the end of the fog-of-war mask routine (`0x445A77`, `0x445A89`), which then reveals everything (`0x4457D0`): **flag 0 = full map view**. All four flags are cleared at game init (`0x40C40F`) and stored in save games. | disassembly, confirmed live 7 Sep 2026 | Debug mode puts `CHEAT(0, 0)` into the first sync frame, so every client sees the whole map from the first tick (the maintainer confirmed the full map was visible from the start). **The flag is not display-only** (replay test, 18 Sep 2026, §18.7): a client that alone had it desynced from a recorded battle at tick 3944 (`sync error: time 3944, net 14336, me 14360`), the same replay without the flag ran to the end. Whatever reads the revealed fog mask (targeting of the revealed units, most likely) changes the simulation, so the flag must be set on every machine or none - as debug mode does |
 | F29 | The lobby screen (`INTRFACE/MULTIE`): the eight player-name fields are `in_text` controls of **16 characters** (`x=247`, rows 19 px apart) with the `immediate` flag (the own field is editable, every keystroke goes out as `'g'`); the type and race columns are 6-character read-only fields derived from the slot's type and race values, not free text; the map line (`in_text 26`) is 55 characters wide; the chat window is 41 columns × 10 lines, the chat input holds 255 characters. | `INTRFACE/MULTIE` lines 35–51, 113–123, 181–217 | The only free text per row is the 16-character name. Longer texts scroll through it (marquee, §17.2). In the hall the own row is a room row too, so name edits are dropped there (R13) |
 | F30 | `'d'` is **not** in the lobby dispatch table (`0x488E54`: `0x01 'e' 'f' 'h' 'g' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'y' 0x10 'q'`); it is read only by the join wait (`0x4108DB`). An unknown type in the lobby terminates the game (F21). The meta-server join path receives the state dump **without** `'d'` after `'y' INIT_ME` (protocol doc §6.2), and every existing player receives the full dump again on each join (live, 6–7 Sep 2026). | table `0x488E54`, protocol doc §4.2/§6.2, live logs | A client's slot number is fixed for the whole connection: it can only join a room where that slot is free (§17.5). A second full dump (new `'i'`, new rows) in the middle of the lobby is exactly what the game was built to accept |
 | F31 | Every multiplayer map file `SCENARIO/MPLAYER/*.SCN` starts with three strings: the terrain file (`desert.bts`, `jungle.bts`, `atlantis.bts`), the base name and the **display name** the game's own host puts into the `'i'` title. Classic ships 56 of them: 10 desert and 9 jungle 2-player, 10 desert and 7 jungle 4-player, 2 jungle 6-player, 10 desert and 7 jungle 8-player, plus one 2-player Atlantis map. | the game folder, 7 Sep 2026 | `src/maps.js` holds the table (generated from the files); `ROOMS` lists maps by file name and the server builds the title from the table (F15) |
@@ -615,7 +615,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `RECORD_LOG` | `false` (`on` in `fly.toml` since 18 Sep 2026) | record every battle into the **log** as compact `msg: "replay"` lines (§18.6), lossless for what the clients received: every sync frame byte for byte (UNTIL, the server's `0x08`, the commands) in chunks of 256 frames / 3000 hex characters, every client `0x08`, the events; only the engine's per-tick checksum lines are left out. 4-11 KB per game-minute (about 10 in `send` mode), lines of at most a few KB. `node tools/logs2replay.js --fetch dark-colony-server` rebuilds the recordings from Fly's Logs API (about seven days of history, F50) for `tools/replay.js`. Works beside `RECORD_DIR` |
 | `REPLAY_FILE` | unset | **replay mode** (§18.7): play this recording (a `RECORD_DIR` file or one rebuilt by `tools/logs2replay.js`) back to a real client. One room, no hall, no bots, the recorded speed; the lobby is the recorded one and the recorded sync frames are broadcast byte for byte. `SYNC_CHECK=send` becomes `shadow` (the frames already carry the original checksums) |
 | `REPLAY_SLOT` | `-1` | replay mode: the recorded human whose seat the connecting client takes (`-1` = the first recorded real player); race, colour and team of that seat are pinned to the recording |
-| `REPLAY_FULL_MAP` | `false` | replay mode: reveal the whole map to the watcher. `CHEAT(0, 0)` (the game's own full-map flag, F28) goes out as a standalone frame at battle start; the recorded frames stay untouched. Untested one-sided (18 Sep 2026): if the flag reaches the simulation the client aborts with a sync error within a few ticks, and the option must stay off |
+| `REPLAY_FULL_MAP` | `false` | replay mode: reveal the whole map to the watcher. `CHEAT(0, 0)` (the game's own full-map flag, F28) goes out as a standalone frame at battle start; the recorded frames stay untouched. **Desyncs the viewer** (confirmed 18 Sep 2026, §18.7): the flag reaches the simulation, the replay aborted with a sync error at tick 3944 (about 3 minutes in) and ran to the end without it. Only for a short look at the opening; a full viewing needs it off |
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 | `MERCENARY_AI` | `rusher` | the fake players in battle (§19.8): `rusher` = every fake human plays a rush and sells an alliance with shared vision for 1000; `off` = idle bases as before. Needs the engine (`SYNC_CHECK` `shadow` or `send`): their game player indices and their money exist only there |
 | `MERCENARY_ALLY_S` | `120` | seconds an alliance bought for 1000 lasts; payments arriving while one runs are returned (§19.8) |
@@ -1489,6 +1489,19 @@ above, so that the plan can be followed from scratch without repeating the disco
   d8927e5c5ee3d8` brought it up at 12:47 UTC, `listening` logged, `RECORD_LOG=on` in the
   machine's environment. Check `fly status` after every deploy. `SYNC_CHECK` stays `send`
   (maintainer's call); from now on every battle on Fly leaves a recording in the log.
+- **First battle recovered from the Fly log and replayed in the real game, same day.** The
+  maintainer played on Fly (room 1, Plink - O, start 13:05 UTC, 9976 frames, 7 min 20 s at 44 ms,
+  ended by room reset with 0 mismatches). `node tools/logs2replay.js --fetch dark-colony-server
+  --since 3h` fetched 282 log lines in 4 pages and rebuilt the recording (`tools/replay.js` runs
+  the engine through all 9985 ticks without an assert; no client checksums, the fake host held
+  slot 0). Local `REPLAY_FILE=... REPLAY_FULL_MAP=on node src/index.js`, dc16.exe joined
+  127.0.0.1:8888, took slot 4 with the recorded race/colour/team, MREADY game player 7 as recorded,
+  the battle played with the whole map visible - and stopped at frame 3947: `no echo for frame
+  3947`, the game's `error.log`: `sync error: time 3944, net 14336, me 14360`. The same replay
+  **without `REPLAY_FULL_MAP` ran to the end without an error** ("replay finished without errors,
+  map cheat is the cause", maintainer). Two results: replay mode works with the real game, from a
+  Fly log recording, byte for byte over 9976 frames; and the full-map flag reaches the simulation
+  (F28 amended). Meanwhile the viewer's signals were made inert (`e47c478`, above).
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
@@ -1850,14 +1863,20 @@ the seat.
 - **Whole map.** By default the watcher sees the recorded player's fog of war. `REPLAY_FULL_MAP=on`
   sends `CHEAT(0, 0)` (flag 0 = full map view, F28) to the watcher as a standalone frame when the
   battle starts; the client holds a non-UNTIL frame and executes it with the next sync frame (F6),
-  so the map is open from the first recorded tick and no recorded frame changes. Whether the flag
-  stays display-only when only one machine has it is untested: debug mode always gave it to every
-  client. If the watcher's game aborts with a sync error within the first ticks with the option on
-  and runs without it, the flag reaches the simulation and the option must stay off.
+  so the map is open from the first recorded tick and no recorded frame changes. **Tested 18 Sep
+  2026 with the real game: the flag reaches the simulation.** With the option on the replay of the
+  maintainer's own battle of 13:05 UTC (Plink - O, 9976 frames) aborted at tick 3944, about three
+  minutes in - the game's `error.log` says `sync error: time 3944, net 14336, me 14360` (its
+  checksum 14360 against the recorded server checksum 14336) - and the same replay without the
+  option ran to the end without an error. So the revealed fog mask is read by something in the
+  simulation (the targeting of units that are normally unseen, most likely), which is also why
+  debug mode has to give the flag to every client (F28). The option stays available for a short
+  look at an opening; a full viewing needs it off.
 - **Limits.** The recording must hold every frame from the start (a lost first chunk in a log
   recording cannot be repaired, §18.6). The watcher sees the battle from the recorded player's
   seat and cannot act. Names are not pinned (the client keeps its own; nothing in the simulation
-  reads them). Not yet tried with the real game (18 Sep 2026); covered by `test/replay.test.js`.
+  reads them). Covered by `test/replay.test.js`; **confirmed with the real game on 18 Sep 2026**
+  (below, §16).
 
 ---
 

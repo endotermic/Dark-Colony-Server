@@ -32,8 +32,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   pause, cheats: never relayed, never a strike); its checksums, when it sends any, are compared
   with the recorded ones. One room, no
   hall, no bots, the recorded speed. `REPLAY_FULL_MAP=on` reveals the whole map to the watcher
-  with the game's own flag (a standalone `CHEAT(0, 0)` at start, F28), untested one-sided. Not yet
-  tried with the real game.
+  with the game's own flag (a standalone `CHEAT(0, 0)` at start, F28) - but the flag reaches the
+  simulation: the viewer desynced at tick 3944, the same replay without it ran to the end.
+  Confirmed with the real game on a battle recovered from the Fly log (18 Sep 2026).
 
 - **One game folder: Classic moves into `DC - Council wars/`, `DC - Classic/` removed** (15 Sep 2026, maintainer decision;
   `tools/gen_apply_script.py`, the three tests that read the game folder, README). The untouched

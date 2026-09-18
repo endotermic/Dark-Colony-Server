@@ -79,6 +79,7 @@ export class Lobby {
       `Replay${when}: ${rp.map.name}, ${Math.round(rp.lastUntil * rp.tickMs / 60000)} min.`,
       `You sit in ${rp.seatName}'s seat (slot ${rp.seat}); race, colour and team are fixed. Press READY.`,
       'In battle everything you do is ignored, pause included: watch. A sync error = the replay diverged.',
+      ...(this.cfg.REPLAY_FULL_MAP ? ['Map reveal is on: expect a sync error after a few minutes (it alters the game).'] : []),
     ];
   }
 
