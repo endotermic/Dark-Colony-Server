@@ -1503,6 +1503,20 @@ above, so that the plan can be followed from scratch without repeating the disco
   Fly log recording, byte for byte over 9976 frames; and the full-map flag reaches the simulation
   (F28 amended). Meanwhile the viewer's signals were made inert (`e47c478`, above).
 
+**18 Sep 2026, maintainer report: "all Dark Colony executables request the CD and hang on multi hard drive systems"**
+
+- Not a server matter, recorded here like the two-monitor fix: the `cdcheck` bytes only ignored the
+  answer of the CD test; the probe itself (`cd_probe` `0x405EAC` / CW `0x405E8C`, `safefunc.c`) still
+  opened `D:\dc\anim.dat` — drive letter from `HBNFUFL.A01`/`.A02` — at start-up, at every menu
+  screen (`load_interface`) and periodically in game, and the game never calls `SetErrorMode`, so a
+  not-ready `D:` (card reader / empty USB or optical drive / sleeping second disk) meant Windows'
+  "No Disk" box behind the full-screen surface or a spin-up stall. New `tools/patch_nocd.py`
+  (patcher fix `cddrive`, applied after `resolution` because `patch_resolution.py` checks its input
+  by MD5): two single-byte edits per exe — the probe returns at once, the `%c:\dc\` format string
+  becomes empty. Both repository exes re-patched, `Apply-DarkColonyPatches.ps1` regenerated, both
+  exes smoke-tested; display doc §10.19. The not-ready-drive case could not be reproduced on the
+  development PC (no drive `D:`); a test on an affected PC is pending.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a

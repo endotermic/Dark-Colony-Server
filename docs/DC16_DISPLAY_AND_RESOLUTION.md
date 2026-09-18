@@ -2430,6 +2430,82 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   intermediates. `data/dc16-tables.json` / `dc16-vision.json` keep their historical "read from
   `DC - Classic/dc16.exe`" note (the exe bytes are those of `dc16new.exe`).
 
+#### 10.19 No CD-drive access: the probe behind "requests the CD and hangs" **(18 Sep 2026, maintainer report; traced in both exes from the disassembly; patched exes smoke-tested; the not-ready-drive case itself could not be reproduced here — the development PC has no drive letter D:)**
+
+* **Report (18 Sep 2026):** "all Dark Colony executables are requesting CD and hanging on multi
+  hard drive systems" — the patched builds included.
+* **What `cdcheck` did and did not do.** The three `cdcheck` bytes (§"Patches applied so far" in
+  `CLAUDE.md`) flip the conditional jumps *after* the CD test at the two menu sites
+  (`0x404F18`/`0x405C98` Classic, `0x404F18`/`0x405C78` Council Wars) and invert the CRT-level
+  `jne` at Council Wars file `0x781D9`. The test itself was untouched and every build still ran it:
+  - **Start-up** (`safefunc.c`, `0x405F88` Classic / `0x405F68` Council Wars, called from the
+    initialiser `0x405311`): clears the 16 remap slots `0x4A4730`, `fopen("hbnfufl.a01")`
+    (Classic; Council Wars `hbnfufl.a02`, string `0x482644` in both) — a missing file is
+    `assert failure, file safefunc.c line 137` into `error.log` and `exit(0)` — reads the first
+    character (`fgetc`), `sprintf(cdpath 0x4A48B0, "%c:\dc\" 0x482654, c)`, then probes the
+    game folder for `anim.dat` (`0x48265C`) and for a file named `full` (`0x482668`: present →
+    byte `0x488DF5` / `0x488E1D` "not a full install" is cleared; the repository folder has
+    `FULL`), and finally `call cd_probe` (`0x406074` / `0x406054`).
+  - **`cd_probe`** (`0x405EAC` Classic / `0x405E8C` Council Wars): `fopen("%sanim.dat", cdpath)`;
+    failure → flag `0x4A49B8` := `[0x488DF4]`/`[0x488E1C]` (0); success → `fclose`,
+    `rand() % 100000`, `fopen("%sa%ld", "w")`; failure to create → flag 1 (a medium that refuses
+    writes = the CD); success → `fwrite("foo",1,1)`, 0 written → flag 1, else flag 0; the temp
+    file `D:\dc\a<n>` is never deleted (a writable `D:\dc\` collects them). The flag is read
+    through the getter `0x405E8C` / `0x405E6C` by the menu tests, by the `"rb"` opener `0x401028`
+    (`0x401071`: falls back to `cdpath+name` only when the flag is set), by `0x410A10` / `0x410A70`
+    and by the **in-game check** `0x411386..0x4113A1` / `0x4113E6..0x411401`, which calls the probe
+    again (`0x41138D` / `0x4113ED`) and compares the flag before and after (the stock "CD removed
+    during play" test).
+  - **`load_interface`** (`0x4231E8` / `0x423248`) calls the probe at `0x423223` / `0x423283` —
+    **every menu screen** re-opens `D:\dc\anim.dat`.
+  - **Missing-file fallbacks:** the generic open helper (`0x406253`, when the flag or the "not
+    full" byte is set: `strcpy(cdpath); strcat(name)`) and the wave loader (`0x452AEF` /
+    `0x452B5B`, through the cdpath getter `0x405EA0` / `0x405E80`, unconditionally when both
+    local names fail; then `unable to open file %s` into `error.log`, DirectDraw released
+    (`0x42E2B0`), `Sleep(2000)`, `MessageBoxA("Please insert The Dark Colony CD and Restart"` /
+    Council Wars `"…Expansion Pak CD - The Council Wars…"`, `"CDROM NOT FOUND")`, `exit`).
+  - The import table has **no `SetErrorMode`** and no `GetDriveTypeA`: the game trusts the
+    installer's letter blindly and never asks Windows to fail a not-ready drive quietly.
+* **Why that is a hang on "multi hard drive systems" (inferred, not reproduced):** `HBNFUFL.A0x`
+  says `D:`. When `D:` is a hard disk with no `\dc\anim.dat` the `fopen` fails at once and nothing
+  is visible — the single-drive case everyone tested. When `D:` is a **drive that is not ready** —
+  a card reader or a USB/optical drive without a medium (very common on multi-drive PCs), an
+  unplugged removable disk — `CreateFile` raises Windows' hard error, and because the process
+  error mode is the default the OS shows *"Windows - No Disk: There is no disk in the drive.
+  Please insert a disk into drive \Device\Harddisk1\DR1"* — modal, behind the exclusive
+  full-screen surface: black screen, a "hang", and a message that reads like a CD request. When
+  `D:` is a **second hard disk that has spun down** (Windows' default power plan parks idle disks
+  after 20 min) every probe waits for the spin-up: several seconds of freeze at start-up, again at
+  every menu screen, again in game. All three go through the same `fopen("D:\dc\…")`.
+* **Fix = `tools/patch_nocd.py`** (verify / plan / apply, `.nocd.bak`, pattern-located, both
+  exes), **two single-byte edits per exe**, patcher fix **`cddrive`**:
+  1. `cd_probe` entry `0x405EAC` / `0x405E8C` (file `0x52AC` / `0x528C`): `push ebx` `53` → `ret`
+     `C3`. The probe returns before touching anything; the flag stays 0 (zeroed at `0x405FC6`
+     in the initialiser), which is what the `cdcheck` bypasses assume at the menu sites; the
+     in-game comparison sees "unchanged"; `0x401071` never takes the CD branch.
+  2. DGROUP `"%c:\dc\"` `0x482654` (file `0x7FE54` / `0x80054`): `25` → `00`. `cdpath` becomes
+     `""`, so the two missing-file fallbacks retry the *local* name and fail the way they always
+     did (an `error.log` line, the wave loader's box — whose "insert the CD" wording is unchanged
+     and now simply means "a WAV is missing").
+  No code moves, no `.reloc` change; the untouched originals keep probing (they need the CD).
+  In the patcher the fix is applied **right after `resolution`** (`cdcheck, resolution, cddrive,
+  hdpaths, …`), because `patch_resolution.py` identifies its input by MD5 and expects exactly the
+  `cdcheck`-fixed exe. Both repository exes re-patched (SHA-256 `dc16new.exe` `49d2430e…`,
+  `engexp16new.exe` `b4fcee80…`), `Apply-DarkColonyPatches.ps1` regenerated (`-Verify` reports
+  both as the fully patched executables), `dc16.asm` / `dcexp16.asm` regenerated. **Smoke test
+  18 Sep 2026:** both exes start from the game folder, are still running after 14 s and
+  `ERROR.LOG` stays empty. **Multi-drive test (same day, maintainer request):** `subst` drives
+  `D:` `E:` `F:` (empty folders) and `G:` = the Dark-Colony repository, game run from
+  `G:\DC - Council wars`, with a copy of `anim.dat` placed in `D:\dc\` so the probe's write test
+  becomes visible. Stock `dc16.exe`: alive after 14 s, and **two files `D:\dc\a84674`,
+  `D:\dc\a98159` (1 byte each) appeared** — the probe ran at start-up and again at the first menu
+  screen and wrote to the "hard disk" `D:`. `dc16new.exe` and `engexp16new.exe`: alive after
+  14 s, `ERROR.LOG` empty, **no file on `D:`** — the patched builds never touch the drive. A
+  not-ready drive (no medium) cannot be built with `subst`; that case rests on the trace above.
+* **Not done, for the record:** the `hbnfufl.a0x` dependency stays (a copy without the file
+  still exits silently through the `safefunc.c` line-137 assert); the wave loader's message text
+  was left alone; the stock leak of `D:\dc\a<n>` temp files on a writable `D:\dc\` is moot now.
+
 ## 11. Risks
 
 | Risk | Assessment |
@@ -2452,6 +2528,9 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
 |---|---|
 | `0x00488DB4` / `0x00488DB8` | **screen width / height globals (`DGROUP`)** |
 | `0x0040117F`ff | `main.c`; full-screen rect at `0x004010E5` |
+| `0x00405F88` (CW `0x00405F68`) | `safefunc.c` start-up: reads `HBNFUFL.A01`/`.A02`, builds the CD path `%c:\dc\` (`0x00482654`) into `0x004A48B0`, `full` marker → `0x00488DF5`, calls `cd_probe` (§10.19) |
+| `0x00405EAC` (CW `0x00405E8C`) | `cd_probe`: `fopen <CD>anim.dat` + write test `<CD>a<rand>` → flag `0x004A49B8`; re-run by `load_interface` (`0x00423223`) and in game (`0x0041138D`); **patched to `ret`** (`cddrive`, §10.19) |
+| `0x00405E8C` / `0x00405EA0` (CW `0x00405E6C` / `0x00405E80`) | CD-flag getter / CD-path getter (wave loader fallback `0x00452AEF`, `0x00452B5B`; generic helper `0x00406253`) |
 | `0x00406FD0` / `0x00406FF0` | `avi_begin` / `avi_end` (mode cycle) |
 | `0x004073C4` | clear back buffer for movie (stock: 640×480, pitch `0x500` literals; patched to read the Lock description, §10.8) |
 | `0x00407068` | `avi_create_surfaces`: flip chain (`0x489718`/`0x48971C`, flag `0x488E0C`=1) or plain primary + 320×180 movie surface `0x488E00` (`0x004071F7`ff) |

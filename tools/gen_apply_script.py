@@ -16,7 +16,9 @@ patch_*.py tools beside this file.  The generated script is validated here:
 the sum of the per-patch edits must reproduce every intermediate exe, and the end result is
 hashed into the script as the reference for "all patches applied".  Re-run after adding a patch
 (add it to PATCHES/BUILDS below, with a block parser for its plan output).  The OZI patch is
-kept last because its 16-byte .reloc insert shifts every later relocation entry.
+kept last because its 16-byte .reloc insert shifts every later relocation entry; `cddrive`
+(patch_nocd.py, 18 Sep 2026) is applied right after `resolution`, not before it, because
+patch_resolution.py identifies its input by MD5 and expects exactly the cdcheck-fixed exe.
 """
 import re, struct, hashlib, sys, os, shutil, subprocess, tempfile
 
@@ -83,13 +85,15 @@ def ozi_data(g):
     return files
 
 
-TOOL_OF = {'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
+TOOL_OF = {'cddrive': 'patch_nocd.py',
+           'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
-PLAN_OF = {'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
+PLAN_OF = {'cddrive': 'nocd',
+           'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
@@ -255,6 +259,13 @@ def blocks_hdpaths(g):
     assert len(out) == 30, len(out)
     return out
 
+def blocks_nocd(g):
+    out = []
+    for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ 1 byte: ([0-9a-f]{2}) -> ([0-9a-f]{2})\s*$', plan(g, 'nocd'), re.M):
+        out.append((int(m.group(2), 16), 1, m.group(1).strip(), bytes.fromhex(m.group(3)), bytes.fromhex(m.group(4))))
+    assert len(out) == 2, len(out)
+    return out
+
 def blocks_cdcheck(g):
     if g == 'classic':
         return [(0x431F, 1, 'jne -> jmp right after "call 0x405E8C ; test al,al" (the CD-presence check returning a bool in al): always take the "CD present" path'),
@@ -277,6 +288,28 @@ Council Wars has a third test that runs while a game is in progress and throws t
 to the menu; that one is inverted (75 -> 74, jne -> je).
 
 Nothing else changes: no code is added, no file access is redirected, one byte per site.'''),
+ dict(id='cddrive', name='No CD-drive access (a not-ready drive D: no longer hangs the game)', date='18 Sep 2026', tool='tools/patch_nocd.py',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.19', blocks=blocks_nocd,
+      desc='''"No CD required" only ignores the ANSWER of the CD test.  The test itself still runs, and it
+runs often: at start-up the game reads the drive letter its installer recorded in HBNFUFL.A01 /
+HBNFUFL.A02 ("D:" in the repository), builds the path "D:\\dc\\" and probes it - it opens
+D:\\dc\\anim.dat and, if that exists, tries to create a file there to see whether the medium
+refuses writes.  The same probe is repeated every time a menu screen opens and periodically
+while a battle runs, and two loaders fall back to "D:\\dc\\<name>" when a file is missing locally.
+
+The game never tells Windows to fail such accesses quietly (no SetErrorMode call), so when the
+letter D: belongs to a drive that is not ready - a card reader or a USB/optical drive without a
+medium, a removable disk that was unplugged, a second hard disk that has spun down - Windows
+either shows its "No Disk / Please insert a disk into drive ..." box behind the full-screen game
+(a black screen that looks like a hang and reads like a CD request) or stalls the game for the
+seconds the disk needs to wake up, at start-up and at every menu.  Reported by players with more
+than one drive (18 Sep 2026).
+
+Two single-byte edits per exe make the game drive-letter free: the probe function returns at
+once (its first instruction becomes "ret"; the "CD present" flag stays 0, which the "No CD
+required" bypasses assume anyway), and the path format string "%c:\\dc\\" loses its first
+character, so the CD path is the empty string and the fallbacks for a missing file retry the
+local name instead of opening a path on another drive.  No code moves, no relocation changes.'''),
  dict(id='resolution', name='1024x768 display', date='9 Sep 2026', tool='tools/patch_resolution.py (Dark-Colony-Server)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10', blocks=blocks_resolution,
       requires=['hdpaths'], data=hd_data,
@@ -449,10 +482,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['cdcheck', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies']),
+      steps=['cdcheck', 'resolution', 'cddrive', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['cdcheck', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
+      steps=['cdcheck', 'resolution', 'cddrive', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),
