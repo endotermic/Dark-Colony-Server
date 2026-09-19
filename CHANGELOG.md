@@ -24,7 +24,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   now lasts **45 s** by default (`MERCENARY_ALLY_S`, was 120; maintainer, same day), and hiring is
   **off** by default (`BOT_HIRE`; `/bothire on|off` in the room chat; off = no offer, a 1000 sent to a
   bot comes back). The bots no longer keep a standing peace among themselves (maintainer, same day):
-  they are rivals unless the same player has hired both. The bots say only
+  they are rivals unless the same player has hired both. The bots are named **Mercenary** and
+  **Marauder** again (no "AI" prefix; maintainer, same day) and each plays a **random race**
+  (`MERCENARY_RACE=random`, Human or Gray drawn per bot). The bots say only
   the deal in battle (offer, payment, refund, end); their actions are no longer chatted, not even to the
   ally. In bot mode two of the original AI's bugs are repaired: the weapon/armour upgrade goals work
   (the original's never fired) and the attack planner no longer sends both groups at the same zone or

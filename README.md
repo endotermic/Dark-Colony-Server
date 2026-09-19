@@ -16,14 +16,14 @@ row shows your name; you can type it there.
 
 ## What the server does
 
-- It replaces the in-game host. Slot 0 is a fake human player, **AI Mercenary**, who greets every
+- It replaces the in-game host. Slot 0 is a fake human player, **Mercenary**, who greets every
   room with a chat line saying that it is an AI bot and the host; real players get random
   free slots, so their start positions differ from game to game.
 - **AI players that play the game's own AI** (since 19 Sep 2026, when the server-side engine is
   on): every bot is played by a port of *Dark Colony*'s computer player "Krusty" (workers to the
   vents, the standard base, an army, guards at the vents, attack groups at the nearest contested
-  zone). By default there is **one** bot, AI Mercenary, the host; type **`/botcount N`** (1..7) in
-  the room chat and hit ENTER to get more (AI Marauder, Renegade, Outlaw, ...), `/botcount` to see
+  zone). By default there is **one** bot, Mercenary, the host; type **`/botcount N`** (1..7) in
+  the room chat and hit ENTER to get more (Marauder, Renegade, Outlaw, ...), `/botcount` to see
   them, `/help` for the commands. Hiring is off by default; `/bothire on` in the room lets every
   bot sell an alliance: give it 1000 in the game's Diplomacy screen and it is your ally with shared
   vision for 45 seconds (the bot sets the alliance in both directions, so nothing to click). Money
@@ -36,7 +36,7 @@ row shows your name; you can type it there.
   bots of the next game to the simpler rusher of 13 Sep 2026 (a worker, a barracks, cheap infantry
   and waves at the nearest base), `/bottype random` lets every bot draw one of the two, `/bottype
   krusty` is the default. `FAKE_PLAYERS`, `BOT_TYPE` and `BOT_HIRE` set the defaults,
-  `SYNC_CHECK=off` leaves the bases idle.
+  `SYNC_CHECK=off` leaves the bases idle. Every bot plays a random race (Human or Gray).
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
   first sees the room list in the lobby screen and picks a room with a chat command and READY; the

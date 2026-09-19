@@ -605,10 +605,10 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `LAG_DROP_MS` | `10000` | battle: the same client has stalled the game for this long → evict it; `0` = never (original behaviour) |
 | `STRIKE_LIMIT` | `10` | soft violations before eviction |
 | `STRICT_SEQ` | `true` | a wrong sequence nibble is a hard violation (`false` = resync like the original server) |
-| `MERCENARY_RACE` | `0` | race of every fake player: 0 Human, 1 Gray |
+| `MERCENARY_RACE` | `random` (0 until 19 Sep 2026) | race of a fake player: `0` Human, `1` Gray, `random` = drawn per bot when its slot is made (`Room.fakeSlot`, `Room.random`; maintainer, 19 Sep 2026: "bots must have random race") |
 | `FAKE_PLAYERS` | `1` (2 from 13 to 19 Sep 2026, 1 before) | fake humans including the master bot AI Mercenary (1..7) at the start of every game, the others in random slots (`FAKE_NAMES`: AI Marauder, Renegade, ...); every one of them is a bot when `MERCENARY_AI` is on (§19.8). Since 19 Sep 2026 the count is the players' choice per room: **`/botcount N`** in the lobby chat (§19.10), the default is the bare minimum (maintainer). `MIN_PLAYERS ≤ 8 − FAKE_PLAYERS` |
-| `MERCENARY_NAME` | `AI Mercenary` | display name of the fake host in slot 0 (`Mercenary` until 12 Sep 2026); at most 16 characters (F33) |
-| `FAKE_NAMES` | `AI Mercenary,AI Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` |
+| `MERCENARY_NAME` | `Mercenary` | display name of the fake host in slot 0 (`AI Mercenary` from 12 to 19 Sep 2026; maintainer, 19 Sep: "remove AI label"); at most 16 characters (F33) |
+| `FAKE_NAMES` | `Mercenary,Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` (the `AI ` prefixes went on 19 Sep 2026) |
 | `DEBUG_MODE` | `false` | debug mode (also implied by `LOG_LEVEL=debug`): full map view for everybody at game start (F28) |
 | `FILL_EMPTY_WITH_AI` | `false` | empty slots become AI (`0` easy / `1` hard via `FILL_AI_TYPE`) |
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
@@ -1638,7 +1638,11 @@ above, so that the plan can be followed from scratch without repeating the disco
   `/help` to keep one row). 244 tests.
 - Then: "bots must not ally each other by default" - the standing peace of 13 Sep 2026 (§19.9) is
   gone: `Bots.syncPacts` allies two bots only while the same player has hired both; unhired bots and
-  inherited bases are rivals of everybody. 244 tests.
+  inherited bases are rivals of everybody. 244 tests. Committed `ec1dcc7`, deployed.
+- Then: "remove AI label from mercenary and marauder; bots must have random race" - `MERCENARY_NAME`
+  `Mercenary`, `FAKE_NAMES` `Mercenary,Marauder,...`; `MERCENARY_RACE` defaults to `random`: every
+  fake slot draws Human or Gray when it is made (`Room.fakeSlot`), so the bots' races differ from
+  game to game and bot to bot. A takeover bot still speaks as `AI <name>` (it is not one of the fakes).
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

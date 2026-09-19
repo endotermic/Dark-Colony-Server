@@ -32,7 +32,7 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(cmds[1].title[45], '8', 'player count digit where the lobby reads it');
   assert.equal(cmds[1].title, h.room.map.titleWire);
   // Mercenary: slot 0, human, present-not-ready, colour 0
-  assert.ok(cmds.some((c) => c.type === T.NAME && c.player === 0 && c.name === 'AI Mercenary'));
+  assert.ok(cmds.some((c) => c.type === T.NAME && c.player === 0 && c.name === 'Mercenary'));
   assert.ok(cmds.some((c) => c.type === T.TYPE && c.player === 0 && c.value === 2));
   assert.ok(cmds.some((c) => c.type === T.READY && c.player === 0 && c.status === 1));
   assert.ok(cmds.some((c) => c.type === T.COLOUR_SET && c.player === 0 && c.value === 0));
@@ -57,7 +57,7 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(chat.length, 10);
   assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
   assert.equal(chat[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room line comes first');
-  assert.ok(chat[1].startsWith('AI Mercenary: Hi! I am an AI bot'), chat[1]);
+  assert.ok(chat[1].startsWith('Mercenary: Hi! I am an AI bot'), chat[1]);
   const header = h.room.lobby.greeting().flatMap((t) => wrap(t));
   assert.deepEqual(chat.slice(0, header.length), header);
   assert.ok(header.length >= 3 && header.length <= 4, 'the greeting wraps into a few lines');

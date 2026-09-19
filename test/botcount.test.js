@@ -10,14 +10,14 @@ import { T, build } from '../src/commands.js';
 
 const chatOf = (cmds) => cmds.filter((c) => c.type === T.LOBBY_CHAT).map((c) => c.text);
 
-test('default: one master bot (AI Mercenary in slot 0), seven seats for players', () => {
+test('default: one master bot (Mercenary in slot 0), seven seats for players', () => {
   const h = new Harness();
   assert.equal(h.cfg.FAKE_PLAYERS, 1);
-  assert.deepEqual(h.room.fakeSlots().map((f) => [f.slot, f.name]), [[0, 'AI Mercenary']]);
+  assert.deepEqual(h.room.fakeSlots().map((f) => [f.slot, f.name]), [[0, 'Mercenary']]);
   assert.equal(h.room.seats(), 7);
   assert.equal(h.room.summary().slots, 7);
   assert.equal(h.room.bots.list.length, 1);
-  assert.deepEqual(h.cfg.FAKE_NAME_POOL, ['AI Mercenary', 'AI Marauder', 'Renegade', 'Outlaw', 'Nomad', 'Drifter', 'Vagabond']);
+  assert.deepEqual(h.cfg.FAKE_NAME_POOL, ['Mercenary', 'Marauder', 'Renegade', 'Outlaw', 'Nomad', 'Drifter', 'Vagabond']);
 });
 
 test('/botcount 3 adds two bots: random free slots, dump to everybody (colour before type), announced, bots list follows', () => {
@@ -29,7 +29,7 @@ test('/botcount 3 adds two bots: random free slots, dump to everybody (colour be
   a.send(build.lobbyChat(`Player${a.slot}: /botcount 3`));
   const fakes = h.room.fakeSlots();
   assert.equal(fakes.length, 3);
-  assert.deepEqual(fakes.map((f) => f.name).sort(), ['AI Marauder', 'AI Mercenary', 'Renegade']);
+  assert.deepEqual(fakes.map((f) => f.name).sort(), ['Marauder', 'Mercenary', 'Renegade']);
   assert.ok(fakes.every((f) => f.slot !== a.slot && f.slot !== b.slot && f.type === 2 && f.status === 1));
   assert.equal(h.room.botCount, 3);
   assert.equal(h.room.bots.list.length, 3);
@@ -64,7 +64,7 @@ test('/botcount 1 removes the extra bots with DISCONNECT; the master bot in slot
   for (const s of extra) assert.equal(h.room.slots[s].type, 3, 'the slot is empty again');
   a.send(build.lobbyChat(`Player${a.slot}: /botcount`));
   let text = chatOf(a.takeCmds()).join(' ');
-  assert.ok(text.includes('1 bot in this game: AI Mercenary.'), text);
+  assert.ok(text.includes('1 bot in this game: Mercenary.'), text);
   a.send(build.lobbyChat(`Player${a.slot}: /help`));
   text = chatOf(a.takeCmds()).join(' ');
   assert.ok(text.includes('/bottype krusty|rusher|random sets their brain') && text.includes('/bothire on|off'), text); // the first help row scrolls out of the 10-row window
@@ -117,7 +117,7 @@ test('the pinned header shows the count with the bots configured; a room reset g
   lines = chatOf(a.takeCmds());
   assert.ok(lines.some((l) => l === 'Bots: 3 krusty, hire off. Type /help.'), lines.join('|'));
   const g1 = h.room.lobby.greeting()[1];
-  assert.ok(g1.includes('AI Marauder') && g1.includes('Renegade') && g1.includes('and I play; hiring is off.'), g1);
+  assert.ok(g1.includes('Marauder') && g1.includes('Renegade') && g1.includes('and I play; hiring is off.'), g1);
   h.room.reset();
   assert.equal(h.room.botCount, 1);
   assert.deepEqual(h.room.fakeSlots().map((f) => f.slot), [0]);
@@ -232,4 +232,24 @@ test('/bothire on|off: off by default, per room, shown in the header and the gre
   h.room.reset();
   assert.equal(h.room.botHire, false);
   assert.equal(new Harness({ BOT_HIRE: true }).room.botHire, true);
+});
+
+test('bots have a random race: drawn per fake slot, MERCENARY_RACE pins it, bad values are refused', () => {
+  const h = new Harness({ MIN_PLAYERS: 1 });
+  assert.equal(h.cfg.MERCENARY_RACE, 'random');
+  const seen = new Set();
+  for (let i = 0; i < 40; i++) {
+    h.room.reset();
+    h.room.setBotCount(3);
+    for (const f of h.room.fakeSlots()) {
+      assert.ok(f.race === 0 || f.race === 1);
+      seen.add(f.race);
+    }
+  }
+  assert.deepEqual([...seen].sort(), [0, 1], 'both races occur');
+  assert.ok(new Harness({ MERCENARY_RACE: 1 }).room.fakeSlots().every((f) => f.race === 1));
+  assert.ok(new Harness({ MERCENARY_RACE: '0' }).room.fakeSlots().every((f) => f.race === 0));
+  assert.throws(() => new Harness({ MERCENARY_RACE: 2 }), /MERCENARY_RACE/);
+  assert.equal(h.cfg.MERCENARY_NAME, 'Mercenary');
+  assert.deepEqual(h.cfg.FAKE_NAME_POOL.slice(0, 2), ['Mercenary', 'Marauder']);
 });

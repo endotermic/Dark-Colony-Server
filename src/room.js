@@ -103,10 +103,11 @@ export class Room {
   }
 
   fakeSlot(s, name) {
+    const r = this.config.MERCENARY_RACE;
     return {
       slot: s,
       name,
-      race: this.config.MERCENARY_RACE,
+      race: r === 'random' ? this.random(2) : r, // a random race per bot (maintainer, 19 Sep 2026)
       colour: s,
       team: s,
       type: SLOT_TYPE.HUMAN,

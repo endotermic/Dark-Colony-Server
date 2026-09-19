@@ -27,14 +27,14 @@ export const DEFAULTS = Object.freeze({
   LAG_DROP_MS: 10000, // 0 = never drop laggards (original behaviour)
   STRIKE_LIMIT: 10,
   STRICT_SEQ: true,
-  MERCENARY_NAME: 'AI Mercenary', // the fake host's display name (was 'Mercenary' until 12 Sep 2026)
-  MERCENARY_RACE: 0, // race of every fake player: 0 Human, 1 Gray
+  MERCENARY_NAME: 'Mercenary', // the fake host's display name ('AI Mercenary' from 12 to 19 Sep 2026; maintainer: no "AI" label)
+  MERCENARY_RACE: 'random', // race of a fake player: 0 Human, 1 Gray, random = drawn per bot when its slot is made (default since 19 Sep 2026)
   // fake human players including the master bot AI Mercenary (1..7) at the start of every game; the
   // rest of the slots are for real players. Two from 13 Sep to 19 Sep 2026 (AI Mercenary and AI
   // Marauder); since 19 Sep 2026 (maintainer: "by default only the bare minimum, one master bot") the
   // default is ONE, and the players raise it per room with the lobby chat command `/botcount N`
   FAKE_PLAYERS: 1,
-  FAKE_NAMES: 'AI Mercenary,AI Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
+  FAKE_NAMES: 'Mercenary,Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
   FILL_EMPTY_WITH_AI: false,
   FILL_AI_TYPE: 0, // 0 easy, 1 hard
   ALLOW_PAUSE: true,
@@ -174,7 +174,10 @@ function validate(cfg) {
     throw new Error(`MIN_PLAYERS must be 1..${8 - cfg.FAKE_PLAYERS} with ${cfg.FAKE_PLAYERS} fake players`);
   }
   if (cfg.MERCENARY_NAME.length < 1 || cfg.MERCENARY_NAME.length > 16) throw new Error('MERCENARY_NAME must be 1..16 chars');
-  if (cfg.MERCENARY_RACE !== 0 && cfg.MERCENARY_RACE !== 1) throw new Error('MERCENARY_RACE must be 0 or 1');
+  const race = String(cfg.MERCENARY_RACE).trim().toLowerCase();
+  if (race === 'random') cfg.MERCENARY_RACE = 'random';
+  else if (race === '0' || race === '1') cfg.MERCENARY_RACE = Number(race);
+  else throw new Error('MERCENARY_RACE must be 0, 1 or random');
   if (cfg.FILL_AI_TYPE !== 0 && cfg.FILL_AI_TYPE !== 1) throw new Error('FILL_AI_TYPE must be 0 or 1');
   if (cfg.LOOKAHEAD < 1 || cfg.MAX_LAG <= cfg.LOOKAHEAD) throw new Error('need 1 <= LOOKAHEAD < MAX_LAG');
   if (cfg.STRIKE_LIMIT < 1) throw new Error('STRIKE_LIMIT must be >= 1');

@@ -249,7 +249,7 @@ test('MERCENARY_SLOT=7 pins the fake host to slot 7 and keeps slot 0 unused', ()
   const h = new Harness({ MERCENARY_SLOT: 7, FAKE_PLAYERS: 3 });
   const r = h.room;
   assert.ok(r.slots[7].fake);
-  assert.equal(r.slots[7].name, 'AI Mercenary');
+  assert.equal(r.slots[7].name, 'Mercenary');
   assert.ok(!r.slots[0].fake);
   assert.equal(r.fakeSlots().length, 3);
   assert.ok(!r.canJoin(0));
@@ -279,7 +279,7 @@ test('RECORD_DIR writes a JSON-lines recording of the battle', () => {
     assert.equal(lines[0].type, 'start');
     assert.equal(lines[0].tickMs, 33);
     assert.equal(lines[0].lobby.slots.length, 8);
-    assert.equal(lines[0].lobby.slots[0].name, 'AI Mercenary');
+    assert.equal(lines[0].lobby.slots[0].name, 'Mercenary');
     const frames = lines.filter((l) => l.type === 'frame');
     assert.equal(frames.length, 2);
     assert.equal(frames[0].a, 0);
@@ -320,7 +320,7 @@ test('RECORD_LOG writes the recording as compact "replay" log lines that decode 
   const lines = [...recs.values()][0].lines;
   assert.equal(lines[0].type, 'start');
   assert.equal(lines[0].tickMs, 33);
-  assert.equal(lines[0].lobby.slots[0].name, 'AI Mercenary');
+  assert.equal(lines[0].lobby.slots[0].name, 'Mercenary');
   const frames = lines.filter((l) => l.type === 'frame');
   assert.equal(frames.length, 2);
   assert.deepEqual([frames[0].a, frames[0].until, frames[1].a, frames[1].until], [0, 9, 1, 10]);
