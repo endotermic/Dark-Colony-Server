@@ -24,17 +24,19 @@ row shows your name; you can type it there.
   vents, the standard base, an army, guards at the vents, attack groups at the nearest contested
   zone). By default there is **one** bot, AI Mercenary, the host; type **`/botcount N`** (1..7) in
   the room chat and hit ENTER to get more (AI Marauder, Renegade, Outlaw, ...), `/botcount` to see
-  them, `/help` for the commands. Every bot sells an alliance: give it 1000 in the game's Diplomacy
-  screen and it is your ally with shared vision for 45 seconds (the bot sets the alliance in both
-  directions, so nothing to click). Money sent while it already has an ally comes back. Bots keep
-  the peace among themselves until one is hired; the game itself ends a battle with Victory once
-  every player still alive is allied, so buying the alliance of every remaining bot wins the game. A
+  them, `/help` for the commands. Hiring is off by default; `/bothire on` in the room lets every
+  bot sell an alliance: give it 1000 in the game's Diplomacy screen and it is your ally with shared
+  vision for 45 seconds (the bot sets the alliance in both directions, so nothing to click). Money
+  sent while it already has an ally, or while hiring is off, comes back. The bots are rivals of
+  each other; two bots hired by the same player ally with each other for as long as both deals
+  hold. The game itself ends a battle with Victory once every player still alive is allied, so
+  buying the alliance of every remaining bot wins the game. A
   player who leaves a battle is replaced by such a bot playing that base. In battle a bot only talks
   about the deal, never about its moves. `/bottype rusher` in the room chat switches the
   bots of the next game to the simpler rusher of 13 Sep 2026 (a worker, a barracks, cheap infantry
   and waves at the nearest base), `/bottype random` lets every bot draw one of the two, `/bottype
-  krusty` is the default. `FAKE_PLAYERS` and `BOT_TYPE` set the defaults, `SYNC_CHECK=off` leaves
-  the bases idle.
+  krusty` is the default. `FAKE_PLAYERS`, `BOT_TYPE` and `BOT_HIRE` set the defaults,
+  `SYNC_CHECK=off` leaves the bases idle.
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
   first sees the room list in the lobby screen and picks a room with a chat command and READY; the

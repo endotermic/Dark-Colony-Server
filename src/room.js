@@ -45,6 +45,8 @@ export class Room {
     this.botCount = config.FAKE_PLAYERS;
     // the bots' brain for the next game: BOT_TYPE until the players change it with `/bottype T`
     this.botType = config.BOT_TYPE;
+    // may the bots be hired (1000 buys an alliance)? BOT_HIRE until the players change it with `/bothire`
+    this.botHire = config.BOT_HIRE;
     this.minPlayers = this.minPlayersFor(this.botCount);
     if (this.replay) this.minPlayers = 1; // the one client in the recorded player's seat
     this.state = STATE.LOBBY;
@@ -159,6 +161,16 @@ export class Room {
    * of every bot of the next game in this room, `krusty`, `rusher` or `random` (each bot draws one at
    * game start). Returns null when done, else the reason why not.
    */
+  /** `/bothire on|off` (19 Sep 2026): whether the bots of the next game sell their alliance. */
+  setBotHire(v) {
+    if (this.state !== STATE.LOBBY || this.replay) return 'only in the lobby';
+    const w = String(v ?? '').trim().toLowerCase();
+    if (!['on', 'off'].includes(w)) return 'say on or off';
+    this.botHire = w === 'on';
+    this.lobby.onBotsChanged();
+    return null;
+  }
+
   setBotType(t) {
     if (this.state !== STATE.LOBBY || this.replay) return 'only in the lobby';
     const type = String(t ?? '').trim().toLowerCase();
@@ -502,6 +514,7 @@ export class Room {
     this.clients.clear();
     this.botCount = this.config.FAKE_PLAYERS; // a fresh lobby starts with the default (one master bot)
     this.botType = this.config.BOT_TYPE;
+    this.botHire = this.config.BOT_HIRE;
     this.minPlayers = this.replay ? 1 : this.minPlayersFor(this.botCount);
     this.resetSlots();
     this.bots.reset(); // one bot per (freshly placed) fake slot

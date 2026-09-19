@@ -80,6 +80,10 @@ export const DEFAULTS = Object.freeze({
   // command `/bottype T` (maintainer, 19 Sep 2026). The bots need the engine (SYNC_CHECK shadow or
   // send): their money and game player indices exist only there; without it the bases stay idle.
   BOT_TYPE: 'krusty',
+  // Hiring (the 1000-money alliance of §19.8) in a fresh room: off since 19 Sep 2026 (maintainer:
+  // "switch off hiring of bots"); the players turn it on per room with `/bothire on`. With hiring off
+  // the bots make no offer and return any 1000 sent to them.
+  BOT_HIRE: false,
   MERCENARY_ALLY_S: 45, // seconds an alliance bought for 1000 lasts (120 until 19 Sep 2026, maintainer: 45); later payments in that time are returned
   MERCENARY_THINK_TICKS: 32, // decision interval of a bot in game ticks (the original AI's 32)
   // Seed of the bots' private RNG (the krusty bot draws from the game's rand() table on its own index);

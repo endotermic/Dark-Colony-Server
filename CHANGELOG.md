@@ -21,7 +21,10 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   krusty|rusher|random`** and its default `BOT_TYPE`, so the rusher of 13 Sep stays available and
   `random` lets every bot draw one of the two at game start): a private RNG (`BOT_SEED`), commands into
   the next sync frame, only the bot's money and the AI-private object bytes written. A bought alliance
-  now lasts **45 s** by default (`MERCENARY_ALLY_S`, was 120; maintainer, same day). The bots say only
+  now lasts **45 s** by default (`MERCENARY_ALLY_S`, was 120; maintainer, same day), and hiring is
+  **off** by default (`BOT_HIRE`; `/bothire on|off` in the room chat; off = no offer, a 1000 sent to a
+  bot comes back). The bots no longer keep a standing peace among themselves (maintainer, same day):
+  they are rivals unless the same player has hired both. The bots say only
   the deal in battle (offer, payment, refund, end); their actions are no longer chatted, not even to the
   ally. In bot mode two of the original AI's bugs are repaired: the weapon/armour upgrade goals work
   (the original's never fired) and the attack planner no longer sends both groups at the same zone or

@@ -67,7 +67,7 @@ test('/botcount 1 removes the extra bots with DISCONNECT; the master bot in slot
   assert.ok(text.includes('1 bot in this game: AI Mercenary.'), text);
   a.send(build.lobbyChat(`Player${a.slot}: /help`));
   text = chatOf(a.takeCmds()).join(' ');
-  assert.ok(text.includes('/botcount N sets the number of bots'), text);
+  assert.ok(text.includes('/bottype krusty|rusher|random sets their brain') && text.includes('/bothire on|off'), text); // the first help row scrolls out of the 10-row window
   a.send(build.lobbyChat(`Player${a.slot}: /nonsense 3`));
   text = chatOf(a.takeCmds()).join(' ');
   assert.ok(text.includes('Unknown command /nonsense'), text);
@@ -112,12 +112,12 @@ test('the pinned header shows the count with the bots configured; a room reset g
   const h = new Harness({ SYNC_CHECK: 'shadow', MIN_PLAYERS: 1 }, { engine: eng });
   const a = h.join('A');
   let lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 1 krusty. /botcount N, /bottype T.'), lines.join('|'));
+  assert.ok(lines.some((l) => l === 'Bots: 1 krusty, hire off. Type /help.'), lines.join('|'));
   a.send(build.lobbyChat(`Player${a.slot}: /botcount 3`));
   lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 3 krusty. /botcount N, /bottype T.'), lines.join('|'));
+  assert.ok(lines.some((l) => l === 'Bots: 3 krusty, hire off. Type /help.'), lines.join('|'));
   const g1 = h.room.lobby.greeting()[1];
-  assert.ok(g1.includes('AI Marauder') && g1.includes('Renegade') && g1.includes('and I play; 1000 in battle buys an alliance'), g1);
+  assert.ok(g1.includes('AI Marauder') && g1.includes('Renegade') && g1.includes('and I play; hiring is off.'), g1);
   h.room.reset();
   assert.equal(h.room.botCount, 1);
   assert.deepEqual(h.room.fakeSlots().map((f) => f.slot), [0]);
@@ -175,13 +175,13 @@ test('/bottype krusty|rusher|random: per room, shown in the header, the brains f
   a.send(build.lobbyChat(`Player${a.slot}: /bottype RUSHER`));
   let lines = chatOf(a.takeCmds());
   assert.equal(h.room.botType, 'rusher');
-  assert.ok(lines.some((l) => l === 'Bots: 1 rusher. /botcount N, /bottype T.'), lines.join('|'));
+  assert.ok(lines.some((l) => l === 'Bots: 1 rusher, hire off. Type /help.'), lines.join('|'));
   assert.ok(lines.some((l) => l.includes('set the bots to rusher')), lines.join('|'));
-  assert.ok(h.room.lobby.greeting()[1].includes('I rush; 1000 in battle buys my alliance'), h.room.lobby.greeting()[1]);
+  assert.ok(h.room.lobby.greeting()[1].includes('I rush; hiring is off.'), h.room.lobby.greeting()[1]);
   a.send(build.lobbyChat(`Player${a.slot}: /botcount 3`));
   a.send(build.lobbyChat(`Player${a.slot}: /bottype random`));
   lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 3 random. /botcount N, /bottype T.'), lines.join('|'));
+  assert.ok(lines.some((l) => l === 'Bots: 3 random, hire off. Type /help.'), lines.join('|'));
   // random: the room's random() decides per bot (1 = rusher, 0 = krusty)
   h.randomSeq = [1, 0, 1];
   a.cdReport();
@@ -201,4 +201,35 @@ test('/bottype krusty|rusher|random: per room, shown in the header, the brains f
 test('config: BOT_TYPE is validated and lower-cased', () => {
   assert.throws(() => new Harness({ BOT_TYPE: 'turtle' }), /BOT_TYPE/);
   assert.equal(new Harness({ BOT_TYPE: 'Rusher' }).room.botType, 'rusher');
+});
+
+test('/bothire on|off: off by default, per room, shown in the header and the greeting, reset restores BOT_HIRE', () => {
+  const eng = { loadMapJson: () => ({ name: 'fake' }), createGame: () => ({ gs: Buffer.alloc(0x8000), slotToPlayer: [0, 1, 2, 3, 4, 5, 6, 7], step: () => 0, historyAt: () => 0, applyCommand: () => {} }) };
+  const h = new Harness({ SYNC_CHECK: 'shadow', MIN_PLAYERS: 1 }, { engine: eng });
+  assert.equal(h.cfg.BOT_HIRE, false);
+  assert.equal(h.room.botHire, false);
+  const a = h.join('A');
+  a.take();
+  a.send(build.lobbyChat(`Player${a.slot}: /bothire`));
+  let text = chatOf(a.takeCmds()).join(' ');
+  assert.ok(text.includes('Hiring of the bots is off.'), text);
+  a.send(build.lobbyChat(`Player${a.slot}: /bothire maybe`));
+  text = chatOf(a.takeCmds()).join(' ');
+  assert.ok(text.includes('say on or off'), text);
+  a.send(build.lobbyChat(`Player${a.slot}: /bothire ON`));
+  const lines = chatOf(a.takeCmds());
+  assert.equal(h.room.botHire, true);
+  assert.ok(lines.some((l) => l === 'Bots: 1 krusty, hire on. Type /help.'), lines.join('|'));
+  assert.ok(lines.some((l) => l.includes('set hiring of the bots on')), lines.join('|'));
+  assert.ok(h.room.lobby.greeting()[1].includes('I play; 1000 in battle buys my alliance for 45 s.'), h.room.lobby.greeting()[1]);
+  a.send(build.lobbyChat(`Player${a.slot}: /bothire off`));
+  a.take();
+  assert.equal(h.room.botHire, false);
+  a.send(build.lobbyChat(`Player${a.slot}: /help`));
+  text = chatOf(a.takeCmds()).join(' ');
+  assert.ok(text.includes('/bothire on|off'), text);
+  a.send(build.lobbyChat(`Player${a.slot}: /bothire on`));
+  h.room.reset();
+  assert.equal(h.room.botHire, false);
+  assert.equal(new Harness({ BOT_HIRE: true }).room.botHire, true);
 });

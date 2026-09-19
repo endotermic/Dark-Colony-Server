@@ -56,7 +56,7 @@ function fakeEngine() {
 /** Two bots (the 13 Sep 2026 default; since 19 Sep 2026 the default is one and /botcount adds more) with a faked engine. */
 function battle(overrides = {}) {
   const eng = fakeEngine();
-  const h = new Harness({ SYNC_CHECK: 'shadow', FAKE_PLAYERS: 2, ...overrides }, { engine: eng });
+  const h = new Harness({ SYNC_CHECK: 'shadow', FAKE_PLAYERS: 2, BOT_HIRE: true, ...overrides }, { engine: eng });
   const [a, b] = startBattle(h);
   // the peers never send a name, so the room calls them Player<slot>; that is what the Mercenary says
   a.name = h.room.slots[a.slot].name;
@@ -104,7 +104,7 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   assert.equal(marauder.name, 'AI Marauder');
   assert.ok(lines.some((l) => l.startsWith('AI Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
   assert.ok(h.room.lobby.greeting()[1].includes('AI Marauder and I play; 1000 in battle buys an alliance for 45 s.'), h.room.lobby.greeting()[1]);
-  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty. /botcount N, /bottype T.', 'the bot count, the brain and the commands, one row');
+  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire on. Type /help.', 'the bot count, the brain, the hire switch, one row');
 });
 
 test('two bots, two deals: a gift to AI Marauder allies with it alone, the Mercenary keeps its own deal', () => {
@@ -115,8 +115,9 @@ test('two bots, two deals: a gift to AI Marauder allies with it alone, the Merce
   assert.ok(mar.active && mar.player === mar.slot, 'identity shuffle in the fake engine');
   a.send(build.bonus(mar.player));
   let cmds = frame(h, a, b);
-  // the deal, and the end of the bots' standing peace: the hired Marauder turns on the Mercenary
-  assert.deepEqual(diplo(cmds), [...relations(mar.player, a.slot, 1), ...relations(merc.player, mar.player, 0)], 'AI Marauder <-> A, Mercenary <-/-> Marauder');
+  // the deal only: the bots were rivals already (no standing peace since 19 Sep 2026)
+  assert.deepEqual(diplo(cmds), relations(mar.player, a.slot, 1), 'AI Marauder <-> A');
+  assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'rivals');
   assert.equal(mar.ally.player, a.slot);
   assert.equal(merc.ally, null);
   assert.ok(chats(cmds)[0].startsWith(`AI Marauder: ${a.name} paid 1000`), chats(cmds)[0]);
@@ -140,8 +141,8 @@ test('1000 to the Mercenary buys the alliance: 0x0F relayed, alliance + vision s
   assert.ok(types.includes(T.BONUS), 'the gift itself is relayed');
   const mar = h.room.bots.others[0].player;
   assert.deepEqual(between(cmds, 0, a.slot), relations(0, a.slot, 1), 'Mercenary <-> A: alliance and shared vision, both directions');
-  assert.deepEqual(between(cmds, 0, mar), relations(0, mar, 0), 'the hired Mercenary leaves the bots\' peace');
-  assert.equal(diplo(cmds).length, 8);
+  assert.deepEqual(between(cmds, 0, mar), [], 'nothing between the bots: they were rivals already');
+  assert.equal(diplo(cmds).length, 4);
   const lines = chats(cmds);
   assert.ok(lines[0].startsWith(`AI Mercenary: ${a.name} paid ${ALLY_PRICE}. We are allies for 45 seconds, both ways`), lines[0]);
   assert.equal(h.room.mercenary.ally.player, a.slot);
@@ -186,12 +187,13 @@ test('the alliance ends when the time is up: both relations cleared, announced, 
   }
   assert.ok(ended, 'the alliance ended within the window');
   const mar = h.room.bots.others[0].player;
-  assert.deepEqual(diplo(ended), [...relations(0, a.slot, 0), ...relations(0, mar, 1)], 'the deal closed, the peace with the Marauder restored');
+  assert.deepEqual(diplo(ended), relations(0, a.slot, 0), 'the deal closed; the bots stay rivals');
+  void mar;
   assert.ok(chats(ended)[0].startsWith(`AI Mercenary: The alliance with ${a.name} is over: the time is up.`), chats(ended)[0]);
   assert.equal(m.ally, null);
   b.send(build.bonus(0));
   const next = frame(h, a, b);
-  assert.deepEqual(diplo(next), [...relations(0, b.slot, 1), ...relations(0, mar, 0)], 'B can buy the next one');
+  assert.deepEqual(diplo(next), relations(0, b.slot, 1), 'B can buy the next one');
 });
 
 test('the ally leaving the game ends the alliance, and a bot takes its base over instead of DISCONNECT', () => {
@@ -204,10 +206,10 @@ test('the ally leaving the game ends the alliance, and a bot takes its base over
   const cmds = cmdsOf(b.take()[0]);
   assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), 'no DISCONNECT: the player stays a human on the wire (§19.9)');
   const mar = h.room.bots.others[0].player;
-  // the deal closes, the peace with the Marauder returns, and the inherited base joins the bots' peace
-  assert.deepEqual(between(cmds, 0, a.slot), [...relations(0, a.slot, 0), ...relations(0, a.slot, 1)]);
-  assert.deepEqual(between(cmds, 0, mar), relations(0, mar, 1));
-  assert.deepEqual(between(cmds, mar, a.slot), relations(mar, a.slot, 1));
+  // the deal closes; the inherited base is a rival of the other bots like everybody else
+  assert.deepEqual(between(cmds, 0, a.slot), relations(0, a.slot, 0));
+  assert.deepEqual(between(cmds, 0, mar), []);
+  assert.deepEqual(between(cmds, mar, a.slot), []);
   const lines = chats(cmds);
   assert.ok(lines[0].includes(`${a.name} left the game`), lines[0]);
   assert.equal(h.room.mercenary.ally, null);
@@ -223,8 +225,8 @@ test('the ally leaving the game ends the alliance, and a bot takes its base over
   h.stepAfter(33);
   const next = cmdsOf(b.take()[0]);
   assert.deepEqual(between(next, a.slot, b.slot), relations(a.slot, b.slot, 1));
-  assert.deepEqual(between(next, 0, a.slot), relations(0, a.slot, 0), 'the hired base leaves the bots\' peace');
-  assert.deepEqual(between(next, mar, a.slot), relations(mar, a.slot, 0));
+  assert.deepEqual(between(next, 0, a.slot), [], 'no peace to leave');
+  assert.deepEqual(between(next, mar, a.slot), []);
   assert.equal(bot.ally.player, b.slot);
 });
 
@@ -316,12 +318,12 @@ test('both bots bought by the same player: the bots ally with each other (a pact
   frame(h, a, b);
   const merc = h.room.bots.mercenary;
   const mar = h.room.bots.others[0];
-  assert.ok(merc.isAlly(mar.player) && mar.isAlly(merc.player), 'the bots start allied with each other');
-  assert.equal(h.room.bots.pacts.size, 1);
+  assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'the bots start as rivals (19 Sep 2026)');
+  assert.equal(h.room.bots.pacts.size, 0);
   a.send(build.bonus(mar.player));
   let cmds = frame(h, a, b);
-  assert.deepEqual(diplo(cmds), [...relations(mar.player, a.slot, 1), ...relations(merc.player, mar.player, 0)], 'one deal: the hired bot leaves the peace');
-  assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'rivals now');
+  assert.deepEqual(diplo(cmds), relations(mar.player, a.slot, 1), 'one deal, no pact yet');
+  assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'still rivals');
   assert.equal(h.room.bots.pacts.size, 0);
   for (let i = 0; i < 4; i++) frame(h, a, b); // the second deal is bought a few ticks later
   a.send(build.bonus(merc.player));
@@ -355,16 +357,16 @@ test('both bots bought by the same player: the bots ally with each other (a pact
   assert.ok(merc.ally && merc.ally.player === a.slot, 'the Mercenary still serves A');
   const truce = ended.filter((c) => c.type === T.CHAT).find((c) => c.text.includes('truce'));
   assert.ok(truce && truce.mask === (1 << a.slot), 'told to the ally that remains');
-  // the Mercenary's deal ends a few ticks later: the bots' peace returns
+  // the Mercenary's deal ends a few ticks later: nothing between the bots, they stay rivals
   let restored = null;
   for (let i = 0; i < 10 && !restored; i++) {
     cmds = frame(h, a, b);
     if (diplo(cmds).length) restored = cmds;
   }
   assert.ok(restored, 'the second deal ended');
-  assert.deepEqual(diplo(restored), [...relations(merc.player, a.slot, 0), ...relations(merc.player, mar.player, 1)]);
-  assert.ok(merc.isAlly(mar.player) && mar.isAlly(merc.player), 'at peace again');
-  assert.equal(h.room.bots.pacts.size, 1);
+  assert.deepEqual(diplo(restored), relations(merc.player, a.slot, 0));
+  assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'rivals as before');
+  assert.equal(h.room.bots.pacts.size, 0);
 });
 
 test('action lines are never said in battle; the deal talks to the payer; the offer is public', () => {
@@ -378,10 +380,9 @@ test('action lines are never said in battle; the deal talks to the payer; the of
   a.send(build.bonus(m.player));
   cmds = frame(h, a, b);
   const deal = cmds.filter((c) => c.type === T.CHAT);
-  assert.equal(deal.length, 2, 'the deal and the end of the truce with the Marauder');
+  assert.equal(deal.length, 1, 'the deal (no truce to end: the bots are rivals by default)');
   assert.ok(deal[0].text.includes('paid 1000'));
-  assert.ok(deal[1].text.includes('truce'), deal[1].text);
-  for (const c of deal) assert.equal(c.mask, 1 << a.slot, 'both told to the payer');
+  for (const c of deal) assert.equal(c.mask, 1 << a.slot, 'told to the payer');
   m.sayToAlly('Marching.');
   b.send(build.bonus(m.player));
   cmds = frame(h, a, b);
@@ -405,7 +406,7 @@ test('config: MERCENARY_ALLY_S is validated; there is no AI mode switch any more
 
 test('end to end with the real engine: the Mercenary speaks and buys in the sync frames', async () => {
   const engine = await import('../src/engine/index.js');
-  const h = new Harness({ SYNC_CHECK: 'send' }, { engine: { createGame: engine.createGame, loadMapJson: engine.loadMapJson } });
+  const h = new Harness({ SYNC_CHECK: 'send', BOT_HIRE: true }, { engine: { createGame: engine.createGame, loadMapJson: engine.loadMapJson } });
   const a = h.join('A');
   const b = h.join('B');
   for (const p of [a, b]) {
@@ -462,4 +463,24 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
   assert.ok(after.some((c) => c.type === T.CHAT && c.from === aPlayer && c.text.startsWith(`AI ${aName}: ${aName} left the battle.`)), 'it introduced itself');
   assert.ok(after.some((c) => c.type === T.BUILD && c.raw[2] === aPlayer), 'and it buys for the inherited base');
   assert.ok(h.room.sync.active && !h.room.sync.aiTakeover, 'the engine is still in step: no AI takeover');
+});
+
+test('hiring off (the default): no offer at the start, a gift to a bot goes back with a word, no alliance', () => {
+  const { h, a, b } = battle({ BOT_HIRE: false });
+  assert.equal(h.room.botHire, false);
+  assert.ok(h.room.lobby.greeting()[1].endsWith('AI Marauder and I play; hiring is off.'), h.room.lobby.greeting()[1]);
+  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire off. Type /help.');
+  let cmds = frame(h, a, b);
+  const lines = chats(cmds);
+  assert.ok(lines.some((l) => l.includes('Hiring is off in this game')), lines.join(' | '));
+  assert.ok(!lines.some((l) => l.includes('1000')), 'no price named');
+  const m = h.room.mercenary;
+  a.send(build.bonus(m.player));
+  cmds = frame(h, a, b);
+  assert.ok(cmds.some((c) => c.type === T.BONUS && c.player === m.player), 'the gift itself is relayed');
+  assert.ok(cmds.some((c) => c.type === T.BONUS && c.player === a.slot), 'and returned');
+  assert.equal(m.ally, null);
+  assert.equal(between(cmds, m.player, a.slot).length, 0, 'no alliance');
+  const said = chats(cmds).find((l) => l.includes('hiring is off'));
+  assert.ok(said, chats(cmds).join(' | '));
 });

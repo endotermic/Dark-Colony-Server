@@ -622,6 +622,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `REPLAY_FULL_MAP` | `false` | replay mode: reveal the whole map to the watcher. `CHEAT(0, 0)` (the game's own full-map flag, F28) goes out as a standalone frame at battle start; the recorded frames stay untouched. **Desyncs the viewer** (confirmed 18 Sep 2026, §18.7): the flag reaches the simulation, the replay aborted with a sync error at tick 3944 (about 3 minutes in) and ran to the end without it. Only for a short look at the opening; a full viewing needs it off |
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 | `BOT_TYPE` | `krusty` | the bots' brain in a fresh room: `krusty` = the port of the game's own computer player (§19.10, `src/engine/krusty.js`), `rusher` = the purpose-built rusher of §19.8 (`src/rusher.js`), `random` = every bot draws one at game start. The players change it per room with **`/bottype T`** (maintainer, 19 Sep 2026: "so there is a possibility to apply rusher too"); a room reset restores the default. Replaces `MERCENARY_AI` (`rusher`/`off` 13-19 Sep 2026): there is no `off` any more - the bots idle only without the engine (`SYNC_CHECK=off`) or in replay mode |
+| `BOT_HIRE` | `false` | may the bots be hired in a fresh room (the 1000-money alliance of §19.8)? Off since 19 Sep 2026 (maintainer: "switch off hiring of bots"); the players turn it on per room with **`/bothire on`**. Off = no offer at the start, a `0x0F` to a bot is returned with a word, the bots stay at peace with each other and nobody's allies |
 | `MERCENARY_ALLY_S` | `45` (120 from 13 to 19 Sep 2026) | seconds an alliance bought for 1000 lasts (maintainer, 19 Sep 2026: "hiring of the bot must remain for 45 sec"); payments arriving while one runs are returned (§19.8) |
 | `MERCENARY_THINK_TICKS` | `32` | decision interval of a bot in game ticks (the original AI's 32, F45) |
 | `BOT_SEED` | `0` | seed of the bots' private RNG (the krusty bot walks the game's `rand()` table on its own index); `0` = random per game, else bot *i* starts at `(BOT_SEED + 17 i) & 0xFF`, which makes a recorded game's bot decisions reproducible (§19.10) |
@@ -1628,7 +1629,16 @@ above, so that the plan can be followed from scratch without repeating the disco
   krusty bugs": in **bot mode only** (`ctx.fixes`, `krusty.js` FIXES) the upgrade goals 12/13 buy weapon
   and armour upgrades (`0x0C`, the unit type fielded most, level by level) and `attack_plan` indexes its
   taken-target list and parked-group counter by zone and tests the contested flag of the destination.
-  Exact mode keeps the original's behaviour bit for bit. 242 tests.
+  Exact mode keeps the original's behaviour bit for bit. 242 tests. Committed `eb533ca`, pushed,
+  deployed to Fly.
+- Then: "switch off hiring of bots and make a switch in lobby `/bothire` with on and off" -
+  `Room.botHire` (`BOT_HIRE`, default **off**), `/bothire on|off` per room; off = no offer at the
+  start ("Hiring is off in this game: the bots are nobody's allies."), a gift to a bot is returned
+  with a word, the header row reads "Bots: 1 krusty, hire off. Type /help." (the commands moved to
+  `/help` to keep one row). 244 tests.
+- Then: "bots must not ally each other by default" - the standing peace of 13 Sep 2026 (§19.9) is
+  gone: `Bots.syncPacts` allies two bots only while the same player has hired both; unhired bots and
+  inherited bases are rivals of everybody. 244 tests.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
@@ -2252,6 +2262,8 @@ switched to be the same fake human bot that can be allied with."
   (`0xFF`); "X paid 1000", a refund and "the alliance is over" go to the player concerned.
 * **The bots keep the peace among themselves** (maintainer, 13 Sep 2026, after the third live test:
   "bots must ally each other by default so there is no war between bots when not hired by anyone").
+  **Reversed on 19 Sep 2026** (maintainer: "bots must not ally each other by default"): unhired bots
+  are rivals again; the pact below exists only while the same player has hired both bots.
   `Bots.syncPacts` now allies two active bots exactly when they serve the same master: both unhired
   (the default, set in the first frame and whenever a takeover bot appears) or both bought by the
   same player. A hired bot therefore turns on every bot that does not serve its ally ("My truce with
@@ -2319,7 +2331,9 @@ count of bots is set with `/botcount`; by default only the bare minimum, one mas
   `/bottype krusty|rusher|random` (`Room.botType`, default `BOT_TYPE=krusty`; maintainer, later the
   same day, after first asking for Krusty always: "so there is a possibility to apply rusher too");
   `random` makes every bot draw krusty or rusher at game start. The `MERCENARY_AI` switch is gone;
-  `Bots.configured` is "engine on and not a replay". **Repairs in bot mode** (`ctx.fixes`, maintainer
+  `Bots.configured` is "engine on and not a replay". **Hiring is a per-room switch** (`/bothire
+  on|off`, `Room.botHire`, `BOT_HIRE` default off since later the same day): off = no offer, payments
+  returned, the bots stay allied with each other and with nobody else. **Repairs in bot mode** (`ctx.fixes`, maintainer
   19 Sep 2026): the upgrade goals work (`0x0C` for the unit type fielded most, level by level) and the
   three group-index-as-zone-index reads of `attack_plan` use the destination zone; exact mode stays
   faithful to the original. Chat: the offer says "And I play the game: base, workers, army, war."; the

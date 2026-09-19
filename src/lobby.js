@@ -67,11 +67,12 @@ export class Lobby {
     if (r.bots?.configured) {
       const others = r.bots.others.map((b) => b.name);
       const verb = r.botType === 'rusher' ? 'rush' : 'play';
-      const who = others.length ? `${others.join(', ')} and I ${verb}; 1000 in battle buys an alliance` : `I ${verb}; 1000 in battle buys my alliance`;
-      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${who} for ${this.cfg.MERCENARY_ALLY_S} s.`);
-      // the bot count and brain of this game and how to change them (19 Sep 2026); one row of the window
+      const we = others.length ? `${others.join(', ')} and I ${verb}` : `I ${verb}`;
+      const hire = r.botHire ? `; 1000 in battle buys ${others.length ? 'an' : 'my'} alliance for ${this.cfg.MERCENARY_ALLY_S} s.` : '; hiring is off.';
+      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${we}${hire}`);
+      // the bot count, brain and hire switch of this game (19 Sep 2026); one row of the window, /help has the commands
       const n = r.fakeSlots().length;
-      lines.push(`Bots: ${n} ${r.botType}. /botcount N, /bottype T.`);
+      lines.push(`Bots: ${n} ${r.botType}, hire ${r.botHire ? 'on' : 'off'}. Type /help.`);
     } else {
       lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`);
     }
@@ -93,8 +94,8 @@ export class Lobby {
    * A chat line starting with `/` is a command for the server, not relayed. `/botcount N` sets the
    * number of bots of the next game in this room (maintainer, 19 Sep 2026: one master bot by
    * default, more on request); `/botcount` shows it; `/bottype krusty|rusher|random` sets their
-   * brain (maintainer, same day: "so there is a possibility to apply rusher too"); `/help` lists
-   * the commands.
+   * brain (maintainer, same day: "so there is a possibility to apply rusher too"); `/bothire on|off`
+   * whether they sell their alliance (off by default since the same day); `/help` lists the commands.
    */
   command(client, body) {
     const r = this.room;
@@ -121,8 +122,15 @@ export class Lobby {
       r.log.info('bot type', { by: client.slot, type: r.botType });
       return r.say(`${r.slots[client.slot].name} set the bots to ${r.botType}.`);
     }
+    if (cmd === '/bothire') {
+      if (words.length < 2) return this.tell(client, [`Hiring of the bots is ${r.botHire ? 'on' : 'off'}. /bothire on|off changes it.`]);
+      const why = r.setBotHire(words[1]);
+      if (why) return this.tell(client, [`Cannot set hiring to ${words[1]}: ${why}.`]);
+      r.log.info('bot hire', { by: client.slot, hire: r.botHire });
+      return r.say(`${r.slots[client.slot].name} set hiring of the bots ${r.botHire ? 'on' : 'off'}.`);
+    }
     if (cmd === '/help') {
-      return this.tell(client, ['/botcount N sets the number of bots (1..7).', `/bottype ${BOT_TYPES.join('|')} sets their brain.`, 'READY when everybody is here starts the game.']);
+      return this.tell(client, ['/botcount N sets the number of bots (1..7).', `/bottype ${BOT_TYPES.join('|')} sets their brain.`, '/bothire on|off: 1000 buys an alliance, or not.', 'READY when everybody is here starts the game.']);
     }
     return this.tell(client, [`Unknown command ${cmd}, try /help.`]);
   }

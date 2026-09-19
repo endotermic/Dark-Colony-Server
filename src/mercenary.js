@@ -11,9 +11,9 @@
 // and its end go to the players concerned (the offer to everybody). A bot's ACTIONS (the brain's
 // decisions) are NOT said in battle at all since 19 Sep 2026 (maintainer: "on the battlefield bots
 // must not write its battling actions to chat"; from 13 to 19 Sep they went to the current ally
-// only) - they are kept in the debug log. The bots keep the peace among themselves by default (maintainer, 13 Sep
-// 2026: "bots must ally each other by default so there is no war between bots when not hired by
-// anyone"): a lone player fights both, and a bot it buys turns on the bots that do not serve it.
+// only) - they are kept in the debug log. The bots are rivals of each other by default (maintainer,
+// 19 Sep 2026: "bots must not ally each other by default"; from 13 to 19 Sep 2026 unhired bots kept a
+// standing peace): two bots ally with each other only while the same player has hired both (pacts).
 //
 // The alliance is set in BOTH directions (bot -> payer and payer -> bot, alliance and vision): the
 // game evaluates a relation only when both bits match (F48), and its end-of-game check (F49:
@@ -97,7 +97,7 @@ export class Bots {
     // players who left while everybody was loading (STARTING) get their bot now
     for (const t of this.pendingTakeovers) this.startTakeover(t.slot, t.name);
     this.pendingTakeovers = [];
-    this.syncPacts(); // the bots start allied with each other (first frame)
+    this.syncPacts(); // no pact without a common paying ally: the bots start as rivals
   }
 
   onAdvanced(tick) {
@@ -132,12 +132,11 @@ export class Bots {
 
   /**
    * Bring the pacts in line with the deals. Two active bots are allied with each other (both
-   * matrices, both directions) exactly when they serve the same master: both unhired (the default,
-   * maintainer 13 Sep 2026: "bots must ally each other by default so there is no war between bots
-   * when not hired by anyone") or both bought by the same player (F49: the game's end check
-   * compares every alive player with the first alive one, so a player allied with both bots wins
-   * only when the bots are allied too). A hired bot therefore turns on the bots that are not
-   * serving its ally, and the peace returns when its deal ends.
+   * matrices, both directions) exactly while the SAME player has hired both (F49: the game's end
+   * check compares every alive player with the first alive one, so a player allied with both bots
+   * wins only when the bots are allied too). Unhired bots are rivals (maintainer, 19 Sep 2026:
+   * "bots must not ally each other by default"; the standing peace of 13 Sep 2026 is gone), so a
+   * pact ends with either deal.
    */
   syncPacts() {
     const want = new Map();
@@ -146,7 +145,7 @@ export class Bots {
       for (let j = i + 1; j < active.length; j++) {
         const x = active[i];
         const y = active[j];
-        if ((x.ally?.player ?? -1) === (y.ally?.player ?? -1)) want.set(Bots.pactKey(x, y), [x, y]);
+        if (x.ally && y.ally && x.ally.player === y.ally.player) want.set(Bots.pactKey(x, y), [x, y]);
       }
     }
     for (const [key, [x, y]] of this.pacts) {
@@ -193,7 +192,7 @@ export class Bots {
       this.list.pop();
       return false;
     }
-    this.syncPacts(); // the inherited base joins the bots' peace
+    this.syncPacts(); // an inherited base is a rival like the others until somebody hires it
     return true;
   }
 
@@ -308,13 +307,17 @@ export class AiPlayer {
       }
     }
     const does = this.brain ? BRAIN_LINE[this.kind] : '';
+    const hire = this.room.botHire; // `/bothire` (19 Sep 2026): off = no offer, payments returned
     if (this.takeover) {
-      this.say(`${this.name} left the battle. I run this base now: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${does ? ` ${does}` : ''}`);
+      const deal = hire ? `: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.` : '.';
+      this.say(`${this.name} left the battle. I run this base now${deal}${does ? ` ${does}` : ''}`);
     } else if (index === 0) {
-      this.say(`I ally with anyone who pays me ${ALLY_PRICE}: Diplomacy screen, give ${ALLY_PRICE}.`);
-      this.say(`The deal: alliance and shared vision both ways for ${cfg.MERCENARY_ALLY_S} seconds, one ally at a time.`);
+      if (hire) {
+        this.say(`I ally with anyone who pays me ${ALLY_PRICE}: Diplomacy screen, give ${ALLY_PRICE}.`);
+        this.say(`The deal: alliance and shared vision both ways for ${cfg.MERCENARY_ALLY_S} seconds, one ally at a time.`);
+      } else this.say('Hiring is off in this game: the bots are nobody\'s allies.');
       if (does) this.say(does);
-    } else {
+    } else if (hire) {
       this.say(`Same deal here: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${does ? ` ${does} Pick your side.` : ''}`);
     }
     this.log.info('bot playing', {
@@ -322,6 +325,7 @@ export class AiPlayer {
       slot: this.slot,
       player,
       takeover: this.takeover,
+      hire: hire,
       ai: this.brain ? this.kind : 'deal only',
       allyTicks: this.allyTicks,
     });
@@ -381,6 +385,13 @@ export class AiPlayer {
     if (!(giver >= 0 && giver < 8) || giver === this.player) return;
     const tick = this.room.sync.engineTime;
     const name = this.nameOf(giver);
+    if (!this.room.botHire) {
+      // hiring is off (`/bothire`): the 1000 goes straight back, no alliance
+      this.refund(giver);
+      this.say(`${name}, hiring is off in this game. Your ${ALLY_PRICE} goes back.`, 1 << giver);
+      this.log.info('bot: payment returned, hiring off', { name: this.name, from: giver, slot: client.slot, tick });
+      return;
+    }
     if (this.ally) {
       const left = Math.max(1, Math.ceil(((this.ally.until - tick) * this.cfg.TICK_MS) / 1000));
       this.refund(giver);
