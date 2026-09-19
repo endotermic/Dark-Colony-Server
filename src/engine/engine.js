@@ -278,9 +278,12 @@ export class Game {
       const v = i16(gs, a);
       if (v > 1) w16(gs, a, v - 1);
     }
-    // 13. objects (0x419EA0)
-    const maxObj = i32(gs, GS.MAX_OBJ);
-    for (let obj = 0; obj <= maxObj; obj++) {
+    // 13. objects (0x419EA0). The bound is re-read every iteration (`cmp esi,[gs+7D40h]` at 0x419EA5):
+    // an object created during the loop with a new highest index (a unit produced by a building
+    // dispatched earlier in the same tick) runs its first tick immediately. Caching MAX_OBJ here
+    // postponed it by one tick and shifted the newborn's idle fidget rand() past the draws of the
+    // next tick (desync of 18 Sep 2026 at tick 9469, plan §16).
+    for (let obj = 0; obj <= i32(gs, GS.MAX_OBJ); obj++) {
       this.globals.loopTrap = 0;
       if (this.allocated(obj)) Ticker.dispatchObject(this, obj);
       else w8(gs, objAddr(obj) + O.SELECT, 0);

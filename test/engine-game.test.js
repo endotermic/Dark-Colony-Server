@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, loadMapJson, loadEngineData } from '../src/engine/index.js';
 import { build } from '../src/commands.js';
-import { GS, O, objAddr, u8, u16, i32 } from '../src/engine/mem.js';
+import { GS, O, OBJ_SIZE, objAddr, u8, u16, i32, w8, w16, w32 } from '../src/engine/mem.js';
+import * as Ticker from '../src/engine/ticker.js';
 
 function lobby(humans = [0, 3]) {
   const slots = [];
@@ -99,4 +100,46 @@ test('a move order from the sync stream moves the trooper', () => {
   assert.ok(x1 >= x0 + 2 * 256, `moved east from tile ${x0 >> 8} to ${x1 >> 8}`); // the target tile itself may be taken
   assert.equal(u8(gs, a + O.LIFE) !== 0, true);
   assert.equal(asserts.length, 0, JSON.stringify(asserts.slice(0, 3)));
+});
+
+test('an object created during the object loop with a new highest index runs its first tick in the same tick (0x419EA5 re-reads MAX_OBJ)', () => {
+  // The desync of 18 Sep 2026 (plan §16, tick 9469): a unit produced by a building that the loop had
+  // already dispatched took a new highest object index; the original dispatches it in the same tick
+  // (the loop bound is re-read every iteration), so its idle fidget rand() came one tick earlier
+  // than in the engine, which had cached MAX_OBJ before the loop.
+  const asserts = [];
+  const G = newGame(asserts);
+  const gs = G.gs;
+  const saved = Ticker.STATE_TABLE.slice();
+  let created = -1;
+  try {
+    for (let s = 0; s < Ticker.STATE_TABLE.length; s++) {
+      const f = saved[s];
+      Ticker.STATE_TABLE[s] = (g, obj, info) => {
+        if (created === -1 && obj >= 152 && u8(gs, objAddr(obj) + O.TYPE) === 0) {
+          // a building dispatched earlier in this tick "produces" a copy of this trooper in a new slot
+          created = i32(gs, GS.MAX_OBJ) + 1;
+          gs.copy(gs, objAddr(created), objAddr(obj), objAddr(obj) + OBJ_SIZE);
+          const na = objAddr(created);
+          w16(gs, na + O.X, u16(gs, na + O.X) + 0x300);
+          w8(gs, na + O.SP, 0); // stack: [idle, info 0]
+          w8(gs, na + O.STACK, 1);
+          w8(gs, na + O.STACK + 1, 0);
+          w8(gs, na + O.NUDGE, 0xff);
+          w8(gs, na + O.PENDING, 0);
+          w16(gs, GS.OBJ_ALLOC + created * 2, created);
+          w32(gs, GS.MAX_OBJ, created);
+        }
+        return f(g, obj, info);
+      };
+    }
+    G.step();
+  } finally {
+    for (let s = 0; s < saved.length; s++) Ticker.STATE_TABLE[s] = saved[s];
+  }
+  assert.ok(created > 152, 'a trooper was dispatched and the newborn created');
+  assert.equal(asserts.length, 0, JSON.stringify(asserts.slice(0, 3)));
+  // the newborn's idle body ran in its birth tick: the idle fidget pushed its sleep state on top
+  assert.equal(u8(gs, objAddr(created) + O.SP), 1, 'newborn dispatched in the tick of its creation');
+  assert.equal(u8(gs, objAddr(created) + O.STACK + 2), 3, 'idle pushed the fidget sleep (state 3)');
 });

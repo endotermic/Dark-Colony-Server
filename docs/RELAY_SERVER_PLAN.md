@@ -85,6 +85,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F48 | **Alliance and vision are per-direction bits that must match.** `0x0D(pa, pb, which, on)` sets bit `pb` of byte `pa` in matrix `which` (`0x41E928`); `game_tick` derives the alliance byte `gs+0x46F54[10a+b]` and the vision mask bit from `0x41E970(matrix, a, b)` = bit `b` of byte `a` **and** bit `a` of byte `b`. Targeting (`collide.c`) and the shared-vision mask read those derived values. A one-sided "alliance" therefore changes nothing until the other side sets its bit too. | `0x41D7AC`, `0x41E928`, `0x41E970`, `0x419BB0` | The Mercenary sets its two bits towards its ally and tells the ally in chat to set theirs; its own rusher never targets the ally regardless (`isAlly`), but the game's auto-fire only stops once the bits match |
 | F49 | **End of a multiplayer battle.** Every UI frame the client (`0x40ACD5`, game types 1/2) calls `game_over 0x40E260(gs)`: walk players 0..7, `first` = the first one for which `player_alive 0x40E1D4(gs, p)` holds; every further alive player must be **mutually allied** with `first` (`0x41E970(matrix 0, first, p)`, both bits) or the game goes on; with no unallied alive pair it returns 1. `player_alive` = any living object (`life ∉ {0, 10}`) of team `p` other than mines (types 45/46), deployed towers (41/42) and the city's tower slot (`obj < 120 && obj % 15 == 5`): buildings, workers and mining towers all count. When the check fires the client sets `gs+0x471C8 = 1`, and `stat(0, 0)` = its own player if it is still alive (`ui+0x13B == 0`, set earlier when `player_alive(me)` first failed, `0x40AC2A`) else 8; `run_game` then shows the results screen (`0x404964`), which prints **Victory** (`0x482430`) when `stat(0, 0) == local player`, **Defeat** otherwise (`0x404A83`). Alliances therefore end the game: once all alive players are mutually allied, every one of them has won. | `0x40AB40`-`0x40AD3C`, `0x40E1D4`, `0x40E260`, `0x404964` | **The check is a star, not a set of pairs the player is in**: every alive player is compared with `first` (the lowest alive game player index), so with two rival bots alive a lone player allied with both does NOT win — the two bots are not allied with each other (first live test 13 Sep 2026, §16: matrix rows 1↔6 and 6↔7 set, 1↔7 clear, `game_over` false while both deals overlapped). Victory by alliance therefore needs the bots that share a paying ally to ally with each other too (or one bot left); done the same day as the "pacts" of `Bots.syncPacts` (§19.9). A lone player against a single remaining bot wins for 1000. The server does not need an end detection of its own: the clients leave when they show the results screen and the room resets |
 | F50 | **What survives on Fly.** The machine (`d8927e5c5ee3d8`, no volume) keeps nothing on disk across a restart or deploy, and `fly logs` shows only the last 100 lines. But Fly's Logs API (`GET https://api.fly.io/api/v1/apps/<app>/logs?next_token=<ns>`, header `Authorization: FlyV1 <flyctl token>`, 100 entries a page, paging forward from `next_token` = a nanosecond Unix time) holds about **seven days** of the app's stdout: on 18 Sep 2026 it paged back to 12 Sep 01:18 UTC. The server wrote 602 lines / 119 KB in the 24 h before (10 battles started; mostly hall joins/leaves by port scanners and the 30 s stats lines). No line-size or rate limit is documented; the recorder keeps its lines below a few KB anyway. | Fly Logs API, checked 18 Sep 2026 | A battle recording that must be recoverable after a player's report has to be in the log and small: `RECORD_LOG` (§18.6). Recover within a week with `tools/logs2replay.js --fetch`; for longer keeping add a log shipper or a volume |
+| F51 | **The object loop of `game_tick` re-reads its bound every iteration** (`0x419EA2..0x419EAB`: `cmp esi, [gs+7D40h]` = `MAX_OBJ`). An object allocated during the loop with a new highest index - a unit produced by a building the loop has already dispatched, a wildlife spawn, a drop - is dispatched in the tick of its creation; a recycled lower slot is dispatched the next tick. The engine cached the bound until 19 Sep 2026 and ran such newborns one tick late, which reordered their idle fidget `rand()` against the next tick's draws (desync of 18 Sep 2026 at tick 9469, §16). | disassembly + replay into the real game, 19 Sep 2026 | `engine.js` step 13 reads `MAX_OBJ` in the loop condition; regression test in `test/engine-game.test.js` |
 | F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
 ---
@@ -1529,6 +1530,65 @@ above, so that the plan can be followed from scratch without repeating the disco
   unchanged. HBNFUFL.A0x answer for the originals: the first character is the letter of the drive
   holding the CD (or the mounted CD image), `D:` in the repository.
 
+**19 Sep 2026, the two two-player battles of 18 Sep: one "crash" when a player's last unit died = the game's sync assert; root cause found in the engine's object loop**
+
+- Maintainer report: two battles on Fly on 18 Sep with two real clients (endotermic, Gray, vs
+  Delaro, Human; Plink - O, AI Mercenary and AI Marauder playing). The first (15:29 UTC, 9604
+  ticks) "crashed when all units of one player were destroyed", the second (15:38 UTC, 16807
+  ticks) ended correctly with Defeat/Victory. Both recordings came back from the Fly log with
+  `tools/logs2replay.js --fetch` (F50).
+- **What the log shows.** Game 1: endotermic's client stopped echoing at frame 9473 and was evicted
+  after 5 s, Delaro's connection closed 1.9 s earlier at tick 9515. That is the pattern of the
+  game's own **sync assert** (`sync.c` line 125): `MessageBoxA` behind the full-screen surface,
+  black screen, the socket stays open until the player presses a key. Game 2 ended cleanly because
+  endotermic's last unit died while every survivor was mutually allied, so the battle-over check
+  (F49) fired at once.
+- **Reproduced with replay mode (§18.7):** the recording played back into the real `dc16new.exe`
+  aborted at the same place; `error.log`: `sync error: time 9469, net 13454, me 13430`. Server
+  engine and game differ by 24 at tick 9469 = one Trooper step. Endotermic's last unit (a Gray
+  worker, #176) was not involved at all: the difference is in the crowd of ~40 allied bot and Delaro
+  units jammed on endotermic's destroyed base, where blocked units re-plan ("wander") with two
+  `rand()` jitters every few ticks - the game's `rand()` is a 256-entry table walk, so a divergence
+  in the *number* of draws stays invisible until a jitter decides a step.
+- **Localisation without a second observable.** The checksum of tick 9469 is the only game-side
+  value, and about half of all random-index shifts reproduce it. The decisive trick: rewrite the
+  recording's `0x08` values from tick 9469 on with a *candidate* engine's history and replay it into
+  the real game; the game then runs until the next disagreement and names the tick and its own
+  checksum in `error.log`. Shifting the engine's random index by -1 at tick 9448 reproduced the
+  game through 9474 and failed at 9475 (`me -14209`, off by 23); every shift at 9470 (+-1, +-2)
+  fixed that one too, so the game had one draw fewer than the engine before tick 9469 and the
+  difference lay in the *order* of draws around a unit born at tick 9463.
+- **Root cause (engine.js, `game_tick` step 13).** The original's object loop re-reads the bound
+  every iteration - `cmp esi, [gs+7D40h]` at `0x419EA5` - so an object created *during* the loop
+  with a **new highest index** (a unit produced by a building that the loop had already dispatched;
+  here `#291`, a Sergeant from Delaro's research pod, tick 9463) runs its first tick immediately:
+  its idle body draws the fidget `rand()` in the birth tick. The port cached `MAX_OBJ` before the
+  loop and dispatched such a unit one tick later, so its draw fell *after* the draws of the next
+  tick's lower-indexed units - same count, different order, and 1/16 of the re-ordered fidget draws
+  gain or lose their second draw. Recycled slots (index below the cached bound) were unaffected,
+  which is why the 11-13 Sep recordings, the two other battles of 18 Sep and game 2 (16807 ticks,
+  two new-maximum births in its last 800 ticks) stayed in sync. Fix: `for (obj = 0; obj <=
+  i32(gs, GS.MAX_OBJ); obj++)`. Verification: the fixed engine reproduces all seven game-confirmed
+  checksums of game 1 (9469-9475) with no artificial shift and leaves the three in-sync recordings
+  byte-identical (0 mismatches over 16807, 9985 and 20287 ticks); regression test in
+  `test/engine-game.test.js` (fails on the old loop). **Confirmed live the same day:** the recording with the fixed engine's checksums for ticks
+  9469-9604 replayed into the real `dc16new.exe` ran past the old abort to the end of the recording
+  (`replay finished: all recorded frames sent`, tick 9604, `error.log` empty). The server on Fly
+  ran the old engine in `send` mode until the deploy of 19 Sep 2026 (maintainer, after his own replay
+  of the fixed recording: "tested, working as expected - ended and disconnected correctly").
+- **Not the cause** (all checked against the asm): the movement loop trap (reset per object in
+  both, `0x419EC0` sits inside the loop; fired 230 times in game 2), `reroute`/`relax`/`handle_block`,
+  the post-block sleep of 4, `turn`, `state_sleep`, the random side-step, the fidget, the random
+  table (byte-identical to `0x488F20`), the day/night vision radius, target acquisition.
+- **Replay mode shows too much money** (maintainer, same day): money is local - the sender deducts
+  it when it issues a build command, receivers only book "spent" - and the watcher never issued the
+  recorded player's commands, so nothing was ever deducted while income accrued. Display only;
+  money is not in the checksum. Noted in §18.7.
+- Tools of the day, all in the scratch directory, not committed: `logs2replay.js --fetch` for the
+  recordings; a Python `SendInput`/`PrintWindow` driver to launch and screenshot the game (mouse
+  clicks reach the game, the in-game cursor follows relative motion only; the maintainer joined the
+  replays by hand); rewriting `0x08` values in a recording for a candidate engine.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1903,6 +1963,11 @@ the seat.
   seat and cannot act. Names are not pinned (the client keeps its own; nothing in the simulation
   reads them). Covered by `test/replay.test.js`; **confirmed with the real game on 18 Sep 2026**
   (below, §16).
+- **Money is not replayed.** Money is local to each client (the sender deducts it when it issues a
+  build command, receivers only book "spent", plan §19), and the watcher never issued the recorded
+  player's commands, so its money is never deducted while the income keeps coming: the replay shows
+  far more money than the live game had (maintainer, 19 Sep 2026). Display only, money is not part
+  of the checksum, and there is no command that could set it.
 
 ---
 

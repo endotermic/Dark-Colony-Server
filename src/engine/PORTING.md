@@ -115,3 +115,11 @@ swap of specials). Document the offset ↔ name mapping in `tables.js`.
   disagree (the docs get fixed by the integrator).
 * A small `test/engine-<module>.test.js` where a self-contained check is possible (table lookups,
   pure arithmetic such as `sincos`/`atan2`, path search on a tiny grid).
+
+## Loop bounds the original re-reads
+
+`game_tick`'s object loop compares against `gs->max_obj` on every iteration (`0x419EA5`), so an
+object allocated during the loop with a new highest index is dispatched in the tick of its
+creation. Never hoist such a bound into a local: caching `MAX_OBJ` postponed a newborn's first tick
+and its fidget `rand()` by one tick and desynced a live battle (plan §16, 19 Sep 2026). Check the
+asm of every loop whose body can allocate or free the things it iterates over (objects, missiles).

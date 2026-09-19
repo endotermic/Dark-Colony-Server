@@ -1050,3 +1050,9 @@ names the section it corrects. The code wins over the earlier descriptive text.
   per-player **weapon upgrade level** of those types set by command `0x0C`; the special needs
   level 2. Nothing else writes those addresses (found with the second recorded game, 11 Sep 2026:
   the port refused a napalm shot the client fired).
+* §16.1 / `game_tick`: the object loop `for (i = 0; i <= gs->max_obj; i++)` re-reads `max_obj`
+  (`gs+0x7D40`) at every iteration (`0x419EA5`), so an object created during the loop with a new
+  highest index - a unit a building produced earlier in the same tick - gets its first `dispatch`
+  in the tick of its birth (and draws its idle fidget `rand()` there). The port had cached the
+  bound and ran such units one tick late; found with the replayed two-player battle of 18 Sep 2026
+  (server plan §16, 19 Sep 2026).

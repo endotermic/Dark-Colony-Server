@@ -6,6 +6,20 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Engine: objects created during the tick run in the same tick** (19 Sep 2026, from the two
+  two-player battles of 18 Sep: one ended for both players with the game's sync assert - a hidden
+  message box, seen as a crash - when a Sergeant produced during tick 9463 took a new highest object
+  index; plan §16, F51). The original's object loop re-reads `MAX_OBJ` every iteration
+  (`0x419EA5`), the port had cached it before the loop and dispatched such newborns one tick later,
+  which reordered their idle fidget `rand()` against the next tick's draws. Fixed in
+  `src/engine/engine.js`; the fixed engine reproduces all seven checksums the real game reported for
+  ticks 9469-9475, leaves the three in-sync recordings of 18 Sep byte-identical, and the recording
+  rewritten with its checksums replayed into the real game to the end (tick 9604); regression test
+  in `test/engine-game.test.js`. Found by rewriting a recording's `0x08` values with a candidate
+  engine's history and replaying it into the real game (replay mode), which reports the next
+  disagreeing tick in `error.log`. Replay mode is known to show too much money (money is local and
+  the watcher never spends; plan §18.7).
+
 - **Game exes: no CD path at all** (18 Sep 2026, maintainer report "all Dark Colony executables
   request the CD and hang on multi-hard-drive systems", then "the game should not try to touch the
   CD path at all"; `tools/patch_nocd.py`, patcher fix `cddrive`, doc `DC16_DISPLAY_AND_RESOLUTION.md`
