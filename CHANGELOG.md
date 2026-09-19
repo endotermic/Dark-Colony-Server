@@ -13,7 +13,8 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   expansion's `exp/` prefix slot (`0x487DC0`) and tries `exp/mission/h%d.wav` before
   `mission/h%d.wav`; harmless in the old `DC - Classic/` folder, but in the shared Council Wars folder
   it played the Council Wars briefings for Classic missions 1-8 and `exp/sound/water.wav`. Four data
-  bytes emptied; `dc16new.exe` SHA-256 `89894d73…`; the patcher script regenerated.
+  bytes emptied; `dc16new.exe` SHA-256 `89894d73…`; the patcher script regenerated. Confirmed in game
+  the same day (mission 1 plays the Classic briefing).
 
 - **Engine: objects created during the tick run in the same tick** (19 Sep 2026, from the two
   two-player battles of 18 Sep: one ended for both players with the game's sync assert - a hidden

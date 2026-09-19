@@ -2581,7 +2581,7 @@ old 512×448 area); minimap or map view. A scripted reproduction (drive `dc16new
 synthetic input, compare the ordered world point against the unit's position in the game state)
 was not attempted.
 
-#### 10.21 The Classic wave loader's leftover `exp/` prefix: Council Wars briefings in the Classic campaign **(19 Sep 2026, maintainer report "dc16new.exe must point at the correct sound files for mission briefings"; traced in both exes; patched; game test pending)**
+#### 10.21 The Classic wave loader's leftover `exp/` prefix: Council Wars briefings in the Classic campaign **(19 Sep 2026, maintainer report "dc16new.exe must point at the correct sound files for mission briefings"; traced in both exes; patched; confirmed in game 19 Sep 2026: mission 1 plays the Classic briefing)**
 
 Classic `dc16.exe` and `ENGEXP16.EXE` are one code base (§10.13, `DC16_SINGLE_EXE_MERGE.md`).
 Council Wars opens every data file through the overlay helper `0x004063E4`, whose prefix slot
@@ -2616,8 +2616,8 @@ mov [edi],al`. Council Wars builds are refused by size: their loader must keep `
 regenerated, canonical order now `nocd, resolution, hdpaths, cursor, pool, speed, clock, ddraw,
 movies, sounds` for Dark Colony; `-All` from `dc16.exe` reproduces the repo exe byte for byte,
 the Council Wars build is unchanged (`13c95489…`), `-Patches sounds` alone under PowerShell 5.1
-writes exactly the four bytes. Not tested in game yet: start a Classic campaign mission 1-8 and
-listen for the Classic briefing.
+writes exactly the four bytes. **Confirmed in game 19 Sep 2026** (maintainer: Classic mission 1 plays
+the Classic briefing).
 
 ## 11. Risks
 
