@@ -91,8 +91,14 @@ export class SyncCheck {
       return;
     }
     if (lobby.slots.some((s) => s.type === 0 || s.type === 1)) {
-      this.disable('computer players in the lobby: the AI is not ported (engine/ai.js)');
-      return;
+      // the game's own AI plays those slots on every client; the engine runs the same AI
+      // (engine/ai.js, 19 Sep 2026) but the port is unverified against a real client (plan §19.10)
+      if (this.mode === 'send' && !r.config.AI_SEND) {
+        this.disable('computer players in the lobby: the AI port is unverified (set AI_SEND=true to send anyway)');
+        return;
+      }
+      this.aiTakeover = true;
+      this.log.info('engine: computer players in the lobby, the AI port plays them', { mode: this.mode });
     }
     const mapJson = this.loadMapJson(r.map.file);
     if (!mapJson) {
@@ -228,11 +234,13 @@ export class SyncCheck {
     if (type === T.UNTIL || type === T.SYNC || type === T.TICK) return;
     this.engine.applyCommand(raw);
     if (type === T.DISCONNECT) {
-      // the lost player's base goes to the AI (0x41DBE0), which is not ported: from its first think
-      // (within 32 ticks) the engine's state is no longer the clients' state
+      // the lost player's base goes to the game's AI (0x41DBE0) on every client and, since 19 Sep 2026,
+      // in the engine too (engine/ai.js runs the Krusty port after record(t)). The port has not been
+      // verified against a real client yet, so `send` stops unless AI_SEND says otherwise; `shadow`
+      // keeps comparing - that comparison IS the verification (plan §19.6, §19.10)
       this.aiTakeover = true;
-      if (this.mode === 'send') this.disable(`AI took over slot ${raw[1]}: the AI is not ported (engine/ai.js)`);
-      else this.log.warn('AI took over a base: engine checksums are no longer comparable', { slot: raw[1], tick: this.engineTime });
+      if (this.mode === 'send' && !this.room.config.AI_SEND) this.disable(`AI took over slot ${raw[1]}: the AI port is unverified (set AI_SEND=true to send anyway)`);
+      else this.log.info('AI took over a base: the engine runs the AI port for it', { slot: raw[1], tick: this.engineTime, mode: this.mode });
     }
   }
 

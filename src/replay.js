@@ -159,8 +159,7 @@ export function replayConfig(cfg, replay) {
   return {
     ...cfg,
     HALL: false,
-    MERCENARY_AI: 'off',
-    FILL_EMPTY_WITH_AI: false,
+    FILL_EMPTY_WITH_AI: false, // the bots are off through Room.replay (Bots.configured)
     // the frames already carry the original server's 0x08; a second set would contradict them
     SYNC_CHECK: cfg.SYNC_CHECK === 'send' ? 'shadow' : cfg.SYNC_CHECK,
     TICK_MS: replay.header.tickMs ?? cfg.TICK_MS,

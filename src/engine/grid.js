@@ -245,6 +245,11 @@ export function ventBitTest(G, x, z) {
   const m = G.map;
   return (m.load[(m.h - 1 - z) * m.w + x] & LOAD_VENT) !== 0;
 }
+/** The vent-exhausted clear of renat.c (0x413BFF..: `and byte ptr [row+x*4+3],0FBh`, same file-order row table). */
+export function ventBitClear(G, x, z) {
+  const m = G.map;
+  m.load[(m.h - 1 - z) * m.w + x] &= ~LOAD_VENT;
+}
 
 /** Ground placement as 0x41B633/0x41B649: `and word ptr,0FC00h; or dword ptr,obj`. */
 export function placeGround(G, x, z, obj) {

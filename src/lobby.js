@@ -5,6 +5,7 @@ import { T, build, decode, sanitizeName, sanitizeText, typeName } from './comman
 import { STATE, SLOT_TYPE, SLOTS, VAR_DEFAULTS } from './constants.js';
 import { packPayloads } from './client.js';
 import { ChatView } from './chat.js';
+import { BOT_TYPES } from './config.js';
 
 export class Lobby {
   constructor(room) {
@@ -62,13 +63,75 @@ export class Lobby {
   greeting() {
     const r = this.room;
     if (r.replay) return this.replayGreeting();
-    let merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`;
+    const lines = [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`];
     if (r.bots?.configured) {
       const others = r.bots.others.map((b) => b.name);
-      const who = others.length ? `${others.join(', ')} and I rush; 1000 in battle buys an alliance` : 'I rush; 1000 in battle buys my alliance';
-      merc = `${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${who} for ${this.cfg.MERCENARY_ALLY_S} s.`;
+      const verb = r.botType === 'rusher' ? 'rush' : 'play';
+      const who = others.length ? `${others.join(', ')} and I ${verb}; 1000 in battle buys an alliance` : `I ${verb}; 1000 in battle buys my alliance`;
+      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${who} for ${this.cfg.MERCENARY_ALLY_S} s.`);
+      // the bot count and brain of this game and how to change them (19 Sep 2026); one row of the window
+      const n = r.fakeSlots().length;
+      lines.push(`Bots: ${n} ${r.botType}. /botcount N, /bottype T.`);
+    } else {
+      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`);
     }
-    return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`, merc];
+    return lines;
+  }
+
+  /** The bot count changed (`/botcount`): the pinned header of every player's chat window follows. */
+  onBotsChanged() {
+    for (const c of this.room.players()) {
+      c.chat.setHeader(this.greeting());
+      c.sendBatch(this.pack(c.chat.payloads()));
+    }
+    this.checkStart(this.room.now());
+  }
+
+  // ---- lobby chat commands (19 Sep 2026) -----------------------------------------------------
+
+  /**
+   * A chat line starting with `/` is a command for the server, not relayed. `/botcount N` sets the
+   * number of bots of the next game in this room (maintainer, 19 Sep 2026: one master bot by
+   * default, more on request); `/botcount` shows it; `/bottype krusty|rusher|random` sets their
+   * brain (maintainer, same day: "so there is a possibility to apply rusher too"); `/help` lists
+   * the commands.
+   */
+  command(client, body) {
+    const r = this.room;
+    const words = body.trim().split(/\s+/);
+    const cmd = words[0].toLowerCase();
+    if (cmd === '/botcount' || cmd === '/bots') {
+      const n = r.fakeSlots().length;
+      if (words.length < 2) {
+        return this.tell(client, [`${n} bot${n === 1 ? '' : 's'} in this game: ${r.fakeSlots().map((f) => f.name).join(', ')}.`, `/botcount N (1..${r.maxBots()}) changes it.`]);
+      }
+      const want = Number(words[1]);
+      const why = r.setBotCount(want);
+      if (why) return this.tell(client, [`Cannot set ${words[1]} bots: ${why}.`]);
+      const names = r.fakeSlots().map((f) => f.name).join(', ');
+      r.log.info('bot count', { by: client.slot, count: r.botCount, names });
+      return r.say(`${r.slots[client.slot].name} set the bots to ${r.botCount}: ${names}.`);
+    }
+    if (cmd === '/bottype' || cmd === '/bottypes') {
+      if (words.length < 2) {
+        return this.tell(client, [`The bots play ${r.botType}${r.botType === 'random' ? ' (each draws krusty or rusher)' : ''}.`, `/bottype ${BOT_TYPES.join('|')} changes it.`]);
+      }
+      const why = r.setBotType(words[1]);
+      if (why) return this.tell(client, [`Cannot set the bot type to ${words[1]}: ${why}.`]);
+      r.log.info('bot type', { by: client.slot, type: r.botType });
+      return r.say(`${r.slots[client.slot].name} set the bots to ${r.botType}.`);
+    }
+    if (cmd === '/help') {
+      return this.tell(client, ['/botcount N sets the number of bots (1..7).', `/bottype ${BOT_TYPES.join('|')} sets their brain.`, 'READY when everybody is here starts the game.']);
+    }
+    return this.tell(client, [`Unknown command ${cmd}, try /help.`]);
+  }
+
+  /** Lines for one client only, below the pinned header (no name in front, §17.8). */
+  tell(client, lines) {
+    for (const l of lines) client.chat.push(l);
+    client.sendBatch(this.pack(client.chat.payloads()));
+    return undefined;
   }
 
   /** Replay mode (§18.7): what the room is and what the client may (not) do. */
@@ -221,8 +284,13 @@ export class Lobby {
         }
 
         case T.LOBBY_CHAT: {
-          // plain relay into every window (the player's own "Name: text" prefix stays); chat has no commands
-          r.chat(sanitizeText(decode(cmd).text));
+          // plain relay into every window (the player's own "Name: text" prefix stays), unless the text
+          // after the name is a `/command` (19 Sep 2026: /botcount, /help)
+          const text = sanitizeText(decode(cmd).text);
+          const colon = text.indexOf(':');
+          const body = (colon >= 0 ? text.slice(colon + 1) : text).trim();
+          if (body.startsWith('/')) this.command(client, body);
+          else r.chat(text);
           break;
         }
 

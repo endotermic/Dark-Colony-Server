@@ -210,7 +210,6 @@ test('loadReplay, seat choice, replayConfig and the single-room pool', () => {
     const cfg = replayConfig(loadConfig({}, { SYNC_CHECK: 'send', TICK_MS: 44, HALL: true }), rp);
     assert.equal(cfg.HALL, false);
     assert.equal(cfg.SYNC_CHECK, 'shadow');
-    assert.equal(cfg.MERCENARY_AI, 'off');
     assert.equal(cfg.TICK_MS, 33);
     assert.equal(cfg.ROOM_LIST[0].file, 'D8PLAY01.SCN');
     const pool = new RoomPool(cfg, silentLogger, () => 0, () => 0, { replay: rp });

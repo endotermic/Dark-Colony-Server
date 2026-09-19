@@ -15,6 +15,7 @@ import { SyncCheck } from './synccheck.js';
 import { Recorder } from './recorder.js';
 import { LogRecorder, teeRecorders } from './logrecorder.js';
 import { Bots } from './mercenary.js';
+import { BOT_TYPES } from './config.js';
 
 export { STATE, SLOT_TYPE, SLOTS };
 
@@ -39,7 +40,12 @@ export class Room {
     this.map = opts.map ?? this.replay?.map ?? config.ROOM_LIST[0];
     // occupied slots (fakes, AI and real players) may not exceed the map's player count (F22)
     this.capacity = this.map.players;
-    this.minPlayers = Math.max(1, Math.min(config.MIN_PLAYERS, this.capacity - config.FAKE_PLAYERS));
+    // bots in this room's next game: FAKE_PLAYERS (1 = the master bot) until the players change it
+    // with `/botcount N` in the lobby chat (19 Sep 2026, §19.10); back to the default at every reset
+    this.botCount = config.FAKE_PLAYERS;
+    // the bots' brain for the next game: BOT_TYPE until the players change it with `/bottype T`
+    this.botType = config.BOT_TYPE;
+    this.minPlayers = this.minPlayersFor(this.botCount);
     if (this.replay) this.minPlayers = 1; // the one client in the recorded player's seat
     this.state = STATE.LOBBY;
     this.clients = new Set();
@@ -121,21 +127,89 @@ export class Room {
     // the fake host "Mercenary" sits in MERCENARY_SLOT (0 unless a diagnostic session moves it so
     // that a real player becomes the lowest network id and sends 0x08 checksums, plan §18)
     const m = cfg.MERCENARY_SLOT;
-    this.slots[m] = this.fakeSlot(m, cfg.FAKE_NAME_LIST[0]);
+    this.slots[m] = this.fakeSlot(m, cfg.FAKE_NAME_POOL[0]);
     // further fake humans take random slots, so that the real players' slots (and with them
     // their start positions, F12) differ from game to game
-    if (cfg.FAKE_PLAYERS > 1) {
+    if (this.botCount > 1) {
       const pool = [1, 2, 3, 4, 5, 6, 7].filter((s) => s !== m);
       for (let i = pool.length - 1; i > 0; i--) {
         const j = this.random(i + 1);
         [pool[i], pool[j]] = [pool[j], pool[i]];
       }
-      for (let i = 1; i < cfg.FAKE_PLAYERS; i++) this.slots[pool[i - 1]] = this.fakeSlot(pool[i - 1], cfg.FAKE_NAME_LIST[i]);
+      for (let i = 1; i < this.botCount; i++) this.slots[pool[i - 1]] = this.fakeSlot(pool[i - 1], cfg.FAKE_NAME_POOL[i]);
     }
   }
 
   fakeSlots() {
     return this.slots.filter((sl) => sl.fake);
+  }
+
+  /** Real players needed to start with `bots` bots on this map (MIN_PLAYERS, capped by the seats left). */
+  minPlayersFor(bots) {
+    return Math.max(1, Math.min(this.config.MIN_PLAYERS, this.capacity - bots));
+  }
+
+  /** The most bots this room can hold right now: the map's slots minus the real players present. */
+  maxBots() {
+    return Math.max(1, Math.min(7, this.capacity - this.clients.size));
+  }
+
+  /**
+   * `/bottype T` (19 Sep 2026, maintainer: "so there is a possibility to apply rusher too"): the brain
+   * of every bot of the next game in this room, `krusty`, `rusher` or `random` (each bot draws one at
+   * game start). Returns null when done, else the reason why not.
+   */
+  setBotType(t) {
+    if (this.state !== STATE.LOBBY || this.replay) return 'only in the lobby';
+    const type = String(t ?? '').trim().toLowerCase();
+    if (!BOT_TYPES.includes(type)) return `the type must be one of ${BOT_TYPES.join(', ')}`;
+    this.botType = type;
+    this.lobby.onBotsChanged();
+    return null;
+  }
+
+  /**
+   * `/botcount N` (19 Sep 2026, maintainer: the bot count is set by the players, the default is the
+   * one master bot): change the number of fake humans in the LOBBY. Extra bots take random free
+   * slots and are announced to every client like a joiner's dump (colour before type, F25); removed
+   * bots leave with a DISCONNECT, the master bot in MERCENARY_SLOT never goes. Returns null when
+   * done, else the reason why not.
+   */
+  setBotCount(n) {
+    if (this.state !== STATE.LOBBY || this.replay) return 'only in the lobby';
+    if (!Number.isInteger(n) || n < 1 || n > 7) return 'the count must be 1..7';
+    const max = this.maxBots();
+    if (n > max) return `at most ${max} bot${max === 1 ? '' : 's'} fit${max === 1 ? 's' : ''} on this map with ${this.clients.size} player${this.clients.size === 1 ? '' : 's'} in the room`;
+    const cfg = this.config;
+    const fakes = this.fakeSlots();
+    if (n < fakes.length) {
+      // the last names of the pool go first; AI Mercenary (slot MERCENARY_SLOT) stays
+      const removable = fakes.filter((f) => f.slot !== cfg.MERCENARY_SLOT).sort((a, b) => cfg.FAKE_NAME_POOL.indexOf(b.name) - cfg.FAKE_NAME_POOL.indexOf(a.name));
+      for (const f of removable.slice(0, fakes.length - n)) {
+        this.slots[f.slot] = this.emptySlot(f.slot);
+        this.broadcast(build.disconnect(f.slot));
+        this.log.info('bot removed', { name: f.name, slot: f.slot });
+      }
+    } else if (n > fakes.length) {
+      const used = new Set(fakes.map((f) => f.name));
+      for (let i = fakes.length; i < n; i++) {
+        const free = this.seatableSlots();
+        if (free.length === 0) break;
+        const s = free[this.random(free.length)].slot;
+        const name = cfg.FAKE_NAME_POOL.find((x) => !used.has(x)) ?? `${cfg.MERCENARY_NAME} ${i + 1}`;
+        used.add(name);
+        const f = this.fakeSlot(s, name);
+        f.colour = this.freeColour(s);
+        this.slots[s] = f;
+        this.broadcast(Buffer.concat([build.colourSet(f.colour, s), build.name(s, f.name), build.race(f.race, s), build.type(f.type, s), build.teamSet(f.team, s), build.ready(f.status, s)]));
+        this.log.info('bot added', { name, slot: s });
+      }
+    }
+    this.botCount = this.fakeSlots().length;
+    this.minPlayers = this.minPlayersFor(this.botCount);
+    this.bots.reset(); // one AiPlayer per fake slot
+    this.lobby.onBotsChanged();
+    return null;
   }
 
   freeSlots() {
@@ -426,6 +500,9 @@ export class Room {
     this.startingAt = 0;
     for (const c of this.clients) c.destroy();
     this.clients.clear();
+    this.botCount = this.config.FAKE_PLAYERS; // a fresh lobby starts with the default (one master bot)
+    this.botType = this.config.BOT_TYPE;
+    this.minPlayers = this.replay ? 1 : this.minPlayersFor(this.botCount);
     this.resetSlots();
     this.bots.reset(); // one bot per (freshly placed) fake slot
     this.lobby.reset();

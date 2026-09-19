@@ -722,7 +722,8 @@ export function evalCondition(G, code, unit) {
         const x = pop();
         G.assert(z >= 0 && z < h, 't1>=0 && t1<gs->map->ysize'); // trigger.c:569
         G.assert(x >= 0 && x < w, 't0>=0 && t0<gs->map->xsize'); // trigger.c:570
-        push((G.map.load[z * w + x] & ALIVE_MINE) !== 0 ? 1 : 0);
+        push(Grid.ventBitTest(G, x, z) ? 1 : 0); // 0x43D15C: through the file-order row table, like the loader
+
         break;
       }
       case OP_END:
@@ -1396,9 +1397,12 @@ export function stateHarvest(G, obj, info) {
     Ticker.resetAndDispatchOrder(G, obj);
     const vx = u16(gs, va + O.X) >> 8;
     const vz = u16(gs, va + O.Z) >> 8;
-    const li = vz * G.map.w + vx;
-    G.assert((G.map.load[li] & ALIVE_MINE) !== 0, 'gs->map->load[vent->z_pos>>8][vent->x_pos>>8]&(1<<ALIVE_MINE)'); // :1023
-    G.map.load[li] &= ~ALIVE_MINE;
+    // 0x413B87: `map+4[z]` = the FILE-order row table, the same mirrored cell the loader set the bit
+    // in (grid.ventBitSet). Until 19 Sep 2026 this read the z-ordered cell, so the first exhausted
+    // vent of a game asserted here and cleared attribute bit 4 of a cell in the mirrored row
+    // (found by the Krusty bots' long self-play; load bits are not in the checksum).
+    G.assert(Grid.ventBitTest(G, vx, vz), 'gs->map->load[vent->z_pos>>8][vent->x_pos>>8]&(1<<ALIVE_MINE)'); // :1023
+    Grid.ventBitClear(G, vx, vz);
     const di = Ticker.pushState(G, obj, 0x0d, 1);
     w16(gs, di, 0x32);
     const hp = i32(gs, a + O.HP);

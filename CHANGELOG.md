@@ -6,6 +6,34 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **The game's own AI plays the bots; one bot by default; `/botcount N` in the room chat** (19 Sep
+  2026, maintainer request "reverse engineered main AI bot built into the server, count of bots
+  updated by `/botcount`, by default only the bare minimum one master bot"; plan §19.10, F52-F54,
+  `docs/DC16_AI.md` §23). Krusty, the computer player of `dc16.exe` documented in `DC16_AI.md`, is
+  ported to `src/engine/krusty.js` (state block with the original offsets, zone table, influence map,
+  census, production goals, worker/defend/attack/scout tasks, group mover; the doc's details were
+  re-checked against the disassembly function by function, ~30 corrections recorded in §23). It runs
+  in two modes: **exact**, inside `game_tick` for computer lobby slots and `DISCONNECT` takeovers
+  (`src/engine/ai.js`, the game RNG, immediate execution) - `shadow` mode now keeps comparing in such
+  games, `send` still stops unless `AI_SEND=true` because the exact mode is unverified against a real
+  client; and **bot**, for the fake human players (`src/krustybot.js`, `MERCENARY_AI=krusty`, the new
+  default; the `MERCENARY_AI` switch is replaced by the per-room lobby command **`/bottype
+  krusty|rusher|random`** and its default `BOT_TYPE`, so the rusher of 13 Sep stays available and
+  `random` lets every bot draw one of the two at game start): a private RNG (`BOT_SEED`), commands into
+  the next sync frame, only the bot's money and the AI-private object bytes written. A bought alliance
+  now lasts **45 s** by default (`MERCENARY_ALLY_S`, was 120; maintainer, same day). The bots say only
+  the deal in battle (offer, payment, refund, end); their actions are no longer chatted, not even to the
+  ally. In bot mode two of the original AI's bugs are repaired: the weapon/armour upgrade goals work
+  (the original's never fired) and the attack planner no longer sends both groups at the same zone or
+  misreads the contested flag; the exact mode inside the engine keeps the original's behaviour. `FAKE_PLAYERS` defaults to
+  **1** (AI Mercenary); the lobby chat command **`/botcount N`** (1..7, at most the map's seats minus
+  the players present) adds bots into random free slots or removes them with `DISCONNECT`, `/botcount`
+  lists them, `/help` the commands; the pinned header shows the count; a room reset restores the
+  default. Headless self-play: standard base, guards at the vents, attack groups, 30 000 ticks without
+  an assert. Live test against a real client pending. Engine fix found on the way: the vent bit is set
+  through the file-order row table but the exhausted-vent path and the trigger primitive `m(x, z)`
+  read it z-ordered (F53); the first exhausted vent asserted. 239 tests.
+
 - **Classic exe: mission briefings and water sound from the game root, not `exp/`** (19 Sep 2026,
   maintainer report "dc16new.exe must point at the correct sound files for mission briefings";
   `tools/patch_wavprefix.py`, patcher fix `sounds`, Dark Colony only, doc

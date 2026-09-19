@@ -7,7 +7,10 @@ enough that the relay server can run the same logic for its fake players ("alive
 `RELAY_SERVER_PLAN.md` §19) and (2) give a later bit-exact port into `src/engine/ai.js` its
 specification. Everything not marked *(inferred)* was read instruction by instruction. `§17` of
 `DC16_BATTLE_ENGINE.md` was the first, partly wrong sketch of this material; §21 lists what it got
-wrong.
+wrong. **Ported on 19 Sep 2026** into `src/engine/krusty.js` (the AI itself), `src/engine/ai.js`
+(the `ai.c` schedule, exact mode inside `game_tick`) and `src/krustybot.js` (the server bot for the
+fake human players); the five instruction-level re-readings made for the port found the corrections
+of §23 - read §23 before trusting a detail of §5-§15.
 
 Conventions: Watcom register calls `(eax, edx, ebx, ecx, then stack)`. `gs` = game state
 (`src/engine/mem.js` offsets); `obj(i) = gs+0x7D48+i·0xDC`; `player(p) = gs+0xB98+p·0xE34`
@@ -151,14 +154,15 @@ TASK/DEFENSE/GOAL`):
 | `+0x0000` | 1 | **first-run flag** (1 after alloc → the census runs once before the first influence map; 0 after a load) |
 | `+0x0000` | 256 × 18 | **zone table**, record `z` at `kai + 18z` (zone = path family 1..255; zone 0's record overlaps the flag and is never a real zone; the C struct evidently starts at `+2`, which is how the save code addresses it). Fields relative to `kai + 18z`: `+2` u8 centre tile x, `+3` u8 centre tile z, `+4` i8 **anti-air owner** (−1 none), `+6` u16 anti-air strength, `+8` i8 **ground owner**, `+0xA` u16 ground strength, `+0xC` i8 **air owner**, `+0xD` u8 **hop distance from the home zone** (0xFF unreachable), `+0xE` u16 air strength, `+0x10` i16 **enemy building count**, `+0x12` u8 **flags**: bit 0 contested, bit 1 "attack here" (`aimsg 9/10`), bit 2 "unknown/marked zone" (`aimsg 11/12`, cleared when the AI sees the centre; presets the building count to 1). Bytes `+5, +9, +0x11` padding |
 | `+0x1200` | 2 | padding |
-| `+0x1202` | 800 × 4 | **last-seen memory** per object: `+0` u8 tile x, `+1` u8 tile z, `+2` i8 type (−1 none), `+3` u8 team (§8). `krusty_alloc` writes 0xFF into byte `+2` of entries 1..800 (`kai+0x1204+4i`); nothing else reads `kai+0x1200`. (The earlier doc's "task assignment bytes" do not exist: membership is the `obj+0xD2 == −2` test) |
+| `+0x1202` | 800 × 4 | **last-seen memory** per object: `+0` u8 tile x, `+1` u8 tile z, `+2` i8 type (−1 none), `+3` u8 team (§8). `krusty_alloc` writes 0xFF into `kai+0x1200+4i` for `i = 1..800` = byte `+2` of the records `o = 0..799` (§23; the formula
+  given here until 19 Sep 2026 was one record off); nothing else reads `kai+0x1200`. (The earlier doc's "task assignment bytes" do not exist: membership is the `obj+0xD2 == −2` test) |
 | `+0x1E84` | 4 × 0x12FC | **major tasks** `M(t) = kai + 0x1E84 + 0x12FC·t` (0x1E84, 0x3180, 0x447C, 0x5778): `+0..+0xC` four i32 header words (`+8` = an accumulator only task 3 writes, no reader found); `+0x10` **16 minor tasks × 0x12C**; `+0x12D0` **`i16 have[9]`** = units currently held per class (task 0's is the well-known `kai+0x3154`; this is a *count*, not a demand); `+0x12E4..+0x12F8` six callbacks (§7), not saved |
 | minor `m` | 0x12C at `M + 0x10 + 0x12C·m` | `+1` u8 active; `+8` i32 **current zone** of the group; `+0xC` i32 **destination zone**; `+0x10` u8 **state** (attack task: 0 en route, 1 unused, 2 needs a target, 3 parked in a defend zone); `+0x12` i16 **route step**; `+0x14` u8[256] **route** (zone ids from the start zone to the destination); `+0x116` i16 **list head**, `+0x118` i16 **list tail** (object indices, −1 empty); `+0x11A` i16[9] **count per class** |
 | `+0x6A74` | 16 × 2 | **defend-zone list** (`aimsg 6/7`): `+0` u8 in use, `+1` u8 zone |
 | `+0x6A94` | 32 × 12 | **goals** `{i32 check_fn, i32 action_fn, i32 param}`; slots 0..17 copied from `0x499158` (§10), `MAX_GOALS = 32` |
 | `+0x6C14` | i32 | **split** (0xC0 = 75 %, `aimsg 0` as `v·256/100`) |
 | `+0x6C18..+0x6C30` | 7 × i32 | class weights of the unit-building goal: infantry 1, mech 1, artillery 2, cyborg 4, scout 2, carry-all/healer 4, tower builder 2 (`aimsg 1..5` set the first five) |
-| `+0x6C34` | i32 | **attack ratio** (`aimsg 13`, `v·256/100`); **never initialised by `krusty_alloc`** (pool memory, presumably 0) |
+| `+0x6C34` | i32 | **attack ratio** (`aimsg 13`, `v·256/100`); **never written by `krusty_alloc`** - and deterministically **0**, because the pool allocator `0x40C09C` zero-fills every block it returns (`0x40C1B5..0x40C1BC`, §23) |
 | `+0x6C38` | u8[8] | **`see_thru[team]`**: the AI may use team `t`'s vision. Own team = 1 at alloc, `aimsg 14` sets others (allies). Not "enemy flags" |
 
 Object fields used privately by the AI (all objects, not in the checksum's covered set except through
@@ -220,8 +224,8 @@ rebuilds `have[]` and every group's `count[]` from the lists, and `M.take(gs, ka
 | task | role (file) | update1 | update2 | plan | move | recount | take |
 |---|---|---|---|---|---|---|---|
 | 0 | workers → vents (`krusty_scout.c`) | `0x4575E4` zero `M+8` | `0x44BC00` purge corpses of group 0 | `0x44B950` no-op | `0x4595D0` worker logic (§11) | `0x459AB8` `have[6]` = list length | `0x459B60` → 0 |
-| 1 | defend (`krusty_defend.c`) | `0x4575E4` | `0x44BC10` purge all groups | `0x4590BC` (§12) | `0x46BDA4` group mover (§15) | `0x44B6D4` recount by `unit_class` | `0x459370` |
-| 2 | attack (`krusty_attack.c`) | `0x4575E4` | `0x44BC10` | `0x458864` (§13) | `0x46BDA4` | `0x44B6D4` | `0x458C5C` |
+| 1 | defend (`krusty_defend.c`) | `0x4575E4` | `0x44BC10` purge all *active* groups | `0x4590BC` (§12) | `0x46BDA4` group mover (§15) | `0x44B6D4` recount by `unit_class` | `0x459370` |
+| 2 | attack (`krusty_attack.c`) | `0x4575E4` | `0x44BC10` (active groups) | `0x458864` (§13) | `0x46BDA4` | `0x44B6D4` | `0x458C5C` |
 | 3 | scouting / bombing (`krusty_scout.c`) | `0x459C44` `M+8 += n ? {40,30,20,0}[3]/n = 0 : 1000` (unread) | `0x44BC00` | `0x44B950` | `0x459CA0` (§14) | `0x44B6D4` | `0x45A458` → 0 |
 
 Tasks 1 and 2 are initialised by `task_init_common 0x46C074` (all groups inactive, default callbacks
@@ -243,9 +247,11 @@ Three passes, no `rand()`, no commands.
    bit 2 (marked) loses the bit when the AI's own vision bit is set on its centre tile, and then gets
    `+0x10 = 1` (a marked zone counts as one enemy building until seen).
 2. **Objects** `o = 0..799` with live `team < 8`:
-   * *visible* iff for some team `t` with `see_thru[t]`: the ground-layer bit `teamBit(t)` is set on the
-     object's tile and the object is not a hidden mine undetected by `t` (`OT.hidden(+0x68) && team != t
-     && !(obj+0xCA & (1 << t))`).
+   * *visible* iff for some team `t` with `see_thru[t]`: `ground(tile) & player(t).VISION` (`+0x19C4`, the
+     player's vision **mask** - own bit plus the allies whose vision it shares - not the single team bit;
+     corrected 19 Sep 2026, §23) and the object is not a hidden mine undetected by `t` (`OT.hidden(+0x68) &&
+     team != t && !(obj+0xCA & (1 << t))`). The only entry filter of the loop is the live team byte `< 8`:
+     free slots enter too (that is how a slot in view is forgotten).
    * alive/corpse (`life != 0`) and visible → use the live `(x, z, type, team)` and, **if `team != p`**,
      refresh the memory record `kai+0x1202+4o` (own objects are never memorised). Free slot and visible
      → forget the record.
@@ -392,8 +398,10 @@ Helpers:
   strength of z's neighbours / strength`; asserts "AI Path not found (hsm)" when unreachable). Only
   reached when `kai+0x6C34 · e > strength`; with the uninitialised (0) ratio it never runs.
 * **`group_strength 0x4583AC(gs, kai, t, m)`**: over the group's units with `ai_status == 1` (arrived),
-  count per class; `Σ 25·count[c]·MB[WT(OT(c).weapon0).class][1] / MB[1][gs+0x40]` — **uses the class
-  number as an object type and `gs+0x40` as a defence class** (original bugs; `gs+0x40 != 2`, else `/ 50`).
+  count per class; per class `25·count[c]·MB[WT(OT(c).weapon0).class][1] / MB[1][OT(c).defclass]` (signed
+  division per class, classes whose type has no weapon skipped) — **uses the class number as an object
+  type** (original bug; the divisor index is `OT(c)+0x40`, not `gs+0x40` as this file said until 19 Sep
+  2026, §23; `== 2` → `/ 50`).
 * **`choose_target 0x458540(gs, kai, excluded, maxh, p, strength, from, route_out)`**: for every zone
   `z` not excluded: `e = route_threat(z, z)`; `score = 0`; if `hops(z) <= maxh` and (`e != 0` or
   contested): `score = flags & 2 ? maxh/2 : maxh + 1 − hops(z)`; if `buildings > 0`: `score += maxh/2`;
@@ -405,18 +413,19 @@ Helpers:
   attack groups (array `C`), then the nearest by hops.
 
 `attack_plan` each think: `A[z]` = destinations of the defend task's active groups (1 for group 0, 2
-otherwise), `maxh` = their largest hop distance + 3; `B[dest] = 1` for own groups in state 0 (targets
-already taken); `C[m]++` for states 1/3 (**indexed by the group index instead of the zone — original
-bug**). Then per active group by state:
+otherwise), `maxh` = their largest hop distance + 3; `B[m] = 1` for own groups in state 0 and `C[m]++`
+for states 1/3 (**both indexed by the group index instead of the zone — original bugs**, `0x45897A`,
+`0x45898F`; §23). Then per active group by state:
 
 * **2 or 3** (needs a target): `s = group_strength`; `best = choose_target(B, maxh, p, s, group.zone)`;
-  found → `B[best] = 1`, `set_route(best, route)`, state 0. Not found and state 2 → state 3, route to
-  `pick_defend_zone(A, C, group.zone)`, `C[t]++`.
+  found → `B[best] = 1` (the zone index here), state 0, `set_route(best, route)`. Not found and state 2 →
+  state 3, route to `pick_defend_zone(A, C, group.zone)`, `C[new dest]++`.
 * **0** (en route): `s = group_strength`; `e = route_threat(group.zone, dest, &route[step])`; if `e ==
   0` and `zone[m].flags & 1 == 0` (**group index as zone index, bug**) and `zone[dest].buildings == 0`
   → state 2 (target cleared); else if `2·s <= e` → state 2 (too weak; the group keeps its orders until
   re-targeted next think).
-* **1**: unreachable (the block that would set it never runs).
+* **1**: fully coded (`0x458B0C`, corrected 19 Sep 2026): for every class `have[c] / ((4·active) / (m+1))
+  <= count[c]` and `count[c] >= 3` → state 2 (nothing sets state 1, so the block is dead in practice).
 
 The attack task sends no `0x0B`/`0x0E`: it moves groups zone by zone with assault orders; units engage
 what they meet (`DC16_BATTLE_ENGINE.md` §14.1 mode 1).
@@ -597,10 +606,61 @@ strdup, time), not AI code, despite sitting next to it.
 
 ## 22. Open points
 
-* `gs+0x40` in `group_strength` and the intended meaning of that formula (probably a bug).
+* ~~`gs+0x40` in `group_strength`~~ — it is `OT(c)+0x40` (§23); the class-as-type formula stays a bug.
 * Who was meant to set `obj+0xC9` and read `M+8`; both look like dead remains.
-* `kai+0x6C34`'s effective default (pool memory; the pool is not known to zero).
+* ~~`kai+0x6C34`'s effective default~~ — settled 19 Sep 2026: the pool zero-fills, the default is 0 (§23).
 * The exact strength formula was read from the code; its numeric consequences per unit type were only
   spot-checked (§8 examples).
 * Nothing here was re-checked against `DCEXP16.EXE` (the code is the same build; offsets differ
   slightly, `DC16_SINGLE_EXE_MERGE.md`).
+
+## 23. Corrections found while porting (19 Sep 2026)
+
+Five instruction-level re-readings of `dc16.asm` (one per original file) were made for the port in
+`src/engine/krusty.js`; the doc's structure and every address held, these details did not. The
+port follows the code; the sections above were amended where a sentence was wrong.
+
+| § | said | the code (address) |
+|---|---|---|
+| 5, 17, 22 | `kai+0x6C34` uninitialised pool memory | `smalloc 0x40C09C` **zero-fills** its block (`0x40C1B5..0x40C1BC`): every byte `krusty_alloc` does not write is 0, the attack ratio included |
+| 5 | memory table: `kai+0x1204+4i`, `i = 1..800` | `kai+0x1200+4i`, `i = 1..800` = the type byte of records **0..799** (`0x44BD82`) |
+| 7 | `purge_all` purges all groups; `update1/update2(gs, kai, t, M)` | active groups only (`0x44BC5A`); the 4th register of `update1/update2` is `kai + 0x12FC·t`, unused by both bodies |
+| 7 | `recount` "rebuilds from the lists" | clears `have[]` once and `count[]` of **all 16** groups, walks the active lists, **no life test**, `unit_class` twice per object |
+| 8 | visibility = `teamBit(t)` on the tile; "objects with live team < 8" | `ground & player(t).VISION` (mask, `+0x19C4`) at `0x456A6B/0x4569BB/0x456B42/0x456893`; the only filter is the live team byte `< 8`, dead slots enter (forget rule) |
+| 8 | a marked zone "loses the bit ... and then gets `+0x10 = 1`" | `+0x10 = 1` for every zone that had bit 2 at reset, whether or not the bit was cleared (`0x4568A2`); the test uses player *p*'s mask for every `see_thru` slot |
+| 8 | unarmed branch "skip own" by the record's team | by the **live** team byte `[obj+7]` (`0x456C32`) |
+| 6 | BFS "relax next[cur][d]" | skips `next == 0` and closed zones; strict minimum → lowest zone id wins ties; centres: unsigned division, u16 counts, whole square rescanned per radius, z outer / x inner |
+| 9 | census over all objects | both passes start at **object 120** (`0x4572DF`, `0x45749B`); pass 2 has **no 41/42 filter**; `split == 0x100` short-circuits to attack; the provisional bumps write `M(1)/M(2).have[c]` and `take` bumps again; the infantry-to-scouts rule needs both scout items unbuildable **and** no free scout |
+| 10 | army action picks the smallest score | `best_score` starts at **10000**, strict `>`: class 6 and anything at 10000 are never chosen; type and cost come from a second `dep_check_troop`; the building action deducts money **before** the dependency check |
+| 11 | stuck > 10 and the recall are two rules | `ja` at `0x4596DF` jumps past the recall: a worker stuck > 10 only drops its target, no move order; the "free worker" pass takes the **last listed object of any type** with `+0x11 == 0`; `best_hop` starts at 0x100 (an unreachable vent is a legal target); the vent scan is `0..799`; `route_threat`'s `p` is the unit's team byte; `from` is the raw family (no free-cell fallback); the stuck counter is a byte |
+| 12 | home-guard reservoir `rand() % k == 0 ... then k++` | `k` grows only on **acceptance** (`0x4590EC`): after a rejection the next candidate keeps the 1/k chance; the zoneset creates groups for zones 0..255 in slots **1..15** (silently nothing when full); group 0's destination is never removed from the set (a second group can appear for it) |
+| 12 | `defend_take` | `best` starts at 10000, strict `<` twice, unsigned counts; asserts `choice!=-1` (line 171) |
+| 13 | `B[dest] = 1` for state-0 groups; `C[t]++` | `B[group index] = 1` (`0x45897A`); `C[minor.dest]++` after `set_route` (`0x458A71`) |
+| 13 | `group_strength` divides by `MB[1][gs+0x40]` | `MB[1][OT(c)+0x40]` (`0x45851F`); the class-as-type bug stands |
+| 13 | state 1 "unreachable" | the handler `0x458B0C..0x458B97` exists (share test per class, ≥ 3 units) |
+| 13 | `choose_target` | zones 0..255; the building bonus is added even when the hop/threat test failed; `e2 == 0 → 1` only (a −1 stays and makes the score negative); `strength == 0` never chooses |
+| 13 | `route_threat` | with a given route `from` is ignored; the first neighbour pass is dead code (`rep movs` copies A over B); the result `B = A ∪ N(A)` stands |
+| 14 | bomber `rand()` sites | the 1/64 roll happens only for statuses other than 0/4/5 (after the assert); the vent reservoir has **no rate test**, loop `0..799`; the wander loop sends the previously accepted point when it lands on family 0; clamps `<0 → 0` then `>= W/H → W−1/H−1` |
+| 15 | `move_group(gs, kai, t, m)` | `m` is a stack argument, the 4th register (the player) is overwritten and never read; the re-issue flag `0x49941C` is read and cleared by the **first** active group's mover only; the advance also writes `+0x11 = nz` for the units it orders |
+| 15 | `new_minor` | does not clear `state`, `count[]` or `route[1..]`; the "none" zone is literally 255; `disband` leaves `prev`, `+0x11` and the group's head/tail untouched; `task_init_common` clears only the 16 active bytes |
+| 2 | `ai_turn` "tick 4" | the literal `TICK == 4` (`0x41AE56`), not start-relative; the choice constant `0x3F00002000400080` is exactly the double `1/32767` |
+
+Not in the doc before: the urgency table `{40, 30, 20, 0}` of `0x459C44` lives at `0x456140`
+(inside `krusty_general.c`'s literal pool); `0x458204` is a zone-flag-bit-0 getter; the `aimsg`
+handlers assert `msg_size` per id and the id check is unsigned; `link` takes an object *index*,
+`unlink` an object *pointer*; the census `link` dispatch goes through a 4-entry switch table at
+`0x45729C`; `smalloc`'s zeroing also fixes the "pool memory" caveats of §17.1.
+
+**Repairs in bot mode only** (`ctx.fixes`, maintainer 19 Sep 2026 "fix the krusty bugs"; exact mode keeps
+the original behaviour): the upgrade goals 12/13 fire when a weapon/armour upgrade item of the
+player's race is buyable and buy it for the unit type fielded most (`0x0C`), level by level; `attack_plan`
+indexes `B` and `C` by the destination zone and tests the contested flag of the destination. The
+server bots therefore upgrade their units and never send both groups at one zone.
+
+What the port does not do (marked `TODO(exact)` in the code): the type-1/2 campaign personalities
+(unseeded CRT `rand()`), `avoiding_route 0x4579F0` (only reachable with `aimsg 13`), the unbounded
+loops of `set_route`/`choose_target` on an unreachable destination (stopped instead of overrunning),
+the signed-tile row read of `move_group` for tiles ≥ 128, and the game-ending asserts (logged, the
+port plays on). Verification status: the bot mode plays whole games in headless self-play and in
+the server (`test/krusty.test.js`); the exact mode has **not** been compared with a recording of a
+real game in which the AI played (`RELAY_SERVER_PLAN.md` §19.10).

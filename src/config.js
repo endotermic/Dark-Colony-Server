@@ -29,10 +29,11 @@ export const DEFAULTS = Object.freeze({
   STRICT_SEQ: true,
   MERCENARY_NAME: 'AI Mercenary', // the fake host's display name (was 'Mercenary' until 12 Sep 2026)
   MERCENARY_RACE: 0, // race of every fake player: 0 Human, 1 Gray
-  // fake human players including Mercenary (1..7); the rest of the slots are for real players. Two since
-  // 13 Sep 2026 (maintainer): AI Mercenary and AI Marauder, both playing (MERCENARY_AI), so that a lone
-  // player can fight both, buy one, or set them against each other
-  FAKE_PLAYERS: 2,
+  // fake human players including the master bot AI Mercenary (1..7) at the start of every game; the
+  // rest of the slots are for real players. Two from 13 Sep to 19 Sep 2026 (AI Mercenary and AI
+  // Marauder); since 19 Sep 2026 (maintainer: "by default only the bare minimum, one master bot") the
+  // default is ONE, and the players raise it per room with the lobby chat command `/botcount N`
+  FAKE_PLAYERS: 1,
   FAKE_NAMES: 'AI Mercenary,AI Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
   FILL_EMPTY_WITH_AI: false,
   FILL_AI_TYPE: 0, // 0 easy, 1 hard
@@ -71,17 +72,29 @@ export const DEFAULTS = Object.freeze({
   // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every
   // tick, which RECORD_DIR/SYNC_CHECK=shadow compare with the engine. Real players never get slot 0.
   MERCENARY_SLOT: 0,
-  // The fake players in battle (13 Sep 2026, plan §19.8): `rusher` = every fake human plays a rush and
-  // sells an alliance (shared vision) for 1000 to whoever pays first; `off` = idle bases as before.
-  // Needs the engine (SYNC_CHECK shadow or send): their money and game player indices exist only there.
-  MERCENARY_AI: 'rusher',
-  MERCENARY_ALLY_S: 120, // seconds an alliance bought for 1000 lasts; later payments in that time are returned
-  MERCENARY_THINK_TICKS: 32, // decision interval of the rusher in game ticks (the original AI's 32)
+  // The fake players in battle (plan §19.8, §19.10) are played by a bot brain and sell an alliance
+  // (shared vision) for 1000 to whoever pays first. BOT_TYPE is the brain of a fresh room: `krusty` =
+  // the port of the game's own computer player (src/engine/krusty.js, DC16_AI.md; the default since
+  // 19 Sep 2026), `rusher` = the purpose-built rusher of 13 Sep 2026 (src/rusher.js), `random` = every
+  // bot draws one of the two at game start. The players change it per room with the lobby chat
+  // command `/bottype T` (maintainer, 19 Sep 2026). The bots need the engine (SYNC_CHECK shadow or
+  // send): their money and game player indices exist only there; without it the bases stay idle.
+  BOT_TYPE: 'krusty',
+  MERCENARY_ALLY_S: 45, // seconds an alliance bought for 1000 lasts (120 until 19 Sep 2026, maintainer: 45); later payments in that time are returned
+  MERCENARY_THINK_TICKS: 32, // decision interval of a bot in game ticks (the original AI's 32)
+  // Seed of the bots' private RNG (the krusty bot draws from the game's rand() table on its own index);
+  // 0 = random per game, otherwise bot i starts at (BOT_SEED + 17 i) & 0xFF, which makes a recorded
+  // game reproducible.
+  BOT_SEED: 0,
+  // The engine now runs the game's own AI (engine/ai.js) for computer lobby slots and DISCONNECT
+  // takeovers. The port is unverified against a real client, so in `send` mode such a game still stops
+  // sending checksums unless this is true (a wrong checksum kicks every client). `shadow` compares.
+  AI_SEND: false,
 });
 
-export const MERCENARY_AI_MODES = ['off', 'rusher'];
-
 export const SYNC_CHECK_MODES = ['off', 'shadow', 'send'];
+
+export const BOT_TYPES = ['krusty', 'rusher', 'random'];
 
 const TRUE_WORDS = new Set(['1', 'true', 'yes', 'on']);
 
@@ -131,13 +144,15 @@ export function loadConfig(env = process.env, overrides = {}) {
     });
   validate(cfg);
   cfg.DEBUG = cfg.DEBUG_MODE || cfg.LOG_LEVEL === 'debug';
-  // names of the fake players; slot 0 is always MERCENARY_NAME
+  // names of the fake players; slot 0 is always MERCENARY_NAME. FAKE_NAME_POOL holds a name for every
+  // possible bot (7), FAKE_NAME_LIST the ones of the default count (`/botcount` takes the rest from the pool)
   const names = String(cfg.FAKE_NAMES).split(',').map((n) => n.trim()).filter(Boolean);
-  cfg.FAKE_NAME_LIST = [cfg.MERCENARY_NAME];
-  for (let i = 1; i < cfg.FAKE_PLAYERS; i++) {
-    const n = names.find((x) => x !== cfg.MERCENARY_NAME && !cfg.FAKE_NAME_LIST.includes(x));
-    cfg.FAKE_NAME_LIST.push((n ?? `${cfg.MERCENARY_NAME} ${i + 1}`).slice(0, 16));
+  cfg.FAKE_NAME_POOL = [cfg.MERCENARY_NAME];
+  for (let i = 1; i < 7; i++) {
+    const n = names.find((x) => x !== cfg.MERCENARY_NAME && !cfg.FAKE_NAME_POOL.includes(x));
+    cfg.FAKE_NAME_POOL.push((n ?? `${cfg.MERCENARY_NAME} ${i + 1}`).slice(0, 16));
   }
+  cfg.FAKE_NAME_LIST = cfg.FAKE_NAME_POOL.slice(0, cfg.FAKE_PLAYERS);
   return cfg;
 }
 
@@ -163,8 +178,9 @@ function validate(cfg) {
   if (!SYNC_CHECK_MODES.includes(cfg.SYNC_CHECK)) throw new Error(`SYNC_CHECK must be one of ${SYNC_CHECK_MODES.join(', ')}`);
   if (!Number.isInteger(cfg.MERCENARY_SLOT) || cfg.MERCENARY_SLOT < 0 || cfg.MERCENARY_SLOT > 7) throw new Error('MERCENARY_SLOT must be 0..7');
   if (!Number.isInteger(cfg.REPLAY_SLOT) || cfg.REPLAY_SLOT < -1 || cfg.REPLAY_SLOT > 7) throw new Error('REPLAY_SLOT must be -1..7');
-  cfg.MERCENARY_AI = String(cfg.MERCENARY_AI).trim().toLowerCase();
-  if (!MERCENARY_AI_MODES.includes(cfg.MERCENARY_AI)) throw new Error(`MERCENARY_AI must be one of ${MERCENARY_AI_MODES.join(', ')}`);
+  cfg.BOT_TYPE = String(cfg.BOT_TYPE).trim().toLowerCase();
+  if (!BOT_TYPES.includes(cfg.BOT_TYPE)) throw new Error(`BOT_TYPE must be one of ${BOT_TYPES.join(', ')}`);
   if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');
   if (!Number.isInteger(cfg.MERCENARY_THINK_TICKS) || cfg.MERCENARY_THINK_TICKS < 1) throw new Error('MERCENARY_THINK_TICKS must be >= 1');
+  if (!Number.isInteger(cfg.BOT_SEED) || cfg.BOT_SEED < 0) throw new Error('BOT_SEED must be an integer >= 0');
 }

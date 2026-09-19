@@ -69,7 +69,7 @@ test('config: ROOMS entries resolve against the map table, custom maps need a na
   assert.equal(dflt.MARQUEE_MS, 200);
   assert.ok(dflt.PACK_LOBBY_FRAMES);
   // defaults since 7 Sep 2026: one fake (Mercenary) and one real player is enough to start
-  assert.equal(dflt.FAKE_PLAYERS, 2, 'AI Mercenary and AI Marauder since 13 Sep 2026');
+  assert.equal(dflt.FAKE_PLAYERS, 1, 'one master bot since 19 Sep 2026 (two from 13 Sep); /botcount adds more per room');
   assert.equal(dflt.MIN_PLAYERS, 1);
   assert.equal(loadConfig({}, { FAKE_PLAYERS: 7, LOG_LEVEL: 'debug' }).FAKE_PLAYERS, 7, 'debug mode does not touch the fakes');
 });
@@ -346,7 +346,7 @@ test('a room in battle shows the icon off; nothing is preselected; the map line 
   assert.ok(text.includes('Room 1 (Plink - O) is selected.'), text);
   assert.ok(text.includes('Room 1: a battle is in progress there'), text);
   assert.ok(text.includes('Cannot join room 1: a battle is in progress'));
-  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (1/6) in battle'), 'map line shows the state');
+  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (1/7) in battle'), 'map line shows the state');
   assert.equal(h.hall.clients.size, 1);
   assert.equal(h.room.clients.size, 1);
   // when the battle ends the map line and icon update within one step
@@ -355,7 +355,7 @@ test('a room in battle shows the icon off; nothing is preselected; the map line 
   h.advance(200);
   h.step();
   cmds = p.takeCmds();
-  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (0/6) open'));
+  assert.ok(cmds.find((cmd) => cmd.type === T.SCENARIO).title.startsWith('>1 Plink - O jungle (0/7) open'));
 });
 
 test('slot conflicts: a slot taken by a real player is reported, and newcomers avoid it', () => {
@@ -468,10 +468,10 @@ test("hall chat goes to the other waiting clients under the sender's name; /room
   const list = windowOf(p.takeCmds());
   assert.equal(list.length, CHAT_ROWS);
   assert.deepEqual(list.slice(6), [
-    '4 Circle of Friends desert (0/6) open',
-    '5 Olympus Mons desert (0/6) open',
-    '6 Hoops of Fury jungle (0/6) open',
-    '7 Rings of fire jungle (0/6) open',
+    '4 Circle of Friends desert (0/7) open',
+    '5 Olympus Mons desert (0/7) open',
+    '6 Hoops of Fury jungle (0/7) open',
+    '7 Rings of fire jungle (0/7) open',
   ], 'six header rows leave four rows for messages');
   assert.equal(list[1], 'Type /1../7 + ENTER to select a room,');
   assert.equal(list[5], 'No room selected. Type /1../7 + ENTER.');

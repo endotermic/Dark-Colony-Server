@@ -1,7 +1,7 @@
 // AI Mercenary in battle (plan §19.8): the opening offer, the 1000-money alliance (0x0F -> 0x0D
 // on both matrices + chat), the refund while an alliance runs, expiry, the ally leaving, and the
-// idle fallbacks without the engine or with MERCENARY_AI=off. The engine is faked (the rusher
-// has its own tests against the real engine, test/rusher.test.js).
+// idle fallbacks without the engine. The engine is faked (Krusty has its own tests against the real
+// engine, test/krusty.test.js).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,9 +53,10 @@ function fakeEngine() {
   };
 }
 
+/** Two bots (the 13 Sep 2026 default; since 19 Sep 2026 the default is one and /botcount adds more) with a faked engine. */
 function battle(overrides = {}) {
   const eng = fakeEngine();
-  const h = new Harness({ SYNC_CHECK: 'shadow', ...overrides }, { engine: eng });
+  const h = new Harness({ SYNC_CHECK: 'shadow', FAKE_PLAYERS: 2, ...overrides }, { engine: eng });
   const [a, b] = startBattle(h);
   // the peers never send a name, so the room calls them Player<slot>; that is what the Mercenary says
   a.name = h.room.slots[a.slot].name;
@@ -92,7 +93,7 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   const lines = chats(cmds);
   assert.ok(lines.length >= 2);
   assert.ok(lines[0].startsWith('AI Mercenary: I ally with anyone who pays me 1000'));
-  assert.ok(lines.some((l) => l.includes('120 seconds')));
+  assert.ok(lines.some((l) => l.includes('45 seconds')));
   const players = h.room.bots.list.map((b) => b.player);
   assert.equal(players.length, 2, 'AI Mercenary and AI Marauder');
   for (const c of cmds.filter((c) => c.type === T.CHAT)) {
@@ -102,7 +103,8 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   const marauder = h.room.bots.others[0];
   assert.equal(marauder.name, 'AI Marauder');
   assert.ok(lines.some((l) => l.startsWith('AI Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
-  assert.ok(h.room.lobby.greeting()[1].includes('AI Marauder and I rush; 1000 in battle buys an alliance for 120 s.'), h.room.lobby.greeting()[1]);
+  assert.ok(h.room.lobby.greeting()[1].includes('AI Marauder and I play; 1000 in battle buys an alliance for 45 s.'), h.room.lobby.greeting()[1]);
+  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty. /botcount N, /bottype T.', 'the bot count, the brain and the commands, one row');
 });
 
 test('two bots, two deals: a gift to AI Marauder allies with it alone, the Mercenary keeps its own deal', () => {
@@ -141,7 +143,7 @@ test('1000 to the Mercenary buys the alliance: 0x0F relayed, alliance + vision s
   assert.deepEqual(between(cmds, 0, mar), relations(0, mar, 0), 'the hired Mercenary leaves the bots\' peace');
   assert.equal(diplo(cmds).length, 8);
   const lines = chats(cmds);
-  assert.ok(lines[0].startsWith(`AI Mercenary: ${a.name} paid ${ALLY_PRICE}. We are allies for 120 seconds, both ways`), lines[0]);
+  assert.ok(lines[0].startsWith(`AI Mercenary: ${a.name} paid ${ALLY_PRICE}. We are allies for 45 seconds, both ways`), lines[0]);
   assert.equal(h.room.mercenary.ally.player, a.slot);
   assert.ok(h.room.mercenary.isAlly(a.slot));
   // the engine credited the Mercenary's ledger when the frame was executed
@@ -249,8 +251,8 @@ test('a client leaving while everybody loads gets its bot when the battle starts
   assert.ok(chats(cmds).some((l) => l.startsWith(`AI Player${c.slot}: Player${c.slot} left the battle.`)), chats(cmds).join(' | '));
 });
 
-test('without bots a leaving client is still handed to the game AI with DISCONNECT', () => {
-  const { h, a, b } = battle({ MERCENARY_AI: 'off' });
+test('without the engine a leaving client is still handed to the game AI with DISCONNECT', () => {
+  const { h, a, b } = battle({ SYNC_CHECK: 'off' });
   frame(h, a, b);
   a.sock.destroy();
   h.stepAfter(33);
@@ -285,19 +287,6 @@ test('without the engine the Mercenary stays idle: no offer, gifts relayed, gree
   const next = cmdsOf(b.take()[0]);
   assert.ok(next.some((c) => c.type === T.BONUS));
   assert.ok(!next.some((c) => c.type === T.DIPLOMACY));
-});
-
-test('MERCENARY_AI=off keeps the engine but no deal and no chat', () => {
-  const { h, a, b } = battle({ MERCENARY_AI: 'off' });
-  assert.ok(h.room.sync.active);
-  assert.ok(!h.room.mercenary.active);
-  assert.ok(h.room.lobby.greeting()[1].endsWith('My base stays idle.'));
-  const first = frame(h, a, b);
-  assert.equal(chats(first).length, 0);
-  a.send(build.bonus(0));
-  const cmds = frame(h, a, b);
-  assert.ok(cmds.some((c) => c.type === T.BONUS));
-  assert.equal(diplo(cmds).length, 0);
 });
 
 test('the Mercenary stands down when the engine is disabled mid-game', () => {
@@ -378,7 +367,7 @@ test('both bots bought by the same player: the bots ally with each other (a pact
   assert.equal(h.room.bots.pacts.size, 1);
 });
 
-test('actions reach the ally only; the deal talks to the payer; the offer is public', () => {
+test('action lines are never said in battle; the deal talks to the payer; the offer is public', () => {
   const { h, a, b } = battle();
   let cmds = frame(h, a, b);
   for (const c of cmds.filter((c) => c.type === T.CHAT)) assert.equal(c.mask, 0xff, 'offers to everybody');
@@ -397,7 +386,7 @@ test('actions reach the ally only; the deal talks to the payer; the offer is pub
   b.send(build.bonus(m.player));
   cmds = frame(h, a, b);
   const lines = cmds.filter((c) => c.type === T.CHAT);
-  assert.equal(lines.find((c) => c.text.endsWith('Marching.')).mask, 1 << a.slot, 'the action goes to the ally');
+  assert.ok(!lines.some((c) => c.text.endsWith('Marching.')), 'with an ally too, an action line is not sent (19 Sep 2026)');
   assert.equal(lines.find((c) => c.text.includes('goes back')).mask, 1 << b.slot, 'the refund is explained to B alone');
   a.sock.destroy();
   h.stepAfter(33);
@@ -406,11 +395,12 @@ test('actions reach the ally only; the deal talks to the payer; the offer is pub
   assert.equal(after.find((c) => c.text.includes('left the battle')).mask, 0xff, 'the new bot introduces itself to everybody');
 });
 
-test('config: MERCENARY_AI and MERCENARY_ALLY_S are validated', () => {
-  assert.throws(() => new Harness({ MERCENARY_AI: 'krusty' }), /MERCENARY_AI/);
+test('config: MERCENARY_ALLY_S is validated; there is no AI mode switch any more (Krusty always plays)', () => {
   assert.throws(() => new Harness({ MERCENARY_ALLY_S: 0 }), /MERCENARY_ALLY_S/);
-  const h = new Harness({ MERCENARY_AI: 'OFF' });
-  assert.equal(h.cfg.MERCENARY_AI, 'off');
+  const h = new Harness({ MERCENARY_AI: 'off' }); // a stale override is ignored, not an error
+  assert.equal(h.cfg.MERCENARY_AI, 'off', 'kept as an inert value');
+  assert.ok(h.room.bots.configured === false, 'bots need the engine (SYNC_CHECK off here)');
+  assert.ok(new Harness({ SYNC_CHECK: 'shadow' }, { engine: { loadMapJson: () => ({}), createGame: () => ({}) } }).room.bots.configured);
 });
 
 test('end to end with the real engine: the Mercenary speaks and buys in the sync frames', async () => {
@@ -431,7 +421,8 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
   assert.equal(h.room.state, 'RUNNING');
   assert.ok(h.room.sync.active, 'real engine running');
   const m = h.room.mercenary;
-  assert.ok(m.active && m.rusher, 'Mercenary plays with the rusher');
+  assert.ok(m.active && m.brain, 'Mercenary plays (the Krusty port by default)');
+  assert.equal(m.brain.summary().ai, 'krusty');
   assert.equal(m.player, probe.scenario.slotToPlayer[0]);
   for (const p of [a, b]) p.take();
   const players = h.room.bots.list.map((bot) => bot.player);
@@ -444,7 +435,7 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
     }
   }
   assert.ok(seen.chat[0].startsWith('AI Mercenary: I ally with anyone who pays me 1000'), seen.chat[0]);
-  assert.ok(seen.chat.some((l) => l.includes('And I rush.')));
+  assert.ok(seen.chat.some((l) => l.includes('And I play the game')), seen.chat.join(' | '));
   // actions are told to allies only: without an ally the worker orders go out unannounced
   assert.ok(!seen.chat.some((l) => l.includes('A worker first')), seen.chat.join(' | '));
   for (const c of seen.build) assert.ok(players.includes(c[2]), `worker order for a bot player (${c[2]})`);
@@ -467,7 +458,7 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
   }
   assert.ok(!after.some((c) => c.type === T.DISCONNECT), 'no DISCONNECT');
   const bot = h.room.bots.byPlayer(aPlayer);
-  assert.ok(bot && bot.takeover && bot.rusher, 'a rushing bot inherited the base');
+  assert.ok(bot && bot.takeover && bot.brain, 'a playing bot inherited the base');
   assert.ok(after.some((c) => c.type === T.CHAT && c.from === aPlayer && c.text.startsWith(`AI ${aName}: ${aName} left the battle.`)), 'it introduced itself');
   assert.ok(after.some((c) => c.type === T.BUILD && c.raw[2] === aPlayer), 'and it buys for the inherited base');
   assert.ok(h.room.sync.active && !h.room.sync.aiTakeover, 'the engine is still in step: no AI takeover');

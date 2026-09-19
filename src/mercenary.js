@@ -1,15 +1,17 @@
 // The fake players in battle (13 Sep 2026, maintainer request; plan §19.8, §19.9).
 //
-// Every fake human of the room (AI Mercenary in MERCENARY_SLOT and, since the same day, AI Marauder
-// in a random slot; FAKE_PLAYERS decides how many) is an AiPlayer: it rushes (rusher.js) and it
-// sells an alliance. Whoever gives it 1000 with the diplomacy screen's "give 1000" button (command
+// Every fake human of the room (AI Mercenary in MERCENARY_SLOT and, with FAKE_PLAYERS or `/botcount`,
+// further bots in random slots) is an AiPlayer: it plays with a brain - the game's own computer
+// player Krusty (krustybot.js, the port of DC16_AI.md; the default) or the rusher of 13 Sep 2026
+// (rusher.js), chosen per room with `/bottype krusty|rusher|random` (Room.botType, 19 Sep 2026) -
+// and it sells an alliance. Whoever gives it 1000 with the diplomacy screen's "give 1000" button (command
 // 0x0F, F47) becomes its ally with shared vision for MERCENARY_ALLY_S seconds; while an alliance
 // runs, further payments are returned (0x0F back to the payer, minus 1000 on the bot's ledger).
 // The bots talk in the battlefield chat (0x0E from the bot's game player): the offer, the deal
-// and its end go to the players concerned (the offer to everybody), but a bot's ACTIONS (the
-// rusher's decisions) reach only its current ally through the message's player mask (maintainer,
-// 13 Sep 2026: "AI bots must send their actions only to the allied client"); without an ally they
-// are not sent at all. The bots keep the peace among themselves by default (maintainer, 13 Sep
+// and its end go to the players concerned (the offer to everybody). A bot's ACTIONS (the brain's
+// decisions) are NOT said in battle at all since 19 Sep 2026 (maintainer: "on the battlefield bots
+// must not write its battling actions to chat"; from 13 to 19 Sep they went to the current ally
+// only) - they are kept in the debug log. The bots keep the peace among themselves by default (maintainer, 13 Sep
 // 2026: "bots must ally each other by default so there is no war between bots when not hired by
 // anyone"): a lone player fights both, and a bot it buys turns on the bots that do not serve it.
 //
@@ -25,22 +27,23 @@
 //
 // A real client that leaves a running battle is taken over by a new AiPlayer (§19.9) instead of
 // being handed to the game's own AI with DISCONNECT: the player stays a human on the wire, the
-// engine stays in step (the AI is not ported), and the base plays and sells alliances like the
+// engine stays in step, and the base plays and sells alliances like the
 // fakes. Its money is normalised as the original DISCONNECT does (money -= spent, F44).
 //
 // The bots need the server engine (plan §18): their game player indices come from the engine's
-// start shuffle, their money exists only there (F44) and the rusher reads the battle from it.
-// Without an active engine (SYNC_CHECK=off, missing map JSON, a divergence) the bases stay idle as
-// before, the deal is off, and a leaving client is handed to the game's AI as in 2.x.
+// start shuffle, their money exists only there (F44) and Krusty reads the battle from it. Without
+// an active engine (SYNC_CHECK=off, missing map JSON, a divergence) the bases stay idle, the deal is
+// off, and a leaving client is handed to the game's AI as in 2.x.
 
 import { build, sanitizeText } from './commands.js';
 import { STATE } from './constants.js';
 import { P, playerAddr, i32, w32 } from './engine/mem.js';
+import { KrustyBot } from './krustybot.js';
 import { Rusher } from './rusher.js';
 
 export const ALLY_PRICE = 1000; // fixed by the game's button (0x433564: money > 1000, money -= 1000)
-export const MERCENARY_AI_MODES = Object.freeze(['off', 'rusher']);
-const MAX_LINES_PER_THINK = 2; // the client shows a queue of six messages
+/** What a bot says it does (the "And I ..." of the offer), per brain. */
+const BRAIN_LINE = Object.freeze({ krusty: 'And I play the game: base, workers, army, war.', rusher: 'And I rush. Guard your base.' });
 const PHASE_STEP = 8; // ticks between the thinks of two bots (spreads their chat and their orders)
 
 /** All bots of a room: one per fake slot, plus one per real player that left the battle. */
@@ -56,9 +59,9 @@ export class Bots {
     return this.room.config;
   }
 
-  /** The bots play when MERCENARY_AI is not off and the engine will run (SYNC_CHECK). */
+  /** The bots play when the engine will run (SYNC_CHECK); never in replay mode (the recorded frames are the game). */
   get configured() {
-    return this.cfg.MERCENARY_AI !== 'off' && this.cfg.SYNC_CHECK !== 'off';
+    return this.cfg.SYNC_CHECK !== 'off' && !this.room.replay;
   }
 
   /** One AiPlayer per fake slot; call after Room.resetSlots(). */
@@ -227,7 +230,8 @@ export class AiPlayer {
   reset() {
     this.active = false;
     this.player = -1;
-    this.rusher = null;
+    this.brain = null; // the battle plan: a KrustyBot or a Rusher; null = deal only (the brain failed to start)
+    this.kind = null; // 'krusty' | 'rusher' once the brain exists
     this.ally = null; // { player, until (engine tick), client, name }
     this.nextThink = 0;
     this.allyTicks = 0;
@@ -267,7 +271,7 @@ export class AiPlayer {
   onRunning(index = 0) {
     this.reset();
     const cfg = this.cfg;
-    if (cfg.MERCENARY_AI === 'off') return;
+    if (this.room.replay) return;
     const sync = this.room.sync;
     if (!sync.active || !sync.slotToPlayer) {
       if (index === 0) this.log.info('bots idle', { reason: sync.disabledReason ?? `engine ${sync.mode}` });
@@ -289,28 +293,36 @@ export class AiPlayer {
       const a = playerAddr(player) + P.MONEY;
       w32(G.gs, a, i32(G.gs, a) - i32(G.gs, playerAddr(player) + P.SPENT));
     }
-    if (cfg.MERCENARY_AI === 'rusher' && G.tables && G.scenario) {
+    if (G.tables && G.scenario) {
+      // the room's bot type; `random` = this bot draws one of the two (Room.random, injectable in tests)
+      const kind = this.room.botType === 'random' ? (this.room.random(2) ? 'rusher' : 'krusty') : this.room.botType;
       try {
-        this.rusher = new Rusher(G, player, { isAlly: (q) => this.isAlly(q), nameOf: (q) => this.nameOf(q) });
+        if (kind === 'rusher') this.brain = new Rusher(G, player, { isAlly: (q) => this.isAlly(q), nameOf: (q) => this.nameOf(q) });
+        else {
+          const seed = cfg.BOT_SEED ? (cfg.BOT_SEED + 17 * index) & 0xff : undefined;
+          this.brain = new KrustyBot(G, player, { seed });
+        }
+        this.kind = kind;
       } catch (err) {
-        this.log.warn('bot: rusher failed to start', { name: this.name, err: err.message });
+        this.log.warn('bot: brain failed to start', { name: this.name, kind, err: err.stack ?? err.message });
       }
     }
+    const does = this.brain ? BRAIN_LINE[this.kind] : '';
     if (this.takeover) {
-      this.say(`${this.name} left the battle. I run this base now: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${this.rusher ? ' And I rush.' : ''}`);
+      this.say(`${this.name} left the battle. I run this base now: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${does ? ` ${does}` : ''}`);
     } else if (index === 0) {
       this.say(`I ally with anyone who pays me ${ALLY_PRICE}: Diplomacy screen, give ${ALLY_PRICE}.`);
       this.say(`The deal: alliance and shared vision both ways for ${cfg.MERCENARY_ALLY_S} seconds, one ally at a time.`);
-      if (this.rusher) this.say('And I rush. Guard your base.');
+      if (does) this.say(does);
     } else {
-      this.say(`Same deal here: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${this.rusher ? ' And I rush too. Pick your side.' : ''}`);
+      this.say(`Same deal here: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.${does ? ` ${does} Pick your side.` : ''}`);
     }
     this.log.info('bot playing', {
       name: this.name,
       slot: this.slot,
       player,
       takeover: this.takeover,
-      ai: this.rusher ? cfg.MERCENARY_AI : 'deal only',
+      ai: this.brain ? this.kind : 'deal only',
       allyTicks: this.allyTicks,
     });
   }
@@ -324,17 +336,16 @@ export class AiPlayer {
       return;
     }
     if (this.ally && tick >= this.ally.until) this.endAlliance('the time is up');
-    if (!this.rusher || tick < this.nextThink) return;
+    if (!this.brain || tick < this.nextThink) return;
     while (this.nextThink <= tick) this.nextThink += this.thinkTicks;
     try {
-      const r = this.rusher.think(tick);
+      const r = this.brain.think(tick);
       for (const c of r.commands) this.room.game.queueCommands(c);
-      r.lines.slice(0, MAX_LINES_PER_THINK).forEach((l) => this.sayToAlly(l));
-      if (r.lines.length > MAX_LINES_PER_THINK) this.log.debug('bot: lines dropped', { name: this.name, lines: r.lines.slice(MAX_LINES_PER_THINK) });
+      for (const l of r.lines) this.sayToAlly(l);
     } catch (err) {
-      // failure isolation (plan §19.3): this bot's rusher stops, the relay and the engine go on
-      this.log.warn('bot: think failed, rusher disabled', { name: this.name, err: err.stack ?? String(err), tick });
-      this.rusher = null;
+      // failure isolation (plan §19.3): this bot's brain stops, the relay and the engine go on
+      this.log.warn('bot: think failed, brain disabled', { name: this.name, err: err.stack ?? String(err), tick });
+      this.brain = null;
       this.say('My officers are confused. I hold what I have.');
     }
   }
@@ -417,13 +428,12 @@ export class AiPlayer {
     this.room.game.queueCommands(build.chat(this.player, mask & 0xff, sanitizeText(`${this.chatName}: ${text}`)));
   }
 
-  /** An action line: only the current ally hears it; without an ally it stays in the debug log. */
+  /**
+   * An action line of the brain: never said in battle (maintainer, 19 Sep 2026), only logged at debug
+   * level. The deal lines (offer, payment, refund, end, takeover) still go through say().
+   */
   sayToAlly(text) {
-    if (this.ally === null) {
-      this.log.debug('bot: unheard', { name: this.name, text });
-      return;
-    }
-    this.say(text, 1 << this.ally.player);
+    this.log.debug('bot: action', { name: this.name, ally: this.ally?.player ?? -1, text });
   }
 
   summary() {
@@ -436,7 +446,8 @@ export class AiPlayer {
       deals: this.deals,
       refunds: this.refunds,
       said: this.said,
-      rusher: this.rusher?.summary() ?? null,
+      kind: this.kind,
+      brain: this.brain?.summary() ?? null,
     };
   }
 }

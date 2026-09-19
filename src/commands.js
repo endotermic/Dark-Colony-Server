@@ -291,6 +291,7 @@ export const build = Object.freeze({
   buildBuilding: (slot, level, player) => u8(T.RESEARCH, slot, level, player),
   buildUnits: (type, player, count) => u8(T.BUILD, type, player, count),
   diplomacy: (pa, pb, which, on) => u8(T.DIPLOMACY, pa, pb, which, on),
+  upgrade: (which, type, level, player) => u8(T.SETTING, which, type, level, player), // 0x40C564: weapon (0) / armour (1) upgrade
   orderSelected: (player, order) => u8(T.ORDER_SEL, player, order),
   deselect: (player) => u8(T.DESELECT, player),
   moveToSelected: (player, x, z) => Buffer.concat([u8(T.MOVETO_SEL, player), i16(x), i16(z)]),

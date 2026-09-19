@@ -27,6 +27,7 @@ register('data:text/javascript,' + encodeURIComponent(hook), import.meta.url);
 
 const Mem = await import('../src/engine/mem.js');
 const Renat = await import('../src/engine/renat.js');
+const Grid = await import('../src/engine/grid.js');
 let Anim = null;
 try {
   Anim = await import('../src/engine/anim.js');
@@ -157,8 +158,9 @@ test('primitives: c, r, s(p,k), s(p,k,type), m(x,z), u(k), b(p,k)', () => {
   G.setTypeStat(2, 0, 4, 600);
   assert.equal(compileEval(G, '(c>s(0,2,4))'), 0);
   assert.equal(compileEval(G, '(m(81,137)==0)'), 1);
-  G.map.load[137 * G.map.w + 81] |= 1 << 26;
+  Grid.ventBitSet(G, 81, 137); // as the scenario loader sets it (0x41C758: through the file-order row table, like the test 0x43D15C)
   assert.equal(compileEval(G, '(m(81,137)==0)'), 0);
+  assert.equal((G.map.load[137 * G.map.w + 81] & (1 << 26)) !== 0, false, 'the z-ordered cell is not what m() reads (row h-1-z is)');
   G.globals.captures = [0, 3, 0, 0, 0, 0, 0, 0];
   assert.equal(compileEval(G, 'u(1)'), 3);
   w32(G.gs, Mem.playerAddr(2) + Mem.P.SLOT_HP + 4 * 3, 70000);
@@ -220,7 +222,7 @@ test('triggersTick: eruption chain 0 -> 20 -> 40 of D8PLAY01 with the original r
   w16(G.gs, va + O.Z, 137 << 8);
   w32(G.gs, va + O.HP, 15000);
   // every vent of the map sets the ALIVE_MINE bit when the scenario loader creates it (0x41C758)
-  for (const o of mapJson.objects.filter((o) => o.role === 'vent')) G.map.load[o.z * G.map.w + o.x] |= 1 << 26;
+  for (const o of mapJson.objects.filter((o) => o.role === 'vent')) Grid.ventBitSet(G, o.x, o.z);
   // tick 1: every "(s(3,0)==1)" trigger fires: setlifes first (reverse order), then setarray k ((c+90)+(r%210))
   w32(G.gs, GS.GAME_TIME, 16 * 100);
   G.srand(0);
@@ -254,7 +256,7 @@ test('triggersTick: eruption chain 0 -> 20 -> 40 of D8PLAY01 with the original r
   const before = G.randIndex;
   Renat.triggersTick(G);
   assert.equal(R.triggers[40].lives, 1);
-  G.map.load[137 * G.map.w + 81] &= ~(1 << 26);
+  Grid.ventBitClear(G, 81, 137); // the vent-exhausted clear of stateHarvest (same row table)
   Renat.triggersTick(G);
   assert.equal(R.triggers[40].lives, 0);
   assert.equal(R.triggers[20].lives, 1, 'setlifes 20 1 re-armed');

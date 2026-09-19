@@ -19,16 +19,22 @@ row shows your name; you can type it there.
 - It replaces the in-game host. Slot 0 is a fake human player, **AI Mercenary**, who greets every
   room with a chat line saying that it is an AI bot and the host; real players get random
   free slots, so their start positions differ from game to game.
-- **Two AI players, AI Mercenary and AI Marauder** (since 13 Sep 2026, when the server-side
-  engine is on): both rush (a worker on a vent, a barracks, cheap infantry and waves at the nearest
-  enemy base) and both sell an alliance: give one of them 1000 in the game's Diplomacy screen and it
-  is your ally with shared vision for two minutes (the bot sets the alliance in both directions, so
-  nothing to click). Money sent while it already has an ally comes back.
-  They are rivals of each other, so a lone player can fight both, buy one, or set them against each
-  other. The game itself ends a battle with Victory once every player still alive is allied, so
-  buying the alliance of every remaining bot wins the game. A player who leaves a battle is replaced
-  by another such bot playing that base. Every decision is announced in the battlefield chat.
-  `MERCENARY_AI=off` keeps the old idle bases, `FAKE_PLAYERS=1` removes the Marauder.
+- **AI players that play the game's own AI** (since 19 Sep 2026, when the server-side engine is
+  on): every bot is played by a port of *Dark Colony*'s computer player "Krusty" (workers to the
+  vents, the standard base, an army, guards at the vents, attack groups at the nearest contested
+  zone). By default there is **one** bot, AI Mercenary, the host; type **`/botcount N`** (1..7) in
+  the room chat and hit ENTER to get more (AI Marauder, Renegade, Outlaw, ...), `/botcount` to see
+  them, `/help` for the commands. Every bot sells an alliance: give it 1000 in the game's Diplomacy
+  screen and it is your ally with shared vision for 45 seconds (the bot sets the alliance in both
+  directions, so nothing to click). Money sent while it already has an ally comes back. Bots keep
+  the peace among themselves until one is hired; the game itself ends a battle with Victory once
+  every player still alive is allied, so buying the alliance of every remaining bot wins the game. A
+  player who leaves a battle is replaced by such a bot playing that base. In battle a bot only talks
+  about the deal, never about its moves. `/bottype rusher` in the room chat switches the
+  bots of the next game to the simpler rusher of 13 Sep 2026 (a worker, a barracks, cheap infantry
+  and waves at the nearest base), `/bottype random` lets every bot draw one of the two, `/bottype
+  krusty` is the default. `FAKE_PLAYERS` and `BOT_TYPE` set the defaults, `SYNC_CHECK=off` leaves
+  the bases idle.
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
   first sees the room list in the lobby screen and picks a room with a chat command and READY; the
@@ -50,7 +56,7 @@ row shows your name; you can type it there.
   player's seat (plan §18.7).
 - Clients that stop answering (keep-alives, load report, frame echoes) or violate the protocol are
   removed and announced to everybody else.
-- `FAKE_PLAYERS=7` fills the lobby with fake humans for a solo game against seven bots.
+- `FAKE_PLAYERS=7` (or `/botcount 7` in the room) fills the lobby with bots for a solo game against seven.
 
 Version 2.0 (September 2026) is a rewrite; version 1.x lives in the git history. Version 2.1 adds
 the rooms and the room-selection lobby; 2.2 the server-side battle engine (checksums in the sync
