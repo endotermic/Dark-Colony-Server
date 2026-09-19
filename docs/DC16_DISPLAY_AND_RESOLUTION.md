@@ -2540,6 +2540,85 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   behaves as "no CD" (greyed menu, Council Wars asserts in `widget.c`) — the patched exes ignore the
   file entirely.
 
+#### 10.20 "Units miss the spot I clicked" on the 1024×768 build: the click chain audited **(19 Sep 2026, player report via the maintainer; audited in the disassembly only — no defect found, not reproduced)**
+
+A player reported (more than ten times in one online game) that orders sent to one spot made
+units go elsewhere, once losing an Exploiter ordered onto a Petra-7 vent, and believed the
+1024×768 executable to be the cause. Every step from the mouse to the order was read in the
+patched Classic exe; all of it is consistent with the 896×736 map view. Nothing here is a fix —
+it is the list of what is **not** wrong, so the next report can be narrowed further.
+
+| Step | Where | What it does in the patched exe |
+|---|---|---|
+| mouse position | `mouse.c 0x00450E80` (the only live path; the absolute path `0x00450DA0` has no caller) | DirectInput relative deltas accumulated into `0x005327C0/C4`, clamped to 0…1023 / 0…767, mirrored to `0x004DFF14/1C` |
+| button events | `0x00450FA0…0x004510B9` → `push_event 0x0042F110` | polled once per frame from the button *state*: type 4 = left press (flags 2/4/8 = Shift/Ctrl/Alt in byte 1), `0x104` = left release, 3 / `0x103` = right press / release, 5 = move; queue `0x004DF290`, 256 × {type, x, y} dwords — nothing is packed into 640×480-sized fields |
+| dispatch | `0x0040A484` | a captured HUD widget (`0x004245C0`, `[intf+0x431C] ≥ 0`) first, then `point_in_rect` on the map view `[ui+8]` = (4, 6, 896, 736) → `0x00409AC4`, then the minimap rect `ui+0x7B4` = (903, 6, 96, 84) → `0x0040A070` |
+| left click with a selection | `0x00409AC4`: press `0x00409E72`, release `0x00409EAC`, move `0x00409F5F` | the press is **deferred**: its event is stored at `ui+0x4680…0x4688` with the time at `ui+0x4678`; a move of more than 45 px (`0x00409F9A`) or 1.5 s (`0x00409FAD`) turns it into a box select; the release calls `0x004098D4`, which converts the **stored press position** with the **camera of the release moment** |
+| screen → world | `0x00409574` | `world = camera ± (2·(m − rect.xy) − rect.wh)·8·scale / 4096 / 2` with `rect = [ui+8]`, `scale = [ui+0x10C]` (clamped 0x1000…0x4000 at `0x0040AEBF`); x adds, y subtracts (the world y axis points up). At scale 0x1000 this is exactly `camera − half·8 + (m − rect.xy)·8`, i.e. the inverse of the renderer's origin `camera − 0xE00 / 0xB80` (`0x0040B0BC/E0`, §Stage 3), pixel-exact because 896 and 736 are even |
+| camera | `0x0040AE6A…0x0040AF2B` | scrolls in whole tiles (`± 0x100`), is clamped to `[half, map − half]` (`0x0041EE66/6F` = 0xE00 / 0xB80, `clamp2d 0x00436668`) and then has its low byte zeroed — always tile-aligned. Because 0xB80 is 11.5 tiles the bottom limit rounds down to 0xB00, so at the map's bottom edge the view shows half a tile beyond the map (world y −0x80…0), where a click yields a negative world y and the pick refuses it. Edge-scroll zones `ui+0x7D0…0x7DC` = the view rect shrunk by 3 px (`0x00432F80`), so they moved with the view |
+| pick | `0x00409850` → `0x004350D4` | tile = world >> 8, bounds against the map, the tile dword's high bits must contain the player's vision mask `[player+0x19C4]` (own bit `0x40000000 >> p` plus allies with shared vision, rebuilt at `0x00419C1E`; no code clears these bits — explored means seen), then a 3×3-tile search of the three occupancy planes (`map+0x804` dwords, `map+0xC04` / `+0x1004` words, ids masked 0x3FF). Map-based, not render-list based |
+| order | `0x0040968C` (spot) / `0x0040999E` (target) → `0x004092D0` → `0x00421764` | 16-bit world coordinates in the command bytes — a 256-tile map fits |
+| minimap | `0x0040A070` | `world_x = ((x − 903)·2 + 1)·map_w / 96 / 2`, `world_y = ((90 − y)·2 + 1)·map_h / 84 / 2`, drawn at (903, 6) (`0x370E`) — consistent |
+
+Also checked: no stock `0x800` / `0x700` half-viewport immediates remain in code (the three
+`0x40ED20`ff and `0x441618`ff hits are a buffer size and an angle quadrant); the HD `MAINE`
+script has no widget over the map view that the stock one did not have (only the two message
+lines moved to y = 713 / 728 and the pause picture to (392, 304)); the cursor blit adds the same
+hotspot offsets `0x00489708/0C` as stock and clips against 1024×768.
+
+What the code does say, and what a reproduction should test: (1) the order is computed at
+**release** time, so a camera step between press and release (edge scroll after a 100 ms dwell,
+one tile per frame at `0x0040AE43`; arrow keys; a minimap drag; a jump-to-event key) moves the
+target by whole tiles — stock behaviour, but the bigger view makes long clicks near the edges
+more common; (2) with 2.9× the area on screen, far more of what the player sees is out of every
+unit's sight, and the pick refuses a target whose tile lacks the vision bit even though the
+terrain and site are drawn — an Exploiter sent at an unseen vent gets a plain move to the vent's
+world point and stops beside it undeployed; (3) the half-tile overhang at the map's bottom edge
+above. To separate these from a real defect the report needs: whether the same happens in the
+untouched `dc16.exe`; whether the unit goes to a *wrong place* or reaches the spot and fails to
+*deploy*; whether the view was scrolling; where on screen the click was (inside or outside the
+old 512×448 area); minimap or map view. A scripted reproduction (drive `dc16new.exe` with
+synthetic input, compare the ordered world point against the unit's position in the game state)
+was not attempted.
+
+#### 10.21 The Classic wave loader's leftover `exp/` prefix: Council Wars briefings in the Classic campaign **(19 Sep 2026, maintainer report "dc16new.exe must point at the correct sound files for mission briefings"; traced in both exes; patched; game test pending)**
+
+Classic `dc16.exe` and `ENGEXP16.EXE` are one code base (§10.13, `DC16_SINGLE_EXE_MERGE.md`).
+Council Wars opens every data file through the overlay helper `0x004063E4`, whose prefix slot
+`0x004826D0` says `exp/`; in the Classic build that slot holds unrelated text (an assert string),
+so the helper opens bare names. The **wave loader** is the exception: `wave.c 0x00452A50` has its
+own prefix copy, the 8-byte DGROUP slot **`0x00487DC0`** (Classic file `0x855C0`; Council Wars
+`0x00487DC8`, the slot the OZI MISSIONS mode swaps, §10.13), and **in the Classic build it still
+says `exp/`**. The loader (`mov esi,0x487DC0` at `0x00452A68`, then two word-copy loops) builds
+prefix+name into `[ebp-0x80E]`, opens it (`0x00452AC4`), on failure opens the bare name
+(`0x00452ADD`), and on a second failure took the CD path (`0x00452AEF`ff, jumped over since §10.19).
+Every WAV goes through it: the briefings `mission/h%d` / `mission/g%d` + `.wav` (the only
+`mission/` strings in the exe), the start-up sound table, the ambience.
+
+In the old `DC - Classic/` folder no `exp/` tree existed, so the first attempt always failed and
+the leftover was invisible. Since the two games share `DC - Council wars/` (§10.18), the first
+attempt **succeeds** wherever a Council Wars file of the same name sits under `exp/`: the
+Council Wars briefings `exp/mission/h1…h8.wav`, `g1…g8.wav` (its two eight-mission campaigns) and
+`exp/sound/water.wav` (which differs from `SOUND/WATER.WAV`). `dc16new.exe` therefore played the
+Council Wars briefing for Classic missions 1-8 of both campaigns and the Council Wars water
+ambience. No other WAV name of the Classic game has an `exp/` twin (`exp/sound/` holds 21 files;
+the other names present in both trees, `slist.dat` and `sound2.dat`, are opened by the generic
+helper, which has no prefix in Classic). The root `MISSION/*.WAV` are byte-identical to the
+Classic originals (checked against `d660514^`), so the data was never wrong.
+
+**Fix = `tools/patch_wavprefix.py`, patcher fix `sounds`, Dark Colony only:** the four letters
+`exp/` at file `0x855C0` become NUL (`65 78 70 2F` → `00 00 00 00`), so prefix+name is the bare
+name and the first open already hits `MISSION/` and `SOUND/`. Data only, in place, no code, no
+`.reloc` entry (the slot has one referencing instruction). Located by pattern: the unique
+`mov esi,imm32` into DGROUP that is followed by `lea edi,[ebp-80Eh]; push edi; mov al,[esi];
+mov [edi],al`. Council Wars builds are refused by size: their loader must keep `exp/`. Applied to
+`dc16new.exe` (SHA-256 `89894d73…`, before: `c54f434f…`); `Apply-DarkColonyPatches.ps1`
+regenerated, canonical order now `nocd, resolution, hdpaths, cursor, pool, speed, clock, ddraw,
+movies, sounds` for Dark Colony; `-All` from `dc16.exe` reproduces the repo exe byte for byte,
+the Council Wars build is unchanged (`13c95489…`), `-Patches sounds` alone under PowerShell 5.1
+writes exactly the four bytes. Not tested in game yet: start a Classic campaign mission 1-8 and
+listen for the Classic briefing.
+
 ## 11. Risks
 
 | Risk | Assessment |

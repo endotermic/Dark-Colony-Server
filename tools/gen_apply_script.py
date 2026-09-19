@@ -86,13 +86,14 @@ def ozi_data(g):
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
-           'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'ozi': 'patch_ozi_menu.py',
+           'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py',
+           'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'ozi': 'ozi_menu',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
 _plans = {}
@@ -219,6 +220,10 @@ def blocks_clock(g):
 def blocks_movies(g):
     m = re.search(r'^\s+DGROUP string "intro\.avi" -> "dcintro\.avi"\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ 12 bytes: (.+)$', plan(g, 'movies'), re.M)
     return [(int(m.group(1), 16), 12, 'DGROUP string "intro.avi" -> "dcintro.avi": ' + m.group(2).strip())]
+
+def blocks_sounds(g):
+    m = re.search(r'^\s+DGROUP string "exp/" -> "" \(wave-loader prefix\)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ 4 bytes: (.+)$', plan(g, 'wavprefix'), re.M)
+    return [(int(m.group(1), 16), 4, 'DGROUP string "exp/" -> "" (wave-loader prefix): ' + m.group(2).strip())]
 
 def movie_data(g):
     """The AVI resources of the `movies` fix: the Classic movies under their own names.  The two
@@ -403,6 +408,18 @@ reads those lists from INTRF_HD/ (fix "Interface data from INTRF_HD"), where the
 untouched exe reads keep the stock names.  REQUIRES the three AVI files DCINTRO.AVI, DCAENDING.AVI,
 DCHENDING.AVI in the AVI folder next to the exe (the two INTRF_HD lists come with the "Interface
 data from INTRF_HD" fix).  Dark Colony only: the Council Wars exe's intro.avi is its own intro.'''),
+ dict(id='sounds', name='WAV files read from the game root, not exp/: the Classic briefings and water ambience (Dark Colony only)', date='19 Sep 2026',
+      tool='tools/patch_wavprefix.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.21', blocks=blocks_sounds, classic_only=True,
+      desc='''Classic and Council Wars are one code base.  Council Wars opens its files through a helper that
+puts "exp/" in front of every name and falls back to the bare name; the Classic build has no such
+prefix - except in the wave loader, the function that opens the mission briefings (mission/h1.wav,
+g1.wav ...) and every other WAV.  Its own 8-byte prefix slot still says "exp/" in the Classic exe.
+In the old "DC - Classic" folder no exp/ tree existed, so that first attempt always failed and
+nothing was noticed.  Since both games share the "DC - Council wars" folder, exp/mission/h1-h8.wav
+and g1-g8.wav are the Council Wars briefings and exp/sound/water.wav the Council Wars water sound:
+the Classic exe found them first and played the wrong briefings for missions 1-8.  The fix empties
+the prefix (the four letters become NUL) so the loader opens MISSION/ and SOUND/ directly.  Data
+only, in place, no code and no relocation entry changes.'''),
  dict(id='ozi', name='OZI MISSIONS menu mode (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.13', blocks=blocks_ozi, cw_only=True,
       requires=['hdpaths'], data=ozi_data,
@@ -468,7 +485,7 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
       steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),

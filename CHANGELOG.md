@@ -6,6 +6,15 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Classic exe: mission briefings and water sound from the game root, not `exp/`** (19 Sep 2026,
+  maintainer report "dc16new.exe must point at the correct sound files for mission briefings";
+  `tools/patch_wavprefix.py`, patcher fix `sounds`, Dark Colony only, doc
+  `DC16_DISPLAY_AND_RESOLUTION.md` §10.21). The Classic wave loader `0x452A50` still carries the
+  expansion's `exp/` prefix slot (`0x487DC0`) and tries `exp/mission/h%d.wav` before
+  `mission/h%d.wav`; harmless in the old `DC - Classic/` folder, but in the shared Council Wars folder
+  it played the Council Wars briefings for Classic missions 1-8 and `exp/sound/water.wav`. Four data
+  bytes emptied; `dc16new.exe` SHA-256 `89894d73…`; the patcher script regenerated.
+
 - **Engine: objects created during the tick run in the same tick** (19 Sep 2026, from the two
   two-player battles of 18 Sep: one ended for both players with the game's sync assert - a hidden
   message box, seen as a crash - when a Sergeant produced during tick 9463 took a new highest object

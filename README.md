@@ -136,6 +136,10 @@ only a stock Python 3 (no third-party packages).
 - `tools/patch_movies.py` - makes the patched Classic exe play the Classic movies under their own
   names (`AVI/DCINTRO.AVI`; the campaign lists in `INTRF_HD/` name `DCAENDING.AVI` / `DCHENDING.AVI`)
   now that both games share the Council Wars folder (verify / plan / apply, Dark Colony only).
+- `tools/patch_wavprefix.py` - empties the Classic wave loader's leftover `exp/` prefix so `dc16new.exe`
+  plays the Classic mission briefings `MISSION/H*.WAV` / `G*.WAV` and `SOUND/WATER.WAV` instead of the
+  Council Wars files under `exp/` that sit in the same folder (patcher fix `sounds`; verify / plan /
+  apply, keeps a `.wavprefix.bak`, Dark Colony only). Section 10.21 of the display document.
 - `tools/patch_maped.py` - unlocks the greyed-out dialog controls of the map editor `maped.exe`
   (block-set buttons, team colour and allies, the Healer row; what the Polish ozi_ns editor did, minus
   the translation; verify / plan / apply `--fix ID|all`). `tools/gen_apply_script.py` generates
