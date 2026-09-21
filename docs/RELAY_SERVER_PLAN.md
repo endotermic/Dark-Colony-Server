@@ -1756,6 +1756,18 @@ the stock 66 ms in both tick dwords (default 100 %). Published 1024x768 builds: 
 Council Wars `57b28dbf…`. The tool itself stays in `tools/`. Multiplayer speed was never affected (the
 relay sets it, F11).
 
+**21 Sep 2026, player report via the maintainer: a fresh download of the repository and the patcher
+shows "Check failed - nothing written: fix 'nocd': the bytes at file offset 0x478 are already patched"**
+— the player browsed to the game exe they play, `dc16new.exe` (already fully patched; 0x478 is the
+movie-opener edit, the lowest offset of `nocd`), as the "original". The window accepted any known
+build with a note and failed only at Apply. Now (`gen_apply_script.py`, patcher regenerated): a
+browsed exe whose first fix is already applied is recognised as a patched build; if the untouched
+original (`dc16.exe` / `ENGEXP16.EXE` / `maped.exe`, checked by SHA-256) sits beside it, the window
+switches the input to that file and makes the browsed file the output ("the result replaces
+dc16new.exe"); otherwise it refuses with the name of the file to browse to and disables Apply. The
+per-edit check's message names the originals too. Tested headlessly (pwsh and 5.1): redirect,
+refusal for both games, untouched original unchanged.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
