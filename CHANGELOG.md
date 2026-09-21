@@ -15,7 +15,11 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   desktop resolution afterwards). New exe fix **`restore`** (`tools/patch_restore.py`, both games):
   the peek block is rewritten in place to hand system commands to `DefWindowProcA` and to run a
   minimise/restore cycle after `SC_RESTORE`. Both repository exes carry it, the patcher was
-  regenerated; confirmed in game on four routes the same day.
+  regenerated; confirmed in game on four routes the same day. Second part (same day, smoke-tested by
+  the maintainer on the Fly relay before the commit): a minimised game no longer spins at 100 % of a core -
+  the failed-restore branch of the per-frame present routine sleeps one timer period (`Sleep(1)`
+  stub in the same block); game ticks and multiplayer echoes keep running, 5.9 % of a core measured
+  minimised against 27.8 % visible.
 - **Client crash at battle start fixed for start positions near the map edge** (21 Sep 2026,
   maintainer report: a player "entered the battlefield, his client hanged and was thrown out, the
   game continued as bots vs the second client"; plan §16 entry of 21 Sep, F55,

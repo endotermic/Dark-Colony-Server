@@ -3195,6 +3195,21 @@ resolution-independent (identical bytes in every patcher mode). Space: the Class
 is full since fix `camera` (`0x0047F1FD..0x0047F200`, 3 bytes) — the two dead peeks were the free
 room here.
 
+**Second part — no CPU burn while minimised (same day, maintainer: "fix cpu burn without stopping
+the game when minimized").** Game ticks are clock-driven; the main loop's only pacing was the `Flip`
+at the end of `present` (`0x0042E0FC`), and while minimised `present` never gets there: `BltFast`
+fails with `DDERR_SURFACELOST`, `restore_surfaces` fails with `DDERR_WRONGMODE` and the routine
+returns at `0x0042E14F` (`jne exit`) — a full core spent on ~4 400 useless passes per second. That
+`jne` now goes to a 12-byte stub in the spare tail of the rewritten block above (`0x0042F293`, CW
+`0x0042F2F3`): `push 1 ; call Sleep (thunk 0x0047F008 / CW +0x60) ; jmp exit 0x0042E2A1`. One system
+timer period (≤ 16 ms) per pass while the surfaces are lost, nothing when they are not; ticks,
+message pumping and the restore attempt still run every pass, so a multiplayer client keeps echoing
+frames. Measured on the 1280×800 Classic build: **27.8 % of a core visible at the menu, 5.9 %
+minimised** (was ~100 %), 486 of 524 thread samples inside the wait, `frame_end` still hit every
+sample; Alt+Tab back afterwards as before. The stub adds a second edit to the fix (the 6-byte `jne`
+operand; `patch_restore.py` also upgrades an exe that carries the morning form without the stub).
+Smoke-tested by the maintainer on the Fly relay the same evening (minimised client stays in the battle), then committed; the published 1024×768 exes with both parts are SHA-256 Classic `ca488306…`, Council Wars `2ae4e2e9…`.
+
 **Experiments, in order** (test builds `dc16test.exe`, deleted afterwards): dispatch only → the
 window restores, mode stays 1920×1200, an outside minimise/restore cycle then recovers it fully;
 `+ SetDisplayMode` on `WM_SIZE` → mode back, black, `DDERR_WRONGMODE` forever; `+ SetCooperativeLevel`

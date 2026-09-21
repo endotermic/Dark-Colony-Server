@@ -285,9 +285,9 @@ def blocks_restore(g):
     t = plan(g, 'restore'); out = []
     for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
-        assert len(old) == len(new) == int(m.group(3)) == 107
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (107, 6)
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
-    assert len(out) == 1, (g, len(out))                                   # the rewritten WM_SYSCOMMAND pump of frame_end
+    assert len(out) == 2, (g, len(out))                                   # the rewritten pump of frame_end + present()'s jne to the idle stub
     return out
 
 def blocks_pool(g):
@@ -541,9 +541,15 @@ ShowWindow(SW_MINIMIZE) followed by ShowWindow(SW_RESTORE) - a deactivate/activa
 that is not minimised at the moment of activation, which is the path DirectDraw's hook handles: it
 re-sets the mode, the game's own per-frame surface restore repairs the surfaces and the next frame
 is drawn.  The two peeks it replaces looked for WM_SETCURSOR and WM_DESTROY, messages Windows never
-posts (dead code).  The three calls go through the linker's import thunks; nothing moves, no
-relocation entry changes.  Verified in game 21 Sep 2026 on both exes (Alt+Tab, taskbar button,
-Start menu, minimise from the taskbar).'''),
+posts (dead code).  Second part: while minimised the game's main loop used to spin at 100 % of a
+processor core - the per-frame present routine fails its blit, fails the surface restore and
+returns early, so the Flip that normally paces the loop is never reached (about 4 400 passes per
+second).  The branch taken after that failed restore now goes to a 12-byte stub in the spare tail
+of the same block: Sleep(1) - one system timer period, at most 16 ms, well inside the 44 ms game
+tick - then back to the routine's exit.  Game ticks are clock-driven and keep running while
+minimised (a multiplayer client stays in the game), only the idle spin is gone.  The four calls go
+through the linker's import thunks; nothing moves, no relocation entry changes.  Verified in game
+21 Sep 2026 on both exes (Alt+Tab, taskbar button, Start menu, minimise from the taskbar).'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,

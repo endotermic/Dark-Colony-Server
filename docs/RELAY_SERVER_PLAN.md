@@ -1717,6 +1717,14 @@ above, so that the plan can be followed from scratch without repeating the disco
   both exes the same day (Alt+Tab, taskbar button, Start menu + taskbar, taskbar minimise + Alt+Tab).
 - Patcher fix `restore` (after `camera`), `Apply-DarkColonyPatches.ps1` regenerated; published
   1024x768 builds are now SHA-256 Classic `9f6b1f7b…`, Council Wars `89c66244…`.
+- **Second part, same day (maintainer: "fix cpu burn without stopping the game when minimized")**: a
+  minimised game spun at 100 % of a core (its `present` fails BltFast + Restore and returns before
+  the pacing `Flip`); the failed-restore `jne` of `present` now goes to a 12-byte `Sleep(1)` stub in
+  the spare tail of the rewritten block. Ticks and echoes keep running, 5.9 % of a core minimised
+  vs 27.8 % visible at the menu (1280x800 Classic). Reference 1024x768 builds with the stub:
+  Classic `ca488306…`, Council Wars `2ae4e2e9…`; the game folder holds the 1280x800 builds `98a24204…` / `ce962147…`.
+  Smoke test on the Fly relay passed the same evening (maintainer); committed, the repository exes
+  are the reference builds above.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
