@@ -49,12 +49,31 @@ Edits per exe (all inside existing instructions / strings; nothing moves):
      Restart" (Council Wars: "...Expansion Pak CD - The Council Wars and Restart") ->
      "A sound file is missing - see error.log", NUL-padded to the original length: the box the wave
      loader shows for a missing WAV tells the truth.
+  9. the "insert CD" prompt (21 Sep 2026, maintainer report: a player "still sees Please insert Dark
+     Colony CD").  When a REQUIRED file is missing, the file-open helper does not fail: with the display
+     up it calls the display object's CD-prompt method (slot +0x4C, 0x0042C0BC / 0x0042C11C; the only
+     caller is 0x0040630D / 0x004062ED), which draws the sprite `intrface/insee` - the cyan "Please
+     insert Dark Colony CD" box at (235,220) - and loops on fopen(name) until the file appears.  The
+     text is a picture, not one of the strings of edit 8, and with the CD path gone the loop never ends:
+     a hang behind a CD request that names no file.  The first 68 bytes of the method (up to and
+     including its second `mov eax,"intrface/insee"`) are rewritten into the wave loader's own error
+     exit (0x00452BD1 / 0x00452C31): fprintf(error.log, "unable to open file %s\n", name); flush;
+     display shutdown; Sleep(2000); MessageBoxA(hwnd, name, "FILE NOT FOUND", MB_OK); exit(0).  The
+     rest of the old body is dead code.  The four absolute operands (format string, error.log FILE*,
+     caption, window handle) take over the .reloc entries of the four old operands that the rewrite
+     overwrote or made dead (page offsets 0x0D8, 0x0DD, 0x0FC, 0x132 for Classic; the fifth, 0x1EB,
+     still sits on an absolute operand in dead code and stays); every target is read from the wave
+     loader's sequence and from the MessageBoxA import thunk (`jmp dword ptr [IAT]`), so one pattern
+     serves both builds.  Seen in the wild with a clone that lacked `ozi_ns/intrf_hd/` (the OZI scene
+     lists - the folder had never been committed): OZI MISSIONS -> NEXT on the story screen -> the
+     prompt, for `intrf_hd/hxscene.txt`.  Now: a box naming the file, a line in error.log, exit.
 
 HBNFUFL.A01 / .A02 are no longer read by the patched exes (the originals still need them: the first
 character is the letter of the drive that holds the CD).  All sites are found by byte pattern /
 string, so one tool serves both builds; it refuses to run unless every site is found exactly once.
-An exe carrying only the 2025 `cdcheck` bytes, or the 18 Sep 2026 two-byte form of the drive fix
-(probe `ret` + first format byte zeroed), is upgraded in place.
+An exe carrying only the 2025 `cdcheck` bytes, the 18 Sep 2026 two-byte form of the drive fix
+(probe `ret` + first format byte zeroed) or the 18-21 Sep 2026 form without edit 9 is upgraded in
+place.
 
 CLI
     python patch_nocd.py verify EXE
@@ -134,6 +153,41 @@ def jmp_rel32(at, target):
     return b'\xE9' + struct.pack('<i', target - (at + 5))
 
 
+def call_rel32(at, target):
+    return b'\xE8' + struct.pack('<i', target - (at + 5))
+
+
+# The CD-prompt method: its first 68 bytes in the stock build (prologue, `mov eax/ebx` of "intrface/insee"
+# and "CD Prompt Sprite Memory", the sprite load, up to the second `mov eax,"intrface/insee"`) ...
+PROMPT_STOCK = ('53 51 56 57 55 89 E5 83 EC 38 89 45 FC 89 55 E8 8B 40 20 8B 55 FC 89 45 F8 89 D1 B8 ?? ?? ?? ?? '
+                'BB ?? ?? ?? ?? FF 51 44 8B 49 24 89 C2 89 C8 E8 ?? ?? ?? ?? 8B 5D FC 8D 55 D8 89 D9 89 45 E0 B8 ?? ?? ?? ??')
+PROMPT_LEN = 68
+PROMPT_OLD_OPERANDS = (0x1C, 0x21, 0x40, 0x76)     # .reloc'd operands: three inside the 68 bytes, one in the dead rest
+PROMPT_NEW_OPERANDS = (3, 9, 45, 52)                # fmt, error.log FILE*, caption, hwnd in the new body
+
+
+def prompt_body(at, fmt, log, fprintf, fflush, dclose, sleep, caption, hwnd, msgbox_thunk, exit_):
+    """... and the 68 bytes that replace them: the wave loader's error exit with the file name as the box
+    text.  Entered with eax = display object, edx = the name of the missing file.  Never returns."""
+    b = b'\x52'                                                   # push edx           (keep the name)
+    b += b'\x52' + b'\x68' + struct.pack('<I', fmt)             # push edx ; push "unable to open file %s\n"
+    b += b'\xFF\x35' + struct.pack('<I', log)                    # push dword ptr [error_log]
+    b += call_rel32(at + len(b), fprintf) + b'\x83\xC4\x0C'      # call fprintf ; add esp,0Ch
+    b += call_rel32(at + len(b), fflush)                         # call flush
+    b += call_rel32(at + len(b), dclose)                         # call display_close   (desktop mode back)
+    b += b'\xB8' + struct.pack('<I', 2000)                       # mov eax,2000
+    b += call_rel32(at + len(b), sleep)                          # call Sleep wrapper
+    b += b'\x5A\x6A\x00'                                         # pop edx ; push 0     (MB_OK)
+    b += b'\x68' + struct.pack('<I', caption)                    # push "FILE NOT FOUND"
+    b += b'\x52' + b'\xFF\x35' + struct.pack('<I', hwnd)         # push edx (text = name) ; push dword ptr [hwnd]
+    b += call_rel32(at + len(b), msgbox_thunk)                   # call MessageBoxA (import thunk)
+    b += b'\x31\xC0'                                             # xor eax,eax
+    b += call_rel32(at + len(b), exit_)                          # call exit
+    assert len(b) == PROMPT_LEN, len(b)
+    assert all(b[o - 1] in (0x68, 0x35) for o in PROMPT_NEW_OPERANDS)
+    return b
+
+
 def sites_for(img):
     """[(note, file_off, [accepted old bytes...], new bytes)] and [(reloc_file_off, old_u16, new_u16)]."""
     d = img.data
@@ -160,6 +214,24 @@ def sites_for(img):
              else wave + 5 + struct.unpack_from('<i', d, f(wave) + 1)[0])
     # 7. movie opener: je after "test al,al" on the CD flag
     rb = img.find('E8 ?? ?? ?? ?? 84 C0 ?? 63 E8 ?? ?? ?? ?? 8D BD ?? ?? ?? ?? 89 C6 57', 'movie opener CD fallback', 7)
+    # 9. the CD-prompt method of the display object (its VA is the operand of the vtable set-up), the
+    #    wave loader's error exit it is rebuilt from, and the MessageBoxA import thunk
+    vt = img.find('C7 40 4C ?? ?? ?? ?? 8B 45 F8 8B 55 FC 8B 80 20 01 00 00 89 42 6C', 'display vtable set-up (CD-prompt slot)')
+    prompt = struct.unpack_from('<I', d, f(vt) + 3)[0]
+    if (prompt & 0xFFF) + PROMPT_LEN + 0x7B > 0x1000:
+        raise SystemExit('CD-prompt method %#x straddles a page' % prompt)
+    werr = img.find('50 68 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 52 E8 ?? ?? ?? ?? 83 C4 0C E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? B8 D0 07 00 00 '
+                    'E8 ?? ?? ?? ?? 6A 00 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 51 2E FF 15 ?? ?? ?? ?? 31 C0 E8',
+                    'wave loader error exit')
+    wf = f(werr)
+    u32 = lambda o: struct.unpack_from('<I', d, wf + o)[0]
+    rel = lambda o: werr + o + 5 + struct.unpack_from('<i', d, wf + o + 1)[0]
+    fmt_va, log_va, caption_va, hwnd_va, iat_va = u32(2), u32(8), u32(44), u32(55), u32(63)
+    fprintf, fflush, dclose, sleep, exit_ = rel(13), rel(21), rel(26), rel(36), rel(69)
+    thunk = img.find('FF 25 ' + ' '.join('%02X' % b for b in struct.pack('<I', iat_va)), 'MessageBoxA import thunk')
+    body = prompt_body(prompt, fmt_va, log_va, fprintf, fflush, dclose, sleep, caption_va, hwnd_va, thunk, exit_)
+    cur = bytes(d[f(prompt):f(prompt) + PROMPT_LEN])
+    prompt_stock = re.fullmatch(pat(PROMPT_STOCK), cur, re.S) is not None
     # 0. the three historical `cdcheck` bytes (2025): the two menu tests of the "CD present" flag
     menu1 = img.find('8B 45 F0 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 ?? 66 BB 01 00 00 00', 'start-up CD test', 15)
     menu2 = img.find('89 45 F8 E8 ?? ?? ?? ?? 84 C0 ?? 12 BB 01 00 00 00', 'main-menu CD test', 10)
@@ -189,6 +261,8 @@ def sites_for(img):
         ('wave loader: jne <found> -> jmp: after the two local names the loader takes its error exit instead of the two CD-path attempts',
          f(wave), [b'\x0F\x85' + struct.pack('<i', found - (wave + 6))] if wave_stock else [], jmp_rel32(wave, found) + NOP),
         ('movie opener: je <no CD> -> jmp (never the CD path, whatever the flag says)', f(rb), [b'\x74\x63'], b'\xEB\x63'),
+        ('CD-prompt method (display slot +4Ch, called for a missing required file): "draw intrface/insee and wait for the file" -> the wave loader\'s error exit: fprintf(error.log, "unable to open file %s", name); display shutdown; Sleep(2000); MessageBoxA(hwnd, name, "FILE NOT FOUND"); exit (68 bytes; the rest of the old body is dead)',
+         f(prompt), [cur] if prompt_stock else [], body),
     ]
     # 4./8. DGROUP strings
     fmt = img.dg_find([FMT_OLD, FMT_HALF, b'\0' * 8], 'CD-path format string', FMT_ANCHORS)
@@ -206,22 +280,36 @@ def sites_for(img):
     msg_new = MSG_NEW + b'\0' * (msg_len - len(MSG_NEW))
     sites.append(('DGROUP "Please insert The Dark Colony ... CD and Restart" -> "A sound file is missing - see error.log" (NUL-padded to the old length)',
                   msg, [msg_old] if msg_old else [], msg_new))
-    # .reloc: the two mov operands of the start-up site
+    # .reloc: the two mov operands of the start-up site (-> type 0), and the four operands of the old
+    # CD-prompt body (two `mov eax,str`, one `mov ebx,str`, and the `mov ebx,str` in what is now dead
+    # code) re-pointed at the four absolute operands of the new body
     va, rsize, rptr = img.secs['.reloc']
     wanted = {init + 1, init + 6}
-    relocs = []
+    page_p = (prompt - IMAGE_BASE) & ~0xFFF
+    old_offs = [(prompt + o) & 0xFFF for o in PROMPT_OLD_OPERANDS]
+    new_offs = [(prompt + o) & 0xFFF for o in PROMPT_NEW_OPERANDS]
+    relocs, got = [], set()
     i = 0
     while i + 8 <= rsize:
         page, blk = struct.unpack_from('<II', d, rptr + i)
         if blk == 0:
             break
         for j in range(8, blk, 2):
-            e = struct.unpack_from('<H', d, rptr + i + j)[0]
+            pos = rptr + i + j
+            e = struct.unpack_from('<H', d, pos)[0]
             if IMAGE_BASE + page + (e & 0xFFF) in wanted and (e >> 12) in (0, 3):
-                relocs.append((rptr + i + j, (3 << 12) | (e & 0xFFF), e & 0xFFF))
+                relocs.append((pos, (3 << 12) | (e & 0xFFF), e & 0xFFF))
+            elif page == page_p and (e >> 12) == 3 and (e & 0xFFF) in old_offs:
+                k = old_offs.index(e & 0xFFF)
+                got.add(k)
+                relocs.append((pos, e, (3 << 12) | new_offs[k]))
+            elif page == page_p and (e >> 12) == 3 and (e & 0xFFF) in new_offs:
+                k = new_offs.index(e & 0xFFF)
+                got.add(k)
+                relocs.append((pos, (3 << 12) | old_offs[k], e))
         i += blk
-    if len(relocs) != 2:
-        raise SystemExit('expected 2 .reloc entries for the start-up movs, found %d' % len(relocs))
+    if len(relocs) != 6 or len(got) != 4:
+        raise SystemExit('expected 2 + 4 .reloc entries (start-up movs, CD-prompt operands), found %d' % len(relocs))
     return sites, relocs
 
 

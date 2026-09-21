@@ -2540,6 +2540,44 @@ overlay), so the maintainer decided to retire the `DC - Classic/` folder. What c
   behaves as "no CD" (greyed menu, Council Wars asserts in `widget.c`) — the patched exes ignore the
   file entirely.
 
+* **The "Please insert Dark Colony CD" box (21 Sep 2026, maintainer report: a player "still sees
+  Please insert Dark Colony CD" — two screenshots of the OZI human campaign introduction with a cyan
+  box over the story text):** that text is not a string but the sprite **`intrface/insee`**
+  (`INTRFACE/INSEE.SPR`, the "insert CD" picture). The file-open helper `0x4061DC` (`safefunc.c`)
+  does not fail when a *required* file (`bl` = 1) is missing: with the display up (`0x488DF8` ≠ 0 and
+  byte `0x488DF4` = 0) it calls the display object's **CD-prompt method, slot `+0x4C` = `0x42C0BC` /
+  CW `0x42C11C`** (`0x40630D` / `0x4062ED` is the only caller — the other `call [reg+4Ch]` sites go
+  through C++-style vtables of other classes; the slot is set at `0x42C3E5`), which allocates "CD
+  Prompt Sprite Memory", saves the background, draws the sprite at (235,220) and **loops on
+  `fopen(name,"r")` until the file appears** (`0x42C1EA`) — the stock game's "insert the disc" wait.
+  With edit 5 the loop no longer tries the CD path, so a missing required file was a hang behind a CD
+  request that named no file. The player's file was **`intrf_hd/hxscene.txt`**: `ozi_ns/intrf_hd/`
+  (the five OZI files of §10.17 — `bintroe`, `introe`, `shumane`, `hxscene.txt`, `gxscene.txt`) had
+  **never been committed** (the unanchored `.gitignore` rule `OZI_NS/` hid the folder until 21 Sep
+  2026, and the anchoring commit did not add it), so a clone running the published `engexp16new.exe`
+  in OZI MISSIONS mode found neither `ozi_ns/intrf_hd/hxscene.txt` nor a root `intrf_hd/hxscene.txt`
+  when NEXT on the story screen loaded the scene list. Two fixes: (1) the five files are committed
+  (1024x768: the three scripts = `exp/intrf_hd/*`, the two lists = `ozi_ns/gamestat/*` with the globe
+  markers +192,+144 — byte-identical to what the patcher's `Write-InterfaceSet` writes); (2) **`nocd`
+  edit 9** (`patch_nocd.py`, both exes; patcher fix `nocd` now 18 / 19 edits): the first 68 bytes of
+  the CD-prompt method (up to and including its second `mov eax,"intrface/insee"`) become the wave
+  loader's error exit (`0x452BD1` / `0x452C31`): `fprintf(error.log, "unable to open file %s\n",
+  name)`, flush, display shutdown `0x42E2B0`, `Sleep(2000)`, `MessageBoxA(hwnd [0x489730], name,
+  "FILE NOT FOUND", MB_OK)` through the import thunk `0x47EFB4`, `exit(0)` — the rest of the old body
+  is dead, nothing moves; the four absolute operands take over the `.reloc` entries `0x0D8 / 0x0DD /
+  0x0FC / 0x132` of page `0x42C000` (CW `0x138 / 0x13D / 0x15C / 0x192`, page `0x42C000`), the fifth
+  (`0x1EB` / `0x24B`, an operand in the dead rest) stays. Every target is read from the wave loader's
+  own sequence, so one pattern serves both builds; the tool upgrades the 18 Sep form in place.
+  **Confirmed in game 21 Sep 2026** (1280x800 `engexp16new.exe`, `ozi_ns/intrf_hd` renamed away,
+  driven by a ctypes probe posting the clicks: OZI MISSIONS → HUMAN → START CAMPAIGN → NEXT): the box
+  "FILE NOT FOUND / intrf_hd/hxscene.txt" 2 s after the click, `error.log` = `unable to open file
+  intrf_hd/hxscene.txt`, OK → exit code 0. Published 1024x768 builds now SHA-256 Classic
+  `49abd4e3…`, Council Wars `97eaaf01…` (patcher regenerated; rebuilt from the originals in a clean
+  checkout incl. the five OZI files, byte-identical; `-Verify` reports the 18 Sep exes as `nocd`
+  MIXED 13/14 of 18/19); the game folder's 1280x800 builds are `14ed298e…` / `6fa9a043…`.
+  Rule for reports: **"Please insert Dark Colony CD" on a CD-free build meant a missing file**; since
+  edit 9 the box names it.
+
 #### 10.20 "Units miss the spot I clicked" on the 1024×768 build: the click chain audited **(19 Sep 2026, player report via the maintainer; audited in the disassembly only — no defect found, not reproduced)**
 
 A player reported (more than ten times in one online game) that orders sent to one spot made

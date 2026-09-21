@@ -356,16 +356,16 @@ def blocks_nocd(g):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
         assert len(old) == len(new) == int(m.group(3))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip(), old, new))
-    assert len(out) == (11 if g == 'classic' else 12), (g, len(out))      # 2/3 historical cdcheck bytes + 9 CD-path sites
+    assert len(out) == (12 if g == 'classic' else 13), (g, len(out))      # 2/3 historical cdcheck bytes + 10 CD-path sites
     out += reloc_lines(t, '.reloc table: ')
-    assert len(out) == (13 if g == 'classic' else 14), (g, len(out))
+    assert len(out) == (18 if g == 'classic' else 19), (g, len(out))      # + 2 start-up operands, 4 CD-prompt operands
     return out
 
 # ----------------------------------------------------------------------------------------------
 # patch catalogue (canonical application order)
 # ----------------------------------------------------------------------------------------------
 PATCHES = [
- dict(id='nocd', name='No CD: the game neither needs the disc nor touches the CD path', date='28-30 Sep 2025 / 18 Sep 2026', tool='tools/patch_nocd.py',
+ dict(id='nocd', name='No CD: the game neither needs the disc nor touches the CD path', date='28-30 Sep 2025 / 18 Sep 2026 / 21 Sep 2026', tool='tools/patch_nocd.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.19; CLAUDE.md "Patches applied so far" (the 2025 bytes)', blocks=blocks_nocd,
       desc='''The game refuses to start, and greys out most main-menu buttons, when it cannot find its
 CD in a drive.  This one fix removes the whole CD business from the exe:
@@ -395,6 +395,15 @@ CD in a drive.  This one fix removes the whole CD business from the exe:
      sound loader jump to their ordinary "file missing" exits instead of trying "<CD path><name>",
      the movie opener never takes its CD branch, the dead "%c:\\dc\\" string is zeroed, and the
      sound loader's box says "FILE NOT FOUND / A sound file is missing - see error.log".
+  3. The "Please insert Dark Colony CD" box (21 Sep 2026, player report).  That text is a picture,
+     not a string: when a file the game insists on is missing, the file-open helper draws the
+     sprite intrface/insee over the screen and waits for the file to appear - once for the disc to
+     be inserted, now forever.  Those 68 bytes of the display object's CD-prompt method become the
+     sound loader's error exit with the file name as the message: a line "unable to open file
+     <name>" in error.log, the desktop mode restored, a box "FILE NOT FOUND / <name>", exit.  The
+     four absolute operands of the new code take over the relocation entries of the old ones.
+     (Seen with a copy of the game that lacked ozi_ns\\intrf_hd\\: OZI MISSIONS -> NEXT showed the
+     prompt for intrf_hd/hxscene.txt.)
 
 Every edit sits inside an existing instruction or string; nothing moves.  The patched exe no
 longer needs HBNFUFL.A01 / .A02 (the untouched originals still read the drive letter from them).'''),
