@@ -266,7 +266,7 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   const lines = windowOf(cmds);
   assert.equal(lines.length, CHAT_ROWS, 'the whole window is repainted: the hall chat is gone');
   assert.equal(lines[0], 'Room 3: Black Widow, desert, 8 players.');
-  assert.ok(lines[1].startsWith('Mercenary: Hi! I am an AI bot'), 'the host greeting under the room line');
+  assert.ok(lines[1].startsWith('Mercenary: Hi! I am the AI host'), 'the host greeting under the room line');
   assert.ok(lines.slice(3).every((t) => t === ' '), 'three header lines, nothing else');
 
   // the hall no longer writes to this client

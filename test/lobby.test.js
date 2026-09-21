@@ -57,7 +57,7 @@ test('a joiner gets the version first, then the host dump, in one write', () => 
   assert.equal(chat.length, 10);
   assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
   assert.equal(chat[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room line comes first');
-  assert.ok(chat[1].startsWith('Mercenary: Hi! I am an AI bot'), chat[1]);
+  assert.ok(chat[1].startsWith('Mercenary: Hi! I am the AI host'), chat[1]);
   const header = h.room.lobby.greeting().flatMap((t) => wrap(t));
   assert.deepEqual(chat.slice(0, header.length), header);
   assert.ok(header.length >= 3 && header.length <= 4, 'the greeting wraps into a few lines');

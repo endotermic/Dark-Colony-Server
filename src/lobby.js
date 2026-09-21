@@ -57,24 +57,24 @@ export class Lobby {
   /**
    * The static header of a player's chat window in this room: the room line (maintainer, 7 Sep 2026)
    * and, since 12 Sep 2026 (maintainer), a greeting from the fake host itself, the one relay line
-   * that carries a name: AI Mercenary says that it is an AI bot and the host of the game (§17.8).
+   * that carries a name: Mercenary says that it is the AI host (§17.8); since 19 Sep 2026 short, with
+   * a row for the bots and /botcount and one for the other commands (maintainer).
    * ChatView wraps it at 40 columns.
    */
   greeting() {
     const r = this.room;
     if (r.replay) return this.replayGreeting();
+    // Short since 19 Sep 2026 (maintainer: "shorten the greeting from the mercenary bot, mention
+    // /botcount"): one row for the host, one for the bots with /botcount, one for the other commands.
     const lines = [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`];
     if (r.bots?.configured) {
-      const others = r.bots.others.map((b) => b.name);
-      const verb = r.botType === 'rusher' ? 'rush' : 'play';
-      const we = others.length ? `${others.join(', ')} and I ${verb}` : `I ${verb}`;
-      const hire = r.botHire ? `; 1000 in battle buys ${others.length ? 'an' : 'my'} alliance for ${this.cfg.MERCENARY_ALLY_S} s.` : '; hiring is off.';
-      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host. ${we}${hire}`);
-      // the bot count, brain and hire switch of this game (19 Sep 2026); one row of the window, /help has the commands
+      const hire = r.botHire ? ` 1000 in battle hires me for ${this.cfg.MERCENARY_ALLY_S} s.` : '';
+      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am the AI host.${hire}`);
       const n = r.fakeSlots().length;
-      lines.push(`Bots: ${n} ${r.botType}, hire ${r.botHire ? 'on' : 'off'}. Type /help.`);
+      lines.push(`Bots: ${n} ${r.botType}, hire ${r.botHire ? 'on' : 'off'}. /botcount N`);
+      lines.push('/bottype, /bothire, /help for more.');
     } else {
-      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am an AI bot and the host of this game. My base stays idle.`);
+      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am the AI host. My base stays idle.`);
     }
     return lines;
   }

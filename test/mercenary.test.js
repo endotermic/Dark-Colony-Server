@@ -103,8 +103,9 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   const marauder = h.room.bots.others[0];
   assert.equal(marauder.name, 'Marauder');
   assert.ok(lines.some((l) => l.startsWith('Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
-  assert.ok(h.room.lobby.greeting()[1].includes('Marauder and I play; 1000 in battle buys an alliance for 45 s.'), h.room.lobby.greeting()[1]);
-  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire on. Type /help.', 'the bot count, the brain, the hire switch, one row');
+  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host. 1000 in battle hires me for 45 s.');
+  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire on. /botcount N', 'the bot count, the brain, the hire switch and the command, one row');
+  assert.equal(h.room.lobby.greeting()[3], '/bottype, /bothire, /help for more.');
 });
 
 test('two bots, two deals: a gift to Marauder allies with it alone, the Mercenary keeps its own deal', () => {
@@ -441,7 +442,10 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
   assert.ok(!seen.chat.some((l) => l.includes('A worker first')), seen.chat.join(' | '));
   for (const c of seen.build) assert.ok(players.includes(c[2]), `worker order for a bot player (${c[2]})`);
   assert.deepEqual(new Set(seen.build.map((c) => c[2])), new Set(players), 'both bots bought their worker');
-  assert.deepEqual(seen.build.map((c) => [c[0], c[1], c[3]])[0], [T.BUILD, 6, 1], 'one EXPL worker');
+  const first = seen.build[0];
+  assert.equal(first[0], T.BUILD);
+  assert.ok(first[1] === 6 || first[1] === 14, `one worker (EXPL or SLUG, the race is random): type ${first[1]}`);
+  assert.equal(first[3], 1);
   assert.ok(h.room.sync.active, 'the engine accepted its own bot commands');
   assert.equal(h.room.sync.disabledReason, null);
   // A leaves: its base becomes a bot, no DISCONNECT, the engine keeps running in send mode
@@ -468,8 +472,8 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
 test('hiring off (the default): no offer at the start, a gift to a bot goes back with a word, no alliance', () => {
   const { h, a, b } = battle({ BOT_HIRE: false });
   assert.equal(h.room.botHire, false);
-  assert.ok(h.room.lobby.greeting()[1].endsWith('Marauder and I play; hiring is off.'), h.room.lobby.greeting()[1]);
-  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire off. Type /help.');
+  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.');
+  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire off. /botcount N');
   let cmds = frame(h, a, b);
   const lines = chats(cmds);
   assert.ok(lines.some((l) => l.includes('Hiring is off in this game')), lines.join(' | '));
