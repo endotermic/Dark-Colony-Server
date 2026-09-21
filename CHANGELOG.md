@@ -6,6 +6,16 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Window restore after minimising fixed: Alt+Tab and the taskbar bring the game back** (21 Sep
+  2026, maintainer report "window restore after minimization is not working"; plan §16 entry of
+  21 Sep, F56, `docs/DC16_DISPLAY_AND_RESOLUTION.md` §10.28). The game has no message loop: its
+  per-frame `PeekMessage` calls removed every posted `WM_SYSCOMMAND` without dispatching it, so the
+  `SC_RESTORE` that Windows posts to a minimised window was dropped (active but iconic), and the
+  activation while iconic kept DirectDraw from re-setting the exclusive mode (black window at
+  desktop resolution afterwards). New exe fix **`restore`** (`tools/patch_restore.py`, both games):
+  the peek block is rewritten in place to hand system commands to `DefWindowProcA` and to run a
+  minimise/restore cycle after `SC_RESTORE`. Both repository exes carry it, the patcher was
+  regenerated; confirmed in game on four routes the same day.
 - **Client crash at battle start fixed for start positions near the map edge** (21 Sep 2026,
   maintainer report: a player "entered the battlefield, his client hanged and was thrown out, the
   game continued as bots vs the second client"; plan §16 entry of 21 Sep, F55,

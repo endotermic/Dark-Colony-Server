@@ -153,14 +153,14 @@ def ozi_data(g, mode=None):
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
-           'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'movies': 'patch_movies.py',
-           'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
+           'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
+           'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
 _plans = {}
@@ -279,6 +279,15 @@ def blocks_camera(g):
         assert len(old) == len(new) == int(m.group(3))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 2, (g, len(out))                                   # the call operand + the 33-byte stub
+    return out
+
+def blocks_restore(g):
+    t = plan(g, 'restore'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) == 107
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 1, (g, len(out))                                   # the rewritten WM_SYSCOMMAND pump of frame_end
     return out
 
 def blocks_pool(g):
@@ -513,6 +522,28 @@ unused zero bytes at the end of the code section: it calls the game's own 2-D cl
 those limits on the camera and then continues into the routine the call originally targeted.
 Only register-relative addressing, no relocation entries, nothing moves.  Harmless without the
 1024x768 fix and in single-player missions (a clamp can only move the camera inside the map).'''),
+ dict(id='restore', name='Window restore after minimising: Alt+Tab and the taskbar bring the game back', date='21 Sep 2026',
+      tool='tools/patch_restore.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.28', blocks=blocks_restore,
+      desc='''Leave the running game with Alt+Tab, the Win key or a click on another window and DirectDraw
+minimises it and restores the desktop resolution.  Coming back with Alt+Tab or the taskbar button
+the game stays minimised although it is the active window, or shows a black window at desktop
+resolution; it is alive and busy, error.log stays empty.  The game has no message loop: once per
+frame it pulls posted messages with range-filtered PeekMessage calls (mouse, keyboard, system
+commands - the last only to swallow the screen-saver command) and dispatches none of them.
+Windows restores a minimised window by posting the system command SC_RESTORE to it, so the request
+is removed from the queue and dropped; being activated while still minimised also defeats
+DirectDraw's own window hook, which re-sets the exclusive display mode only during a proper
+activation - afterwards every attempt to restore the drawing surfaces fails with DDERR_WRONGMODE.
+The fix rewrites that per-frame block in place (107 bytes, 86 of them new code, the rest NOP):
+the system-command peek hands every command except the screen saver to DefWindowProcA, so
+SC_RESTORE, SC_MINIMIZE and the others take effect, and after an SC_RESTORE it calls
+ShowWindow(SW_MINIMIZE) followed by ShowWindow(SW_RESTORE) - a deactivate/activate cycle on a window
+that is not minimised at the moment of activation, which is the path DirectDraw's hook handles: it
+re-sets the mode, the game's own per-frame surface restore repairs the surfaces and the next frame
+is drawn.  The two peeks it replaces looked for WM_SETCURSOR and WM_DESTROY, messages Windows never
+posts (dead code).  The three calls go through the linker's import thunks; nothing moves, no
+relocation entry changes.  Verified in game 21 Sep 2026 on both exes (Alt+Tab, taskbar button,
+Start menu, minimise from the taskbar).'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -606,10 +637,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'restore', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'restore', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),

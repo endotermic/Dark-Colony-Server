@@ -3109,6 +3109,107 @@ written with the right names and rows, stock `HSCENE.TXT`/`bintroe` unchanged ag
 window lists 8 Classic / 7 Council Wars fixes at 640×480 with nothing greyed out; the HD outputs
 are unchanged (1024×768 = the published exes, 1280×800 = §10.24's build). Not yet run in the game.
 
+#### 10.28 Window restore after minimising: the swallowed `SC_RESTORE` and the activation while iconic **(21 Sep 2026, maintainer report "window restore after minimization is not working"; reproduced on this PC with a window-state probe and a thread sampler, root cause traced in both exes; patched — fix `restore`, `tools/patch_restore.py`, both exes; confirmed in game the same day: Alt+Tab, the taskbar button, the Start menu and a taskbar minimise all bring the game back within a frame)**
+
+**Symptom.** Leave the running game with Alt+Tab, the Win key (Start menu) or a click on another
+window: DirectDraw's exclusive-mode hook restores the desktop resolution and minimises the game
+window (expected). Come back with Alt+Tab or the taskbar button and either the game *stays iconic
+although it is the active window*, or — once something does restore the window — a **black window
+of the game's size sits at desktop resolution**. The process is alive and busy, `error.log` stays
+empty, nothing is logged by Windows.
+
+**Reproduction** (throw-away `scratchpad/probe_minimize.py`: launches the exe, skips the intro with
+posted ESC, then per half second logs `IsIconic`, the window rect, `EnumDisplaySettings`, the
+foreground window and a screen-DC capture's non-black pixel count; `sampler.py` reads the main
+thread's EIP and the game return addresses on its stack through `Wow64GetThreadContext` /
+`ReadProcessMemory`). Stock `dc16new.exe` at 1280×800:
+
+```
+ 19.6  Alt+Tab            iconic=1  mode 1920x1200  fg=Claude            (DirectDraw's hook: desktop mode, minimised)
+ 24.1  Alt+Tab back       iconic=1  mode 1920x1200  fg=Direct Draw Driver   <- active but still minimised, 4+ s
+ 31.4  ShowWindow(SW_RESTORE) from outside:
+                          iconic=0  mode 1920x1200  fg=Direct Draw Driver   capture: 0 non-black pixels
+```
+
+While the game is minimised the main thread runs the frame loop at full speed inside `DDRAW.dll`
+(`+0x25995`, a dword copy loop = the software blit of the emulated surfaces) and `restore_surfaces`
+is called thousands of times a second (an instrumented build counted ~4 400/s) — the stock game has
+no idle path when it is not visible (not changed by this fix).
+
+**Cause 1 — the game has no message loop.** `frame_end` (`0x0042F1C8`, called once per drawn frame
+after `present`) pulls posted messages with five range-filtered
+`PeekMessageA(NULL, min, max, PM_REMOVE)` calls: `WM_MOUSEFIRST..WM_MOUSELAST` → mouse handler
+`0x0042FD78` (or the DirectInput path `0x00450E80`), `WM_KEYFIRST..WM_KEYLAST` → `0x0042FED4`,
+`WM_SYSCOMMAND` → if `wParam == SC_SCREENSAVE` return early (the screen saver is suppressed; nothing
+else is looked at), `WM_SETCURSOR` → `SetCursor(NULL)`, `WM_DESTROY` → release + `PostQuitMessage`.
+There is no `GetMessage`, `TranslateMessage` or `DispatchMessage` in the import table at all (USER32
+imports: CharUpperBuffA, CreateWindowExA, DefWindowProcA, DestroyWindow, GetAsyncKeyState,
+LoadIconA, LoadImageA, MessageBoxA, PeekMessageA, PostQuitMessage, RegisterClassA, SetCursor,
+ShowWindow, UpdateWindow). Sent messages reach the window procedure `0x0042E340` during the
+`PeekMessage` calls, posted ones are consumed raw. The last two peeks are dead code: Windows never
+*posts* `WM_SETCURSOR` or `WM_DESTROY` (both are sent), and the game imports no `PostMessage`.
+Windows restores a minimised window by **posting `WM_SYSCOMMAND` with `SC_RESTORE`** to it (Alt+Tab,
+the taskbar button, Win+D undo) — the third peek removes it and drops it. Hence "active but
+iconic".
+
+**Cause 2 — DirectDraw re-sets the mode only during a proper activation.** The exclusive-mode hook
+that `SetCooperativeLevel(hwnd, DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN|DDSCL_ALLOWMODEX = 0x51)`
+(`0x0042E84D`) installs on the window handles `WM_ACTIVATEAPP`: on deactivation it restores the
+desktop mode and minimises the window, on activation it re-sets the game's mode — but only when the
+window is not iconic at that moment (measured, not read from the DLL: an activation of the iconic
+window followed by `ShowWindow(SW_RESTORE)` leaves the desktop mode; `SW_RESTORE` together with
+the activation, as an outside `ShowWindow(SW_RESTORE)`+`SetForegroundWindow` does, brings the mode
+back). The game's own recovery path cannot substitute for the hook: an instrumented build that
+called `IDirectDraw::SetDisplayMode(W,H,16)` from `WM_SIZE`/`SIZE_RESTORED` got the mode back
+(`DD_OK`, once), but from then on every `primary->Restore` in `restore_surfaces` (`0x0042E060`)
+returned **`DDERR_WRONGMODE` 0x8876024B** for good — surfaces created before the mode loss cannot
+be restored after an application-side mode set, they would have to be re-created (the whole
+`ddex4.c` init). `SetCooperativeLevel` again made it worse (no mode, and even the outside cycle no
+longer recovered); `ShowWindow(SW_RESTORE)` from `WM_ACTIVATEAPP(TRUE)` changed nothing.
+
+**Fix — `patch_restore.py`** (`verify` / `plan` / `apply`, `.restore.bak`, pattern-located, both
+exes; patcher fix **`restore`**, after `camera`, before `movies`/`sounds`/`ozi`): the 107 bytes from
+the `WM_SYSCOMMAND` peek to the epilogue (Classic VA `0x0042F23D..0x0042F2A8`, file `0x2E63D`;
+Council Wars `0x0042F29D`, file `0x2E69D`; the third peek plus the two dead ones) become 86 bytes of
+code and 21 `NOP`:
+
+```
+push 1 ; push 112h ; push 112h ; push 0 ; lea eax,[ebp-1Ch] ; push eax
+call PeekMessageA            (import thunk 0x0047EFD8 / CW 0x0047F038)
+test eax,eax ; je epilogue
+cmp [ebp-14h],0F140h ; je epilogue          ; SC_SCREENSAVE stays swallowed
+push [ebp-10h] ; push [ebp-14h] ; push 112h ; push [ebp-1Ch]
+call DefWindowProcA          (thunk 0x0047EFBA / 0x0047F01A)   ; SC_RESTORE, SC_MINIMIZE, ... take effect
+cmp [ebp-14h],0F120h ; jne epilogue         ; SC_RESTORE?
+push 6 ; push [ebp-1Ch] ; call ShowWindow   (thunk 0x0047EF90 / 0x0047EFF0)   ; SW_MINIMIZE: deactivate
+push 9 ; push [ebp-1Ch] ; call ShowWindow                                      ; SW_RESTORE: activate, not iconic
+jmp epilogue
+```
+
+The minimise/restore pair is the deactivate/activate cycle that the hook handles — the same thing
+the outside `ShowWindow(SW_MINIMIZE)` … `ShowWindow(SW_RESTORE)+SetForegroundWindow` did in the
+probe: DirectDraw re-sets the exclusive mode, the per-frame `restore_surfaces` succeeds at the next
+`BltFast` and the frame is drawn. Calls go through the linker's import thunks (5-byte relative
+calls, no absolute operands), so no `.reloc` entry changes and nothing moves; the fix is
+resolution-independent (identical bytes in every patcher mode). Space: the Classic AUTO zero tail
+is full since fix `camera` (`0x0047F1FD..0x0047F200`, 3 bytes) — the two dead peeks were the free
+room here.
+
+**Experiments, in order** (test builds `dc16test.exe`, deleted afterwards): dispatch only → the
+window restores, mode stays 1920×1200, an outside minimise/restore cycle then recovers it fully;
+`+ SetDisplayMode` on `WM_SIZE` → mode back, black, `DDERR_WRONGMODE` forever; `+ SetCooperativeLevel`
+→ no mode, outside cycle no longer helps; `+ ShowWindow(SW_RESTORE)` on `WM_ACTIVATEAPP(TRUE)` → no
+mode; **dispatch + cycle on `SC_RESTORE`** → restored, mode back, `Restore`/`BltFast` return 0, the
+menu with its running credits animation is visible again within one frame.
+
+**Verified 21 Sep 2026** on the 1280×800 builds of both exes: Alt+Tab away and back; outside minimise
++ posted `SC_RESTORE` (the taskbar button); Win key (Start menu takes the foreground, hook minimises
+the game), Esc, posted `SC_RESTORE`; posted `SC_MINIMIZE` (taskbar click on the active game) +
+Alt+Tab back. Every route: iconic 0, mode 1280×800, menu drawn, `error.log` empty. Not covered:
+the intro movie player has its own wait loop (`0x0040903E`, `PeekMessage(WM_KEYDOWN)` + `Sleep`)
+and was not tested; the window procedure's own `SC_SCREENSAVE` path (a *sent* one: logs "TRIED TO
+ACTIVATE SCREEN SAVER" and exits) is unchanged; the busy loop while minimised is unchanged.
+
 ## 11. Risks
 
 | Risk | Assessment |
