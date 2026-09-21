@@ -2706,6 +2706,409 @@ soft assert helper and then called `Lock` on the surface pointer `[0x489720]`, w
 NULL — a quit-time display shutdown ordering bug. Not fixed; noted here so it is not mistaken for
 §10.16 or for this section.
 
+#### 10.23 A screen-resolution drop-down in the patcher: feasibility **(21 Sep 2026, maintainer request "investigate screen resolution dropdown in patcher creation possibility; both existing resolutions, widescreen, keep the primary monitor's aspect ratio"; assessment only — nothing implemented, nothing patched)**
+
+**Verdict: feasible, with three exe-side changes and one data-side decision.** Every one of the
+165 `resolution` edits is already a function of a `Geometry(width, height)` object
+(`patch_resolution.py`), and the HUD frame (`hud_layout.py`), the letterboxed menus
+(`pad_background.py`), the full-frame main menu (`paint_intro.py`, which already centres the planet
+for non-4:3 aspects) and the clock anchor (`patch_clock.py`) all take `--width/--height`. What
+stops the tool today at anything but 1024×768 are three checks in `Geometry.__init__`; each one is a
+limitation of the *tool*, not of the binary:
+
+| Check in the tool | Why it exists | Binary reality (21 Sep 2026, `dc16.asm`) | Change |
+|---|---|---|---|
+| `width` must be a power of two | the three strength-reduced `y*640` / `y*1280` strides (§8.2) were rewritten as `(y*4) << n` | each idiom starts with a **7-byte** `lea r,[s*4+0]` (`0x0042C209` `8D 14 8D 00000000`, `0x004363B6` `8D 04 8D 00000000`) or is the 11-byte window `shl eax,2; add eax,edi; mov ebx,[ebx+8]; shl eax,8` (`0x004360B6..C1`). A 6-byte `imul r,s,imm32` (`69 D1` / `69 C1` / `69 C0` + imm32) plus one `90` replaces the `lea`, and the `add`/`shl` become `mov r,r` / `shl r,0` as before; the 11-byte window becomes `imul eax,eax,W*2` + `mov ebx,[ebx+8]` + `90 90` (`edi` is loaded at `0x004360B3` and stays). No jump lands inside the three windows, the zero displacements carry no `.reloc` entry (checked), and no flag consumer follows before the next flag writer. | length-preserving, any width |
+| `tiles_x <= 34` | `draw_terrain`'s stack lightmap keeps a hard-coded **144-byte** row stride (§10.4/10.5): a second wrap collides | the stride is the idiom `lea r,[s*8]; add r,s; shl r,4` at six sites inside `0x00453B07..0x00453C25` (`add`+`shl` at `0x453B0E/B10`, `B5C/B5E`, `B72/B74`, `BA6/BA8`, `BFB/C00`, `C23/C25`; the two other `shl …,4` in the range, `0x453C0E` and `0x453C50`, are the ×544 stride of the light table at `0x533C90`). Neutralising the `add` and making the shift 5 (or 6) turns it into a stride of **256 (512)** bytes — the option §10.5 named and never needed. The parity argument of §10.5 holds for any even column count, so the single-wrap limit becomes `tiles_x < stride/4 − 1`: **62 across at 256, 126 at 512**. The frame growth and the ten disp32 rebases already exist; the footprint for 1920×1080 is 17 KB, for 2560×1440 46 KB, against the 256 KB commit the patch already sets | 12 more edits, stride chosen from the geometry |
+| view must be a multiple of 32 in both axes | the stock 512×448 and 896×736 are exact; a partial tile row was never tested | most widescreen modes leave a remainder (1920×1080: 1048 rows = 32 tiles + 24 px). Rather than test partial tiles, keep the rule and give the remainder to the HUD frame: `Geometry` floors the view to whole tiles and `hud_layout.target()` grows the bottom bar / right panel by the slack (its splice already adds any number of rows or columns) | tool change only |
+
+Candidate modes under those rules (view = `(W−128, H−32)` floored to tiles; slack = HUD growth
+beyond the stock 124/26 px; lightmap = stride and frame the patch would choose):
+
+| mode | aspect | map view (tiles) | slack x,y | lightmap | notes |
+|---|---|---|---|---|---|
+| 640×480 | 4:3 | 512×448 (16×14) | 0,0 | 144 / 4.4 KB | stock — drop-down entry = no `resolution`/`hdpaths`/`clock` fix |
+| 800×600 | 4:3 | 672×544 (21×17) | 0,24 | 144 / 5.2 KB | needs the `imul` strides |
+| 1024×768 | 4:3 | 896×736 (28×23) | 0,0 | 144 / 7.0 KB | today's build, bytes unchanged |
+| 1152×864 | 4:3 | 1024×832 (32×26) | 0,0 | 144 / 7.9 KB | |
+| 1280×960 / 1280×1024 | 4:3 / 5:4 | 1152×928 / 1152×992 (36×29 / 36×31) | 0,0 | 256 / 15–16 KB | first modes past 34 tiles |
+| 1600×1200 | 4:3 | 1472×1152 (46×36) | 0,16 | 256 / 19 KB | |
+| 1280×720 | 16:9 | 1152×672 (36×21) | 0,16 | 256 / 11 KB | |
+| 1366×768 | ~16:9 | 1216×736 (38×23) | 22,0 | 256 / 12 KB | odd width is fine with `imul` |
+| 1600×900 | 16:9 | 1472×864 (46×27) | 0,4 | 256 / 14 KB | |
+| 1920×1080 | 16:9 | 1792×1024 (56×32) | 0,24 | 256 / 17 KB | |
+| 2560×1440 | 16:9 | 2432×1408 (76×44) | 0,0 | 512 / 46 KB | stride 512 |
+| 1280×800 / 1440×900 / 1680×1050 / 1920×1200 | 16:10 | 36×24 / 41×27 / 48×31 / 56×36 | 0,0 / 0,4 / 16,26 / 0,16 | 256 | |
+| 2560×1600 | 16:10 | 2432×1568 (76×49) | 0,0 | 512 / 51 KB | |
+
+Everything else in the exe is already generic: the 44 menu-furniture sites move by
+`((W−640)/2, (H−480)/2)`, the credits box by the tool's fixups, the minimap sits at `W−121`, the
+movie `Blt` stretches to the full width at 16:9 (a 16:9 screen is then filled edge to edge), mouse
+clamps, clear loops and surface sizes are dwords, `tiles_y` fits its signed byte up to 127 rows.
+`patch_camera.py` reads the bounds at run time; `ddraw`, `nocd`, `cursor`, `speed`, `movies`,
+`sounds` and `ozi` do not depend on the mode. Two things to re-check per new mode, not blockers:
+the **local pool** (`patch_pool.py`, 32 MiB) was sized for 1024×768 backgrounds and banks — a
+1920×1080 8-bit page is 2 MB and every full-frame menu GIF grows 2.6×, so the constant should scale
+with `W×H` (or go to 64 MiB once); and the **DirectDraw mode** must be one the display lists (the
+risk table in §11 still holds: a refused `SetDisplayMode` aborts with no fallback), which is exactly
+why the drop-down should offer only modes read from the monitor (below).
+
+**Nothing is scaled.** Sprites, fonts and HUD art keep their 640×480 pixel size, so at 1920×1080
+the battlefield shows 5.6× the stock area and a unit is about a third of the apparent size it has at
+1024×768 on the same monitor. That is the maintainer's call, not a defect; §9 has said so from the
+start.
+
+**Data side — the real cost.** Each resolution needs its own generated interface set: the padded
+scripts and GIFs, `LOAD*.BMP`, the `*SCENE.TXT` lists, the rebuilt HUD frame `INTRFACE.GIF` +
+`MAINE`, the full-frame `INTRG.GIF`/`INTRO.GIF`, the re-baked logo banks `SPRITES/*_HD.SPR` — 59 +
+6 + 5 files, 2.2 MB `INTRF_HD` + 0.7 MB sprites at 1024×768, roughly 7 MB at 1920×1080, so a set of
+eight modes is 30–40 MB of repository data (or downloadable zips: the patcher's resource check
+already greys out a fix whose `Data` files are absent). The tools cannot run on a player's PC
+(Python + numpy + Pillow; the patcher is pure .NET), so the sets are generated here and shipped.
+Two ways to address them from the exe: (a) one folder per mode — the `hdpaths` strings are
+rewritten **in place**, so a folder name must be **exactly 8 characters** like `intrf_hd` (a naming
+scheme is needed, e.g. a documented code per mode; `1920x1080` is nine), which lets a 1024×768 and
+a widescreen exe coexist in the same game folder; (b) the patcher copies the chosen set into
+`INTRF_HD/` and the exe strings stay as they are — simpler, but one mode at a time and the
+committed folder gets overwritten. Recommend (a).
+
+**Patcher side.** `gen_apply_script.py` replays the Python tools and writes every edit as a literal
+`Offset / Old / New` triple — the transparency the players asked for (§10.17 history). Keep that:
+the generator runs `patch_resolution.py` / `patch_hd_paths.py` / `patch_clock.py` / (scaled)
+`patch_pool.py` once per mode and emits a *family* of variants of these fixes, each ~200 lines, all
+byte-listed; a `ComboBox` "Screen resolution" above the fix list picks the variant (the fixes remain
+visible and tickable, the 640×480 entry unticks and disables the mode-dependent ones; `Requires`
+keeps `resolution↔hdpaths↔clock` together; the CLI gets `-Resolution WxH`). Embedding the geometry
+formulas in PowerShell instead would shrink the file but hide the bytes behind arithmetic — against
+the maintainer's requirement of 14 Sep 2026. The "keep my monitor's aspect ratio" option: read the
+primary display's **current mode and its full mode list** through `EnumDisplaySettingsEx`
+(`Add-Type` with a small P/Invoke signature; still nothing but .NET and the Windows API — do **not**
+use `[Screen]::PrimaryScreen.Bounds`, which Windows PowerShell 5.1 reports DPI-virtualised, e.g.
+1536×864 for a 1920×1080 monitor at 125 %), reduce the current mode by its GCD to the aspect ratio,
+and offer the modes the display lists that (1) have the same ratio when the checkbox is on and
+(2) pass the geometry rules above and have a data set shipped. Default selection = the current
+mode if it is supported, else the largest supported mode of that ratio.
+
+**Estimated work.** Exe: the `imul` rewrite (3 sites), the lightmap stride (6 idioms) and the
+slack rule in `Geometry`/`hud_layout.target()` — one day including a game test at one 16:9 and one
+16:10 mode on both exes (the Council Wars offsets follow the `+0x60` rule and the existing
+fixups). Data: one generation run per mode (`pad_background`, `hud_layout`, `paint_intro`,
+`logo_art`, `split_hd_data` with a per-mode folder name, `build_ozi_overlay` for Council Wars) —
+mechanical once the folder scheme is chosen. Patcher: generator loop + `ComboBox` + mode
+enumeration — half a day, plus the headless GUI test. Open decisions for the maintainer: the mode
+list to ship (data volume), the 8-character folder scheme (or option (b)), and whether the pool
+grows per mode or once.
+
+#### 10.24 Any width, any height: `imul` strides, a 256/512-byte lightmap stride, and the first 1280×800 build **(21 Sep 2026, maintainer request "implement it: imul strides, lightmap stride 256, then test 1280x800; all higher than original resolution must share the same high res folder"; implemented in `patch_resolution.py`, both exes; Classic confirmed in game the same day: intro, main menu, campaign battle at 1280×800, no crash, `error.log` empty)**
+
+What changed in `tools/patch_resolution.py` (the 1024×768 plan and the generated patcher script
+are byte-identical to before — checked by diffing the plan and regenerating
+`Apply-DarkColonyPatches.ps1`):
+
+1. **Width no longer has to be a power of two.** `Geometry.pow2` picks between two site
+   lists that sit at the historical place of the six stride edits. `STRIDE_SHIFT_SITES` is the
+   old form (`add` → `mov r,r`, `shl` count +1). `STRIDE_IMUL_SITES` (7 edits) rewrites the
+   three §8.2 idioms in place for any width:
+
+   | Classic file | Stock | 1280 | Meaning |
+   |---|---|---|---|
+   | `0x2B609` | `8D 14 8D 00000000` `lea edx,[ecx*4]` | `69 D1 00050000 90` `imul edx,ecx,1280; nop` | `driver.c` y·W |
+   | `0x2B613` / `0x2B618` | `01 CA` / `C1 E2 07` | `89 D2` / `8D 52 00` | `add`, `shl` neutralised (`mov edx,edx`, `lea edx,[edx+0]`) |
+   | `0x357B6` | `8D 04 8D 00000000` `lea eax,[ecx*4]` | `69 C1 00050000 90` | `engmain.c` y·W |
+   | `0x357BD` / `0x357C5` | `01 C8` / `C1 E0 07` | `89 C0` / `8D 40 00` | as above |
+   | `0x354B6` (11 bytes) | `C1 E0 02 01 F8 8B 5B 08 C1 E0 08` `shl eax,2; add eax,edi; mov ebx,[ebx+8]; shl eax,8` | `69 C0 000A0000 8B 5B 08 90 90` `imul eax,eax,2560; mov ebx,[ebx+8]` | `engmain.c` y·W·2 (bytes) |
+
+   Council Wars: the same at +0x60 (`auto_offset`). Checked before writing: no jump target
+   inside the three windows, no `.reloc` entry on the zero displacements, no flag consumer
+   between the rewritten instructions and the next flag writer (`xor ebx,ebx` / `add`).
+
+2. **Lightmap row stride.** Past 34 tiles across (`4·(2·tx+2) ≥ 288`) the six ×144 row idioms
+   of `draw_terrain` (§10.4/10.5: `lea r,[row*8]; add r,row; shl r,4` at `0x453B0E/B10`,
+   `B5C/B5E`, `B72/B74`, `BA6/BA8`, `BFB/C00`, `C23/C25`; file `0x52F0E`…`0x53025`) get the
+   `add` neutralised and the shift count raised to 5 (256 bytes) or 6 (512 bytes):
+   `LIGHTMAP_STRIDE_SITES`, 12 edits, `Geometry.lm_stride`/`lm_shift`. The two other
+   `shl …,4` in the range (`0x453C0E`, `0x453C50`) are the ×544 stride of the light table at
+   `0x533C90` and stay. The single-wrap argument of §10.5 holds for any even column count, so
+   the cap becomes `tx < stride/4 − 1`: 62 tiles at 256, 126 at 512. The footprint uses the
+   chosen stride, so the frame growth (§10.5) follows: 1280×800 = 75×51 half-tiles, 13 100
+   bytes, frame `0x14CC → 0x337C`.
+
+3. Still enforced: the view must be whole tiles in both axes (`W−128`, `H−32` multiples of 32).
+   1280×800 (36×24), 1280×1024 (36×31), 1152×864 (32×26), 1280×960 (36×29), 2560×1440 (76×44,
+   stride 512) pass; 800×600, 1600×1200, 1920×1080 are refused until the HUD absorbs the slack
+   (§10.23, not done).
+
+**Edit counts:** 1280×800 = 178 edits (165 − 6 shift + 7 imul + 12 stride), both exes plan
+clean on the stock originals.
+
+**Data build for 1280×800** (`scratchpad/work1280`, a copy of the stock `INTRFACE GAMESTAT
+SPRITES ANIMATE exp/{intrface,gamestat,sprites,animate}` plus the root `PALETTE.*`,
+`COLOUR.SET`, `FADE.DAT` — `logo_art.py` needs `PALETTE.GIF` in the game root): `pad_background.py
+apply INTRFACE --width 1280 --height 800` (+ `exp/intrface`), `paint_intro.py apply GAME
+--width 1280 --height 800`, `logo_art.py apply GAME`, `hud_layout.py build INTRFACE …`,
+`hud_layout.py maine INTRFACE apply …` (note the argument order: `DIR ACTION`), then
+`split_hd_data.py apply GAME --stock STOCK`. Result: the same 59 `INTRF_HD` names as at
+1024×768, `exp/intrf_hd` five files (the padded CW `intrg.gif`/`intro.gif` were dropped: the
+CW menu draws the painted root backdrop, as in the repository), `SPRITES/DC??_HD.SPR`,
+`ANIMATE/DC??_HD.FIN`. **Per the maintainer's decision the HD set of whatever resolution is
+chosen lives in the one `INTRF_HD` folder** (no per-mode folders; the exe strings stay
+`intrf_hd`), so the game folder now holds the 1280×800 set and `git diff` shows the 59 files.
+**Council Wars menu (second maintainer report, same day: "for engexp16 main menu the last two
+buttons are not in place"):** `build_ozi_overlay.py` hard-coded the 1024×768 rows — OZI LOAD and
+QUIT were written at (422, 619/645) into a script whose other rows sit at x=550, y=561/587/613 —
+and the pack's globe markers at (+192,+144). It now reads the column x and the row pitch from the
+`pushb 0/2/16` rows of `exp/intrf_hd/bintroe` (OZI LOAD = PLAY INTRO row + pitch, QUIT + 2·pitch:
+1280×800 → 550, 639, 665) and the marker shift from its `size W H` line (`(W−640)/2, (H−480)/2`);
+the committed 1024×768 script comes out unchanged. Re-applied to the game folder
+(`exp/intrf_hd/bintroe`, `ozi_ns/intrf_hd/{bintroe,hxscene.txt,gxscene.txt}`).
+
+**Tool bug found by the test — fixed in `split_hd_data.py`:** a script's `background
+intrface/<gif>` was retargeted to `intrf_hd/` only when that GIF moved *in the same run*. The
+HUD script was rebuilt after a first partial run had already moved `INTRFACE.GIF`, so
+`INTRF_HD/MAINE` kept `background intrface/intrface` and the game drew the stock 640×480 frame
+into the 1280×800 buffer (widgets in place, frame art missing; maintainer: "only the
+interface of the battlefield is a bit wrong"). The tool now also counts the GIFs already
+present in `INTRF_HD`. The fixed `MAINE` is installed; it is read when a battle screen opens,
+so the running game shows it from the next mission on.
+
+**Test exes** (not committed, no "patch" in the name, §10.18): `DC - Council wars/dc16wide.exe`
+(SHA-256 `6852dee2…`; chain `nocd, resolution 1280x800, hdpaths, cursor, pool, speed, clock
+1280x800, ddraw, camera, movies, sounds`) and `engexp16wide.exe` (`2cae7082…`, same without
+`movies`/`sounds`, no `ozi`; maintainer ran it: menu rows see above, otherwise fine). **Classic run:** `SetDisplayMode` took the panel to
+1280×800 (`Win32_VideoController` 1920×1200 → 1280×800), intro movie stretched to 1280×720
+with 40 px bands (movie `Blt` at a non-power-of-two width), main menu full-frame, NEW CAMPAIGN →
+mission 1 battle: 36×24-tile view, visibility/lighting smooth across the full width (no
+wrap or black-line artefacts — the 256-byte stride and the frame growth work), minimap at
+(1159,6), clock at (1248,770), money and status text in the panel's bottom cluster, 135 s in
+battle, no Event 1000, `error.log` 0 bytes. A first launch died silently within a minute: the
+Windows firewall prompt for the game's network access took the foreground (maintainer
+report), the relaunch was fine. Screenshots: `CopyFromScreen` of the primary screen works
+while the game owns the display (the DirectDraw primary is composited), `PrintWindow` too.
+
+#### 10.25 The patcher's resolution drop-down: 640×480, 1024×768, 1280×1024, 1280×720, 1280×800 **(21 Sep 2026, maintainer request "implement the dropdown in patcher for resolution selection. patcher should check aspect ratio of monitor and mark its aspect ratio in dropdown as recommended; format WIDTHxHEIGHT (a:b) recommended; resolutions supported: 640x480, 1024x768, 1280x1024, 1280x720, 1280x800"; implemented in `gen_apply_script.py` → `Apply-DarkColonyPatches.ps1`, `patch_resolution.py`, `hud_layout.py`; tested on the command line under PowerShell 7 and 5.1 and headlessly in the window; not yet committed)**
+
+**Exe side: the HUD slack rule.** 1280×720 leaves `720 − 6 − 26 = 688 = 21·32 + 16` rows: the
+view is 36×21 tiles and the 16 spare rows go to the HUD's bottom bar. `Geometry` floors the view
+height to whole tiles (`slack_y`, only the view height reaches the exe) and `hud_layout.target()`
+makes the `bottom_bar` region `slack_y` taller, anchored to the bottom edge: `cmd_build` splices the
+extra rows in at the bar's top edge, repeating its first two rows (`BAR_TOP_SEGMENT`), but only left
+of the right panel — the bar's stretch under the panel is the panel's bottom cluster, already
+painted by `right_panel`, and repeating those rows drew stripes under the BUILD button in the first
+1280×720 frame. `cmd_maine` needs nothing: bottom-bar widgets move by `H − 480` and stay in the
+bar's lower 26 rows. Spare **columns** (1366×768) still have no home and are refused. Plans:
+1280×720 = 178 edits (imul + stride 256), 1280×1024 = 178 (36×31 tiles, exact), both exes.
+
+**Data sets.** One `INTRF_HD` folder serves every resolution (maintainer decision, §10.24), so a set
+per size was generated with the pipeline of §10.24 (`scratch make_set.sh`: copy the stock
+`INTRFACE GAMESTAT SPRITES ANIMATE exp/{intrface,gamestat,sprites,animate}` + root `PALETTE.*
+COLOUR.SET FADE.DAT`, then pad → paint → logo → hud build → hud maine → split; drop the two padded
+CW `exp/intrf_hd/intr?.gif`). The 1024×768 output reproduces the committed set byte for byte apart
+from CRLF/LF (git normalises the text files) and the `movies` line-154 edit that `patch_movies.py`
+applies afterwards — a regression test of the whole pipeline. The four sets (2.9–4.0 MB each:
+`INTRF_HD/` 54 files, `exp/intrf_hd/` 5, `SPRITES/DC??_HD.SPR`, `ANIMATE/DC??_HD.FIN`) are kept
+**outside both repositories** in `Dark-Colony-development/hd_sets/<WxH>/` with a README (how to
+install one: copy over the game folder, then `build_ozi_overlay.py --apply` and `patch_movies.py
+apply`); where they ship is the maintainer's call (the game folder currently holds the 1280×800 set
+from §10.24, uncommitted). The patcher does not copy sets; it checks the one in place.
+
+**Generator (`gen_apply_script.py`).** `STOCK_MODE = '640x480'`, `HD_MODES = ['1024x768',
+'1280x1024', '1280x720', '1280x800']`, `DEFAULT_MODE = '1024x768'` (the published exes),
+`MODE_STEPS = {resolution, clock}` (replayed once per HD mode with `--width/--height`; the plan
+cache is keyed by mode), `HD_STEPS = {resolution, hdpaths, clock, movies}` (absent in the stock
+mode; `movies` because its ending names live in the `INTRF_HD` lists and it requires `hdpaths`).
+Every build is replayed once per mode (5 × Classic, 5 × Council Wars; the map editor has no
+modes), the per-step attribution moved into `attribute()`, and the results are merged: a fix
+outside `MODE_STEPS` must come out byte-identical in every mode it exists in (asserted — the tools
+touch disjoint bytes) and is emitted once with `Mode = $null` (`'hd'` for `hdpaths`/`movies`);
+`resolution` and `clock` are emitted once per HD mode with `Mode = 'WxH'`, mode-aware `Name` and
+`Description` (numbers from `patch_resolution.Geometry`: view, tiles, minimap x, movie rect, menu
+shift, imul/shift, lightmap stride, slack) and, on `resolution`, `DataSize = @{ File =
+'INTRF_HD\INTRFACE.GIF'; Width; Height }`. Builds carry `Modes`, `DefaultMode` and
+`ReferenceSha256` (mode → SHA-256 with every fix of that mode; `PatchedSha256` = the default
+mode's = the repository exe). The 1024×768 edits are unchanged. The script grew from 258 KB to
+506 KB (6970 lines).
+
+| Reference SHA-256 (every fix of the mode) | Classic `dc16.exe` | Council Wars `ENGEXP16.EXE` |
+|---|---|---|
+| 640×480 (nocd, cursor, pool, speed, ddraw, camera [, sounds / ozi]) | `5dcffacb…` | `6db52b4d…` |
+| 1024×768 (= published `dc16new.exe` / `engexp16new.exe`) | `09e9c007…` | `c098d3dc…` |
+| 1280×1024 | `4fb0d3f7…` | `57aabf54…` |
+| 1280×720 | `3f0fdc4e…` | `8a2b5230…` |
+| 1280×800 (= §10.24's test exes after `movies`) | `ba6f9e03…` | `5362a35d…` |
+
+**Script (`Apply-DarkColonyPatches.ps1`).** New parameter `-Resolution WxH` (default = the build's
+`DefaultMode`; `640x480` = no display fixes; unknown values are refused with the valid list). New
+helpers: `Get-BuildPatches build mode` (the effective fix list: `Mode $null` always, `'hd'` in every
+HD mode, `'WxH'` in that mode), `Resolve-Mode`, `Get-AspectLabel` (GCD, with 8:5 written 16:10 and
+1366×768 counted as 16:9), `Get-MonitorSize` (**since the evening of 21 Sep 2026 `Screen.PrimaryScreen.Bounds` first**:
+its Primary flag is explicit and the ratio survives DPI scaling; the earlier first choice
+`Win32_VideoController.CurrentHorizontal/VerticalResolution` names one mode per adapter and, with
+the maintainer's two monitors on one Intel adapter, reported the 1920×1200 panel while the 1920×1080
+external screen was primary → "recommended" landed on 16:10; CIM is now the fallback), `Format-ModeLabel` → `"1280x800 (16:10)
+recommended for your screen"` when the ratio equals the monitor's (wording and the preselection
+below: maintainer request, same day), `Get-PreferredMode` (the window preselects the largest
+recommended size, else the build's default; the command line keeps 1024x768 so `-All` reproduces
+the published exe everywhere), `Get-GifSize` and `Get-DataSizeProblem` (a `DataSize` fix was unavailable when `INTRF_HD\INTRFACE.GIF` was not WxH — **superseded the same day by §10.26, where the patcher writes the set itself**). `Invoke-PatchRun`,
+`Get-DataProblems`, `Get-UnavailableFixes`, `Get-RequirementLines`, `Write-PatchList` (lists the
+modes and their reference hashes; fixes tagged `@ WxH`) and `Get-VerifyReport` (a fix with
+variants is reported once, `APPLIED (1280x800)`, and a hash equal to a reference build is named)
+take the mode. Window: a "Screen resolution" `ComboBox` (DropDownList) above the fix list, filled
+per build with `Format-ModeLabel`, default preselected; changing it refills the list
+(`$script:gui.FillList`, `$script:gui.Patches` = the effective list, all index-based handlers use
+it) and re-runs the resource check; the result line says "byte-identical to the exe published in
+the repository" for the default mode and "to the reference build for WxH" otherwise. Tested (all
+pass): `-All` into the game folder with the 1280×800 set in place skips resolution/hdpaths/clock/
+movies with the size reason and writes the 7 others; `-All -IgnoreMissingData` = published
+`dc16new.exe`/`engexp16new.exe`; `-All -Resolution 1280x800` = §10.24's `dc16wide.exe`, the CW
+selection without `ozi` = `engexp16wide.exe`, CW `-All -Resolution 1280x800` (with `ozi`) applies;
+`-Resolution 640x480 -All`; `-Verify` on all of them; unknown resolution refused; the window
+headless (combo items, default 1024×768 with four fixes greyed, 1280×800 all available and Apply =
+`dc16wide.exe`, 640×480 = 7 fixes, 1280×720 shows the size reason); the same under Windows
+PowerShell 5.1. Screenshot `gui_720.png` in the session scratch.
+
+**Smaller sets (same day, maintainer request "implement 1 and 3" of the footprint review):** a set
+was 2.8-3.2 MB, of which the two loading screens `LOAD.BMP`/`LOAD2.BMP` were 1.5-2.0 MB (uncompressed,
+96 % black) and the three logo banks 0.7 MB - and the banks are **byte-identical in all four sets**
+(re-baked onto black, `paint_intro` mode `black`), so they are not per-resolution data at all. Now:
+(1) the banks and their FINs are the one shared committed copy `SPRITES/DC??_HD.SPR` +
+`ANIMATE/DC??_HD.FIN` and no longer part of a set; (3) the loading screens are **written by the
+patcher**: `Write-LoadingScreens` in `Apply-DarkColonyPatches.ps1` builds `INTRF_HD\LOAD.BMP` /
+`LOAD2.BMP` for the chosen size from the stock `INTRFACE\LOAD.BMP` / `LOAD2.BMP` (the 640x480
+picture centred on a black canvas; header as Pillow writes it - 1078-byte offset, 256 BGRX palette
+entries, 96 dpi - so the output is byte-identical to `pad_background.py`'s, checked for all four
+sizes) whenever the ones in place have another size (`Get-BmpSize`), at the end of `Invoke-PatchRun`
+when an HD `resolution` variant was applied; the result line lists what was written. `hd_data` no
+longer requires `INTRF_HD\LOAD*.BMP` but requires the stock pair instead. The committed `INTRF_HD`
+keeps its 1024x768 pair so the published exe runs from a plain clone; the patcher overwrites them
+when the size changes. A set is now `INTRF_HD/` (52 files) + `exp/intrf_hd/` (5), 0.5-0.6 MB
+(`hd_sets/` updated).
+
+**Not done / open:** the sets' home in the repository (or a "copy the set for me" step in the
+patcher); a Council Wars game test at a non-1024 mode (the 1280×800 CW exe ran, §10.24); 1280×720
+and 1280×1024 were not run in the game (plans and data only); spare columns (1366×768); `pool` is
+still 32 MiB for every mode.
+
+#### 10.26 The patcher builds the interface set itself: text rules, a compiled GIF codec, three shipped pictures per size **(21 Sep 2026, maintainer request "can we regenerate needed resources on the fly when patching so there are no missing resources?" → "Do this: 1) 40 text files … 2) 15 letterboxed background GIFs 3) INTRG.GIF, INTRO.GIF … ship them per size", with the codec in C# because "source code is there" — the script must say what is compiled, why, and what the alternatives cost; implemented in `gen_apply_script.py` → `Apply-DarkColonyPatches.ps1`; output checked file by file against the Python tools' sets for all four sizes; not yet committed)**
+
+**What the loader allows.** `gifload.c` (`0x0044E818`) reads the 6-byte header (`GIF`, version `87a`/`89a`
+or "bad version number"), the 7-byte screen descriptor, the global colour table, then **one byte
+that must be the image separator** (no extension blocks are skipped) and the 9-byte image
+descriptor, whose width/height are compared with the screen's (`0x0044E9C6`…`0x0044E9EA`, error
+string "Don't be trying to pass me off one of em new fan…") — **left/top are ignored**. So a
+letterboxed background cannot be made by moving the image inside a larger screen; the pixels have
+to be re-encoded, exactly what `pad_background.pad_gif` does with Pillow.
+
+**What the patcher does now (`Write-InterfaceSet`, run at the end of `Invoke-PatchRun` when an HD
+`resolution` variant was applied).** From the stock files of the game folder it writes, for the
+chosen size:
+
+| output | rule (Python original) | how in the script |
+|---|---|---|
+| 19 padded menu scripts | `pad_background.edit_script`: widgets +(dx,dy) of the GIF's letterbox, `size 0 0 W H`; `split_hd_data`: `background intrface/…` → `intrf_hd/…` | `Edit-PaddedScript`, `Set-BackgroundHd`, on Latin-1 strings (one char per byte), lines split at LF keeping their own CR |
+| 4 dialogs (`LOBJE LOPTE LQCE LSGE`) | `scan_dialogs`: 4-number `size` without background, rect and widgets +(dx0,dy0) | same |
+| `BINTROE INTROE BUTTONSE DINTROE` | `paint_intro.layout_for/relayout`: cluster centre as a fraction of the height (+20 with a logo), grid centred, logo/title centred, `size W H` | `Edit-IntroScript` (`Get-Positioned`, `Test-Logo`, `Test-Title`; banker's rounding like Python's `round`) |
+| `MAINE` | `hud_layout.cmd_maine`: panel x+=dx (y+=dy from row 399), bottom bar y+=dy (x+=dx from column 300), the PAUSED picture by half | `Edit-HudScript` |
+| 4 briefing lists | `edit_scene`: the `frame x y` line after an `.avi` line +(dx0,dy0); `patch_movies`: `avi/hending.avi` → `avi/dchending.avi`, `aending` → `dcaending` when the `movies` fix is chosen **or `AVI\DCHENDING.AVI`/`DCAENDING.AVI` are in the folder** (found by the in-place test: a Council Wars run, which has no `movies` fix, would otherwise undo the Classic names in the shared folder) | `Edit-SceneList`, the two `Replace` calls |
+| `INTRG.DAT INTRO.DAT` | `rename_dat_list`: `dcss.fin` etc. → `*_hd.fin` | `Edit-DatList` |
+| 15 letterboxed GIFs | `pad_gif`: first black palette entry as border, picture centred, palette kept, same GIF version | `[DcGif]::Pad` — the compiled codec |
+| `INTRG.GIF INTRO.GIF INTRFACE.GIF` | painted planet / spliced HUD frame: not derivable | copied from **`INTRF_HD\<WxH>\`** (shipped per size, 80-104 KB per size; the four folders are in the game folder, untracked) |
+| `LOAD.BMP LOAD2.BMP` | §10.25 | `Write-LoadingScreens` |
+| `exp\intrf_hd\bintroe introe shumane hxscene.txt gxscene.txt` | the same rules on `exp\intrface` / `exp\gamestat`, plus `build_ozi_overlay.menu_rows` on `bintroe` | `Edit-OziMenu` |
+| `ozi_ns\intrf_hd\bintroe introe shumane` + two lists | copies of the exp scripts; the pack lists shifted | `build_ozi_overlay.py` now also writes the **unshifted** pack lists to `ozi_ns\gamestat\hxscene.txt`/`gxscene.txt` (inert for the exe, source for the patcher) |
+
+Skipped like the Python tool: `MULTIE~1.TXT` (`split_hd_data` DROP). The set is written whenever an
+HD display fix is applied (it overwrites what is in `INTRF_HD`), so the "which set is in the
+folder" check of §10.25 (`DataSize`) is gone; the fixes' `Data` lists name the **inputs** instead
+(47 `INTRFACE` files, the 4 `GAMESTAT` lists, the shared banks, the three per-size pictures; Council
+Wars adds the 3 + 2 + 2 exp/OZI inputs), so "resources not found" now only happens for a folder that
+is not a real game install or lacks the three pictures of that size.
+
+**The codec.** `$GifCodecSource` is ~250 lines of C# 5 (`DcGif.Decode/Encode/Pad/Size`: 87a/89a,
+global or local colour table, interlace, extension blocks skipped, LZW decoder with the KwKwK case,
+LZW encoder with a 4096×256 prefix table and a clear code at 4096, 255-byte sub-blocks, header
+`0x87` + 256-entry table + one full-screen descriptor + minimum code size 8 — the shape
+`check_gif_layout` demands). `Initialize-GifCodec` hands it to `Add-Type` once; a failure (Constrained
+Language Mode, AppLocker) is reported as "INTERFACE SET NOT WRITTEN: …" with the pointer to the
+pre-built sets, and the exe is still written. **The script header and the INTERFACE SET section say
+in words what is compiled, by which compiler (Windows PowerShell 5.1: `csc.exe` of the .NET
+Framework in `C:\Windows`; PowerShell 7: its bundled Roslyn), that nothing is installed or written
+by the compile, and what the alternatives would cost: the same codec in plain PowerShell at
+15–30 s per set under 5.1 and minutes under 7 (measured loop speed 0.4 s resp. 3.6 s per million
+iterations, ~30 million per set), or copying a pre-built set.** Measured: PowerShell 7 1.5–2.9 s per
+set (the first includes the compile), Windows PowerShell 5.1 3.7 s (6.6 s for the whole patch run).
+
+**Pitfalls met (PowerShell):** `GetNewClosure()` blocks cannot call the script's own functions (use
+plain script blocks and dynamic scoping); inside `@(a + b, c + d)` the comma binds before `+`
+(parenthesise); a block parameter `$w` shadows the width `$W` (names are case-insensitive) — the
+blocks now take `$fields`; `return ,$array` from a function is double-wrapped by a caller's `@()`.
+
+**Verification.** For each of the four sizes a scratch game folder with only the inputs was
+patched (`-Patches nocd,resolution,hdpaths,cursor,pool,speed,clock,ddraw,camera,sounds`): every text
+file of `INTRF_HD`, `exp\intrf_hd` and `ozi_ns\intrf_hd` **byte-identical** to the Python sets
+(`hd_sets/<WxH>`, the OZI menu rows applied), every GIF **byte-identical as well** — the LZW
+encoder turned out to match Pillow's exactly, and since the version byte is always written as
+`GIF87a` (Pillow's behaviour whenever no 89a feature is used; `VICTORY.GIF` is the one GIF89a
+source and showed up as a one-byte git diff after the maintainer regenerated 1024×768), a
+regenerated 1024×768 set leaves `git status` clean apart from the two movie-name lines — the BMPs
+as in §10.25 — `compare_sets.py`: 64
+identical, 0 problems per size, also for the set built under Windows PowerShell 5.1. The headless
+window run reports the set in its result line. `hd_sets/` is now a test fixture, not a shipping
+artefact.
+
+**In place:** `-All -Resolution 1280x800` for Classic and then Council Wars in the real game folder regenerated `INTRF_HD`, `exp\intrf_hd` and `ozi_ns\intrf_hd`; against a snapshot of the folder every text file is byte-identical and every GIF pixel-identical (64/64 after the AVI rule above). **Open:** a game test of a freshly generated set; 1280×720 and 1280×1024 still untested in the game; the four `INTRF_HD\<WxH>\`
+folders and `ozi_ns\gamestat\*scene.txt` need committing.
+
+#### 10.27 640×480 gets the movies and OZI fixes too: the exe reads copies the original never touches **(21 Sep 2026, maintainer report "when patching dc16.exe to 640x480 initial video is from council wars. when patching engexp16.exe then ozi missions not possible to patch"; fixed in `patch_movies.py`, `patch_ozi_menu.py`, `gen_apply_script.py`; tested on the command line and in the headless window)**
+
+**Why they were missing.** §10.25 left `movies` out of the stock mode because its ending names live
+in the `INTRF_HD` lists, and `ozi` required `hdpaths` because its menu rows live in
+`exp\intrf_hdintroe`; at 640×480 the exe reads the stock `GAMESTAT` lists and the stock
+`exp\intrfaceintroe`, which must stay byte-identical to the CD for the original exes (§10.17).
+So the 640×480 Classic build played `avi/intro.avi` — the Council Wars intro in the shared folder —
+and the 640×480 Council Wars build could not have the OZI mode at all (`-All` even threw, because a
+required fix that does not exist at the resolution was not treated as unavailable).
+
+**The way in.** The three DGROUP path strings end in exactly six letters followed by the next
+string: `gamestat/hscene gamestat/gscene …` (Classic file `0x7FA10`/`0x7FA20`, CW `0x7FC10`/`0x7FC20`)
+and `intrface/bintro intro.avi…` (file `0x7FC98` / `0x7FE98`, VA `0x482498` in both). The exe appends
+`.txt` resp. the language letter, so a six-letter **name** can be swapped in place and the exe reads
+a **new file** that the original never opens:
+
+| fix @ 640×480 | exe edit (in place, no `.reloc`) | file the patcher writes | tool |
+|---|---|---|---|
+| `movies` (Classic) | `intro.avi` → `dcintro.avi` as before **+** `gamestat/hscene` → `gamestat/hscndc`, `gamestat/gscene` → `gamestat/gscndc` (3 edits, 17 bytes) | `GAMESTAT\HSCNDC.TXT`, `GSCNDC.TXT` = the stock lists with `avi/hending.avi` → `avi/dchending.avi`, `aending` → `dcaending` (`Write-StockEndingLists`) | `patch_movies.py --width 640 --height 480` (`find_list_sites`, `LIST_NAMES`; `apply` in a game folder writes the copies too) |
+| `ozi` (Council Wars) | the 14 edits + `.reloc` insert as before **+** `intrface/bintro` → `intrface/bintoz` (16 edits) | `exp\intrfaceintoze` and `ozi_ns\intrfaceintoze` (OZI mode reads through the `ozi_ns/` prefix) = the stock CW menu with `Edit-OziMenu`'s rows: x = 228, OZI MISSIONS 392, OZI LOAD 418, QUIT 444 (`Write-StockOziMenu`) | `patch_ozi_menu.py --width 640 --height 480` (`STOCK_MODE_SITES`) |
+
+At HD sizes nothing changes: `hdpaths` points the exe at `INTRF_HD`/`exp\intrf_hd`, whose lists and
+menu already carry the names and rows. **Generator:** `movies` and `ozi` joined `MODE_STEPS`
+(replayed per mode, `--width/--height` passed; the stock mode too), `HD_STEPS` is back to
+`resolution, hdpaths, clock`; identical variants are merged (all HD modes → `Mode = 'hd'`, one
+mode → its own entry), so each fix has one 640×480 entry and one shared HD entry; `Requires` and
+`Data` are mode-aware (no `hdpaths` requirement at 640×480; `Data` adds the stock lists resp.
+`exp\intrfaceintroe` as sources). **Script:** `Get-BuildPatches` includes a resolution's own
+variants at 640×480 too (the first version skipped every tagged fix there), `Get-UnavailableFixes`
+marks a fix whose required fix does not exist at the resolution, and `Invoke-PatchRun` runs the two
+writers at 640×480 after the exe. Reference builds: Classic 640×480 `ec0e6cef…`, Council Wars
+640×480 `81d6bc81…`.
+
+**Menu layout at 640×480 (second report, same day: "main menu overlaps image at the bottom - move
+buttons a bit higher").** The single column of five rows (340…444) put QUIT (444..469) on the
+backdrop's bottom artwork, which starts at row 435 (`exp\intrface\intrg.gif`, measured), and the
+column cannot move up because the code-drawn credits box occupies rows 230..330 (`0x4299`, CW
+stock y 230, 100 rows): 104 px are free, five rows need 130. The stock script itself carries a
+commented-out two-column plan (`%pushb 1 … 138 340`, `%pushb 3/4/5 … 318 …`), so `Edit-OziMenu640`
+uses it: NEW CAMPAIGN (138,340), LOAD GAME (138,366) | OZI MISSIONS (318,340), OZI LOAD (318,366) |
+QUIT centred (228,392); each button's LARGEBUTTON gadget moves with it, `%pushb 4` / `%gadget 10`
+are brought back in, the last row ends at 417. `Edit-OziMenu` dispatches on the script's
+`size 640 480` line; HD scripts keep the single column (their backdrop is 768+ rows tall).
+`build_ozi_overlay.menu_rows` (Python) has no 640 branch: it never sees a stock-size script.
+
+**Checked:** `-All -Resolution 640x480` for both exes in the game folder (fix lists, the four copies
+written with the right names and rows, stock `HSCENE.TXT`/`bintroe` unchanged against git),
+`-Verify` reports `APPLIED (640x480)`, Windows PowerShell 5.1 parses and verifies, the headless
+window lists 8 Classic / 7 Council Wars fixes at 640×480 with nothing greyed out; the HD outputs
+are unchanged (1024×768 = the published exes, 1280×800 = §10.24's build). Not yet run in the game.
+
 ## 11. Risks
 
 | Risk | Assessment |

@@ -246,9 +246,19 @@ DGROUP_SITES = [
     ('start-up animation list "anim.dat" -> "animozi.dat" (exp/animozi.dat = stock list + pack units)',
      0x4824B8, [b'anim.dat\0\0\0\0'], b'animozi.dat\0'),
 ]
+# 640x480 only (21 Sep 2026): at the stock size the exe reads exp/intrface/bintroe, which the ORIGINAL exe
+# reads too and which therefore keeps its PLAY INTRO row; the main-menu script string "intrface/bintro"
+# (language letter appended) ends in six letters followed by the next string, so the name becomes
+# "bintoz" in place and the exe reads exp/intrface/bintoze (OZI mode: ozi_ns/intrface/bintoze) - the
+# stock menu with the OZI rows, written by the patcher (Apply-DarkColonyPatches.ps1 Write-StockOziMenu).
+# At HD sizes the hdpaths patch points the exe at exp/intrf_hd/bintroe instead, which carries the rows.
+STOCK_MODE_SITES = [
+    ('main menu script "intrface/bintro" -> "intrface/bintoz" (640x480: exp/intrface/bintoze = stock menu + OZI rows, written by the patcher)',
+     0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
+]
 
 
-def resolve(data):
+def resolve(data, stock_mode=False):
     sites, relocs = build()
     for va, s in zip(SLOTS, CW_STRINGS):
         off = va - DGROUP_VA_TO_FILE
@@ -265,7 +275,7 @@ def resolve(data):
             out.append((name, off, va, have, new, 'stock' if have == olds[0] else 'v1'))
         else:
             problems.append('%s @ file %#x: expected %s, found %s' % (name, off, olds[0].hex(), have.hex()))
-    for name, va, olds, new in DGROUP_SITES:
+    for name, va, olds, new in DGROUP_SITES + (STOCK_MODE_SITES if stock_mode else []):
         off = va - DGROUP_VA_TO_FILE
         have = bytes(data[off:off + len(new)])
         if have == new:
@@ -292,10 +302,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=('verify', 'plan', 'apply'))
     ap.add_argument('exe')
+    ap.add_argument('--width', type=int, default=1024, help='screen size the exe is patched for; 640x480 adds the bintoz menu-script site')
+    ap.add_argument('--height', type=int, default=768)
     a = ap.parse_args(argv)
 
     data = bytearray(open(a.exe, 'rb').read())
-    edits, relocs = resolve(data)
+    edits, relocs = resolve(data, (a.width, a.height) == (640, 480))
     rstate = reloc_state(data, relocs)
     print('%s: Council Wars DCEXP16.EXE, OZI menu code %s, .reloc %s' % (a.exe, state(edits), rstate))
     if a.command == 'verify':

@@ -97,8 +97,22 @@ class Plan:
             open(dst, 'wb').write(data)
 
 
-MARKER_SHIFT = (192, 144)          # (1024-640)/2, (768-480)/2: the letterbox offset of the briefing globe
+# The letterbox offset of the briefing globe: ((W-640)/2, (H-480)/2) for the screen size the HD
+# set was built for, read from exp/intrf_hd/bintroe's `size W H` line by screen_geometry() in
+# main(); (192, 144) is the 1024x768 value. Hard-coded until 21 Sep 2026, when the first
+# 1280x800 set put the OZI rows and the pack's globe markers at the 1024x768 places (doc 10.24).
+MARKER_SHIFT = (192, 144)
 FRAME_XY = re.compile(rb'^(\s*)(\d+)(\s+)(\d+)(\s+)(\d+)(\s*)$')
+SIZE_LINE = re.compile(rb'^\s*size\s+(?:\d+\s+\d+\s+)?(\d+)\s+(\d+)\s*$', re.M)
+PUSHB_XY = re.compile(rb'^%?\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
+
+
+def screen_geometry(menu_data):
+    """(W, H) from the menu script's `size` line (`size W H` or `size 0 0 W H`)."""
+    m = SIZE_LINE.search(menu_data)
+    if not m:
+        raise SystemExit('exp/%s/bintroe: no `size` line' % HD_DIR)
+    return int(m.group(1)), int(m.group(2))
 
 
 def shift_scene_markers(data):
@@ -195,43 +209,63 @@ def base_set(game, pack, plan):
     if not menu:
         raise SystemExit('missing exp/%s/bintroe (run split_hd_data.py first)' % HD_DIR)
     data = open(menu, 'rb').read()
-    new = menu_script(data)
+    new, (x, y_load, y_quit) = menu_script(data)
     if new != data:
-        plan.write(menu, new, 'OZI MISSIONS (label 8), OZI LOAD (button 4 at 422,619), QUIT -> 645')
+        plan.write(menu, new, 'OZI MISSIONS (label 8), OZI LOAD (button 4 at %d,%d), QUIT -> %d'
+                   % (x, y_load, y_quit))
     if LABEL_NEW not in new or b'OZI LOAD' not in new:
         plan.notes.append('WARNING exp/%s/bintroe: menu rows not recognised, edit by hand' % HD_DIR)
 
 
-MENU_ROWS = {
-    # Council Wars single column at x=422: NEW CAMPAIGN 541, LOAD GAME 567, OZI MISSIONS 593,
-    # OZI LOAD 619 (the SINGLE PLAYER WAR button id 4 / gadget 10, re-enabled), QUIT 645.
-    rb'^%?\s*pushb\s+4\s+.*$':
-        b'pushb   4       0       422     619     179     25      -11     0        label centre   5 0 - remap 0',
-    rb'^%?\s*gadget\s+10\s+.*$':
-        b'gadget  10      0       422     619     179     25      LARGEBUTTON  anim_stopped',
-    rb'^\s*pushb\s+12\s+.*$':
-        b'pushb   12      0       422     645     179     25      -11     0  label centre 7 0 - remap 0',
-    rb'^\s*gadget\s+13\s+.*$':
-        b'gadget  13      0       422     645     179     25      LARGEBUTTON  anim_stopped',
-    rb'^\s*banim\s+18\s+.*$':
-        b'banim   18  0  5 5\t 6 8 17 10 13  0 2 16 4 12',
-    rb'^\s*textmsg\s+5\s+.*$': b'textmsg 5       OZI LOAD',
-    rb'^\s*textmsg\s+8\s+.*$': b'textmsg 8       OZI MISSIONS',
-}
+def menu_rows(data):
+    """The row templates for the screen the script was laid out for.
+
+    Council Wars is a single column: NEW CAMPAIGN (button 0), LOAD GAME (2), then PLAY INTRO
+    (16), which becomes OZI MISSIONS; OZI LOAD (the SINGLE PLAYER WAR button id 4 / gadget 10,
+    re-enabled) and QUIT (12 / gadget 13) follow below it at the same x and row pitch. At
+    1024x768 that is x=422, rows 541 567 593 619 645; at 1280x800 x=550, 561 587 613 639 665.
+    Returns (rows dict, (x, y_load, y_quit))."""
+    xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in PUSHB_XY.finditer(data)}
+    for need in (0, 2, 16):
+        if need not in xy:
+            raise SystemExit('exp/%s/bintroe: no `pushb %d` row, menu layout not recognised' % (HD_DIR, need))
+    x, y0 = xy[0]
+    pitch = xy[2][1] - y0
+    if pitch <= 0 or xy[2][0] != x or xy[16][0] != x:
+        raise SystemExit('exp/%s/bintroe: rows 0/2/16 are not a single column with a positive pitch' % HD_DIR)
+    y_load = xy[16][1] + pitch
+    y_quit = y_load + pitch
+    rows = {
+        rb'^%?\s*pushb\s+4\s+.*$':
+            b'pushb   4       0       %-7d %-7d 179     25      -11     0        label centre   5 0 - remap 0' % (x, y_load),
+        rb'^%?\s*gadget\s+10\s+.*$':
+            b'gadget  10      0       %-7d %-7d 179     25      LARGEBUTTON  anim_stopped' % (x, y_load),
+        rb'^\s*pushb\s+12\s+.*$':
+            b'pushb   12      0       %-7d %-7d 179     25      -11     0  label centre 7 0 - remap 0' % (x, y_quit),
+        rb'^\s*gadget\s+13\s+.*$':
+            b'gadget  13      0       %-7d %-7d 179     25      LARGEBUTTON  anim_stopped' % (x, y_quit),
+        rb'^\s*banim\s+18\s+.*$':
+            b'banim   18  0  5 5\t 6 8 17 10 13  0 2 16 4 12',
+        rb'^\s*textmsg\s+5\s+.*$': b'textmsg 5       OZI LOAD',
+        rb'^\s*textmsg\s+8\s+.*$': b'textmsg 8       OZI MISSIONS',
+    }
+    return rows, (x, y_load, y_quit)
 
 
 def menu_script(data):
     """Rewrite the five-button rows of the Council Wars main-menu script (idempotent).
-    The stock file mixes CRLF and bare LF line endings; each line keeps its own."""
+    The stock file mixes CRLF and bare LF line endings; each line keeps its own.
+    Returns (new data, (x, y_load, y_quit))."""
+    rows, geom = menu_rows(data)
     out = []
     for raw in data.split(b'\n'):
         line, cr = (raw[:-1], b'\r') if raw.endswith(b'\r') else (raw, b'')
-        for pat, repl in MENU_ROWS.items():
+        for pat, repl in rows.items():
             if re.match(pat, line):
                 line = repl
                 break
         out.append(line + cr)
-    return b'\n'.join(out)
+    return b'\n'.join(out), geom
 
 
 def overlay(game, pack, plan):
@@ -252,8 +286,14 @@ def overlay(game, pack, plan):
                 dst = os.path.join(dst_root, HD_DIR, out)
             produced.add(os.path.normcase(dst))
             if key.startswith('gamestat/') and 'scene' in key:
-                plan.write(dst, shift_scene_markers(open(os.path.join(dp, f), 'rb').read()),
-                           'scene list, globe markers +%d,+%d' % MARKER_SHIFT)
+                raw = open(os.path.join(dp, f), 'rb').read()
+                plan.write(dst, shift_scene_markers(raw), 'scene list, globe markers +%d,+%d' % MARKER_SHIFT)
+                # the unshifted list as well, under the stock name in ozi_ns/gamestat (inert for the
+                # exe, which reads intrf_hd/): the patcher rebuilds the shifted copy from it for any
+                # screen size (Apply-DarkColonyPatches.ps1 Write-InterfaceSet, 21 Sep 2026)
+                unshifted = os.path.join(dst_root, 'gamestat', out)
+                produced.add(os.path.normcase(unshifted))
+                plan.write(unshifted, raw, 'scene list, unshifted (source for the patcher)')
             else:
                 plan.copy(os.path.join(dp, f), dst, 'overlay')
     for name in UI_FROM_EXP:
@@ -263,7 +303,7 @@ def overlay(game, pack, plan):
             continue
         dst = os.path.join(dst_root, HD_DIR, name)
         produced.add(os.path.normcase(dst))
-        plan.copy(src, dst, '1024x768 screen from exp/%s' % HD_DIR)
+        plan.copy(src, dst, '%dx%d screen from exp/%s' % (MARKER_SHIFT[0] * 2 + 640, MARKER_SHIFT[1] * 2 + 480, HD_DIR))
     # Briefings.  The scene loader plays `mission/h<n>` / `mission/g<n>` before every mission
     # through the wave loader, whose last resort after the overlay and the root is the CD path -
     # with no CD that is the "Please insert The Dark Colony Expansion Pak CD" prompt and an exit
@@ -310,6 +350,14 @@ def main(argv=None):
     for p in (game, pack, os.path.join(game, 'exp', 'anim.dat')):
         if not os.path.exists(p):
             raise SystemExit('missing: ' + p)
+
+    menu = find_ci(os.path.join(game, 'exp', HD_DIR), 'bintroe')
+    if not menu:
+        raise SystemExit('missing exp/%s/bintroe (run split_hd_data.py first)' % HD_DIR)
+    global MARKER_SHIFT
+    w, h = screen_geometry(open(menu, 'rb').read())
+    MARKER_SHIFT = ((w - 640) // 2, (h - 480) // 2)
+    print('HD set is %dx%d: globe markers shift by +%d,+%d' % (w, h, *MARKER_SHIFT))
 
     plan = Plan(a.apply)
     base_set(game, pack, plan)

@@ -98,9 +98,21 @@ def need_pil():
         sys.exit('this tool needs Pillow: pip install Pillow')
 
 
+def slack_rows(height):
+    """Rows the map view cannot use because it is whole 32 px tiles (1280x720: 688 = 21*32 + 16).
+    patch_resolution.py gives them to nobody; the frame gives them to the bottom bar, which grows
+    that much taller with its widgets staying on the bottom edge (doc 10.25)."""
+    return (height - INSET_Y - (SRC_H - BOTTOM_Y)) % TILE
+
+
+TILE = 32
+BAR_TOP_SEGMENT = 2                # rows of the bar's top edge repeated as the vertical filler
+
+
 def target(width, height):
     """Where each region lands, and how much it has to grow."""
     dx, dy = width - SRC_W, height - SRC_H
+    sy = slack_rows(height)
     out = []
     for r in REGIONS:
         x, y, w, h = r['box']
@@ -108,19 +120,26 @@ def target(width, height):
         ty = y + dy if r['anchor'] == 'b' else y
         tw = w + dx if r['grows'] == 'width' else w
         th = h + dy if r['grows'] == 'height' else h
+        extra = 0
+        if r['name'] == 'bottom_bar' and sy:
+            ty -= sy
+            th += sy
+            extra = sy
         out.append(dict(name=r['name'], src=r['box'], dst=(tx, ty, tw, th),
                         grows=r['grows'], add=dx if r['grows'] == 'width' else dy,
-                        note=r['note']))
+                        extra_rows=extra, note=r['note']))
     return out, dx, dy
 
 
 def cmd_spec(args):
     regions, dx, dy = target(args.width, args.height)
+    sy = slack_rows(args.height)
     print('frame  %dx%d  ->  %dx%d      (+%d px wide, +%d px tall)\n'
           % (SRC_W, SRC_H, args.width, args.height, dx, dy))
-    print('map viewport  %dx%d at (%d,%d)  ->  %dx%d at (%d,%d)   = %dx%d tiles\n'
-          % (VIEW_W, VIEW_H, INSET_X, INSET_Y, VIEW_W + dx, VIEW_H + dy, INSET_X, INSET_Y,
-             (VIEW_W + dx) // 32, (VIEW_H + dy) // 32))
+    print('map viewport  %dx%d at (%d,%d)  ->  %dx%d at (%d,%d)   = %dx%d tiles%s\n'
+          % (VIEW_W, VIEW_H, INSET_X, INSET_Y, VIEW_W + dx, VIEW_H + dy - sy, INSET_X, INSET_Y,
+             (VIEW_W + dx) // 32, (VIEW_H + dy - sy) // 32,
+             '; %d spare rows go to the bottom bar (%d px tall)' % (sy, SRC_H - BOTTOM_Y + sy) if sy else ''))
     print('  %-13s %-22s %-22s %s' % ('region', 'source', 'target', 'extension'))
     print('  ' + '-' * 96)
     for r in regions:
@@ -374,10 +393,24 @@ def cmd_build(args):
             sub += src[(y + row) * SRC_W + x:(y + row) * SRC_W + x + w]
         t = by_name[r['name']]
         data, nw, nh = _extend(sub, w, h, r['grows'], t['add'], r['insert'])
+        keep_from = 0
+        if t['extra_rows']:
+            # spare rows above the bottom bar: splice them in at the bar's top edge, repeating
+            # its first rows, so the bar's furniture stays on the bottom edge of the screen. The
+            # filler covers only the part left of the right panel (the bar's stretch under the
+            # panel is the panel's own bottom cluster, already painted by the right_panel region;
+            # repeating its rows there drew stripes under the BUILD button in the first 1280x720
+            # frame).
+            data, nw, nh = _extend(data, nw, nh, 'height', t['extra_rows'], BAR_TOP_SEGMENT,
+                                   segment=BAR_TOP_SEGMENT)
+            keep_from = PANEL_X + dx
         tx, ty, _, _ = t['dst']
         for row in range(nh):
             off = (ty + row) * args.width + tx
-            canvas[off:off + nw] = data[row * nw:(row + 1) * nw]
+            if row < t['extra_rows']:
+                canvas[off:off + keep_from] = data[row * nw:row * nw + keep_from]
+            else:
+                canvas[off:off + nw] = data[row * nw:(row + 1) * nw]
         print('  %-12s %4dx%-4d -> %4dx%-4d  spliced %d at %s=%d'
               % (r['name'], w, h, nw, nh, t['add'],
                  'y' if r['grows'] == 'height' else 'x', r['insert']))
@@ -394,7 +427,7 @@ def cmd_build(args):
           % (dst, args.width, args.height, opaque,
              100.0 * opaque / (args.width * args.height)))
     print('the map hole is everything left at index %d: (%d,%d) %dx%d'
-          % (ERASE, INSET_X, INSET_Y, VIEW_W + dx, VIEW_H + dy))
+          % (ERASE, INSET_X, INSET_Y, VIEW_W + dx, VIEW_H + dy - slack_rows(args.height)))
     print('NOTE: mechanical splice -- every region extends by repeating a stretch of itself.')
     return 0
 

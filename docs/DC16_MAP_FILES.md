@@ -351,9 +351,14 @@ counter), eight TEAM blocks with money 1500 for active teams, and an object list
 
 ## 11. Council Wars and the OZI pack
 
-Same formats: `exp/scenario/{council,aerogen}` (8 + 8 scenarios, lower-case names, `.o16` caches for
-two of them only), `ozi_ns/scenario/{council,globo}` (11 + 11, with `.pop` files). All 61 convert with
-the same code; the terrains are the expansion's `.bts` sets.
+Same formats: `exp/scenario/{council,aerogen}` (8 + 8 scenarios, lower-case names), `ozi_ns/scenario/{council,globo}`
+(11 + 11, with `.pop` files). All 61 convert with the same code; the terrains are the expansion's `.bts` sets.
+
+**`.o16` files are not repository content since 21 Sep 2026** (`*.o16` in the Dark-Colony `.gitignore`, the 122
+tracked ones untracked but left on disk): the game writes the 16-bpp cache on the first load of every scenario that
+lacks one, so the Council Wars campaign missions kept surfacing as untracked files after each test (`aero01.o16`).
+The 8-bpp `.OVH` caches stay tracked (part of the CD data set). `map2json.js --images` reads whichever cache is
+present; the committed `maps/*.json` carry none.
 
 ## 12. JSON (`tools/map2json.js`, format `dc16-scenario` version 1)
 

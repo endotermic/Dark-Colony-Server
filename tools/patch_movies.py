@@ -38,6 +38,35 @@ NEW = b'dcintro.avi\0'
 ANCHOR = b'/bintro\0'                      # the string before it ("intrface/bintro" or "intrf_hd/bintro")
 LISTS = {'HSCENE.TXT': (b'avi/hending.avi', b'avi/dchending.avi'),
          'GSCENE.TXT': (b'avi/aending.avi', b'avi/dcaending.avi')}
+# 640x480 (21 Sep 2026): the stock-size exe reads GAMESTAT/, whose lists the ORIGINAL exe reads too and
+# which therefore stay untouched (maintainer rule of 14 Sep 2026).  The two DGROUP strings
+# "gamestat/hscene" / "gamestat/gscene" (the exe appends ".txt") end in exactly six letters followed by
+# the next string, so the name part becomes "hscndc" / "gscndc" in place and the exe reads
+# GAMESTAT/HSCNDC.TXT / GSCNDC.TXT: copies of the stock lists naming the Classic endings, written by
+# this tool (apply, in a game folder) and by the patcher (Apply-DarkColonyPatches.ps1).
+LIST_NAMES = {'hscene': 'hscndc', 'gscene': 'gscndc'}
+STOCK_LIST_OF = {'hscene': 'HSCENE.TXT', 'gscene': 'GSCENE.TXT'}
+
+
+def find_list_sites(data):
+    """[(old name, new name, file offset of the 6-letter name, state)] for the two list strings."""
+    va, rsize, rptr = sections(data)['DGROUP']
+    dg = bytes(data[rptr:rptr + rsize])
+    out = []
+    for old, new in LIST_NAMES.items():
+        hits = []
+        for name, state in ((old, 'stock'), (new, 'patched')):
+            needle = b'gamestat/' + name.encode() + b'\0'
+            i = dg.find(needle)
+            while i >= 0:
+                hits.append((rptr + i + 9, state))
+                i = dg.find(needle, i + 1)
+        if len(hits) != 1:
+            raise SystemExit('expected exactly one "gamestat/%s" string, found %d - the 640x480 variant needs the '
+                             'stock gamestat strings (not the hdpaths patch)' % (old, len(hits)))
+        out.append((old, new, hits[0][0], hits[0][1]))
+    return out
+
 
 
 def sections(data):
@@ -90,7 +119,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=('verify', 'plan', 'apply'))
     ap.add_argument('exe')
+    ap.add_argument('--width', type=int, default=1024, help='screen size the exe is patched for; 640x480 = the stock size')
+    ap.add_argument('--height', type=int, default=768)
     a = ap.parse_args(argv)
+    stock_mode = (a.width, a.height) == (640, 480)
     data = bytearray(open(a.exe, 'rb').read())
     game = SIZE_OF.get(len(data))
     if game != 'classic':
@@ -101,25 +133,50 @@ def main(argv=None):
     va = off + DGROUP_VA_TO_FILE[game]
     folder = os.path.dirname(os.path.abspath(a.exe))
     lists = list_state(folder)
-    print('%s: intro movie string %s ("%s"), file %#x VA %#x; INTRF_HD lists: %s'
+    list_sites = find_list_sites(data) if stock_mode else []
+    print('%s: intro movie string %s ("%s"), file %#x VA %#x; %s'
           % (a.exe, state, bytes(data[off:off + 12]).rstrip(b'\0').decode(), off, va,
-             ', '.join('%s %s' % kv for kv in sorted(lists.items()))))
+             'list names ' + ', '.join('%s %s' % (o, st) for o, _, _, st in list_sites) + ' (640x480 mode)' if stock_mode
+             else 'INTRF_HD lists: ' + ', '.join('%s %s' % kv for kv in sorted(lists.items()))))
     if a.command == 'verify':
         return 0
     print('  DGROUP string "intro.avi" -> "dcintro.avi"  file %#x VA %#x 12 bytes: %s -> %s; the movie name appended to "avi/" at start-up (0x004053A7) and by PLAY INTRO (0x004050FE); "intro.avi\\0" plus its two alignment padding zeros is exactly 12 bytes, so the string grows in place, its address and the .reloc table are unchanged'
           % (off, va, STOCK.hex(' '), NEW.hex(' ')))
-    for name, (old, new) in sorted(LISTS.items()):
-        print('  INTRF_HD/%s line 154: "%s" -> "%s" (the campaign ending the patched exe plays)' % (name, old.decode(), new.decode()))
+    if stock_mode:
+        for old, new, o, st in list_sites:
+            print('  DGROUP string "gamestat/%s" -> "gamestat/%s"  file %#x VA %#x 6 bytes: %s -> %s; the exe appends ".txt", so it reads GAMESTAT/%s.TXT - a copy of the stock %s naming the Classic ending, written by the patcher; the stock list stays untouched for the original exe'
+                  % (old, new, o, o + DGROUP_VA_TO_FILE[game], old.encode().hex(' '), new.encode().hex(' '), new.upper(), STOCK_LIST_OF[old]))
+    else:
+        for name, (old, new) in sorted(LISTS.items()):
+            print('  INTRF_HD/%s line 154: "%s" -> "%s" (the campaign ending the patched exe plays)' % (name, old.decode(), new.decode()))
     if a.command == 'plan':
         return 0
+    changed = False
     if state == 'stock':
+        data[off:off + 12] = NEW
+        changed = True
+    for old, new, o, st in list_sites:
+        if st == 'stock':
+            data[o:o + 6] = new.encode()
+            changed = True
+    if changed:
         bak = a.exe + '.movies.bak'
         shutil.copyfile(a.exe, bak)
-        data[off:off + 12] = NEW
         open(a.exe, 'wb').write(data)
         print('written %s; backup %s' % (a.exe, bak))
     else:
         print('exe already patched, nothing to do')
+    if stock_mode:
+        gs = os.path.join(folder, 'GAMESTAT')
+        for old, new in LIST_NAMES.items():
+            src = os.path.join(gs, STOCK_LIST_OF[old])
+            if not os.path.exists(src):
+                print('GAMESTAT/%s not found beside the exe - %s.TXT not written (fine inside the patcher generator)' % (STOCK_LIST_OF[old], new.upper()))
+                continue
+            o, nw = LISTS[STOCK_LIST_OF[old]]
+            open(os.path.join(gs, new.upper() + '.TXT'), 'wb').write(open(src, 'rb').read().replace(o, nw))
+            print('written GAMESTAT/%s.TXT (%s with %s -> %s)' % (new.upper(), STOCK_LIST_OF[old], o.decode(), nw.decode()))
+        return 0
     for name, (old, new) in sorted(LISTS.items()):
         p = os.path.join(folder, 'INTRF_HD', name)
         st = lists[name]

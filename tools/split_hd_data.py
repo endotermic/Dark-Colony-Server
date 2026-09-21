@@ -126,6 +126,11 @@ def split_interface(game, stock, rel, hd_rel, moved_base, plan):
         if cur != st:
             differing[fn] = (cur, st)
     moved_gifs = {fn.lower() for fn in differing if fn.lower().endswith('.gif')} | moved_base
+    # GIFs moved by an earlier run count too, or a script rebuilt afterwards (e.g. MAINE after
+    # `hud_layout.py maine`) keeps `background intrface/<gif>` and the patched exe draws the
+    # stock 640x480 picture into the enlarged frame (found 21 Sep 2026 at 1280x800, doc 10.24).
+    if os.path.isdir(hd_dir):
+        moved_gifs |= {fn.lower() for fn in os.listdir(hd_dir) if fn.lower().endswith('.gif')}
     for fn, (cur, st) in differing.items():
         if fn.lower() in DROP:
             plan.write(os.path.join(idir, fn), st, 'restore stock (HD copy dropped: nothing reads it)')

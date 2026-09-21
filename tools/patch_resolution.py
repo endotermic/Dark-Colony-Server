@@ -31,6 +31,13 @@ BUILDS table below: Council Wars DCEXP16.EXE (named ENGEXP16.EXE until 10 Sep 20
 identified by MD5, so the file name does not matter) takes the same 165 edits through its own offset
 rule and three site fixups (doc 10.10).
 To revert, restore the .bak that `apply` writes.
+
+Any width and height since 21 Sep 2026 (doc 10.24): a power-of-two width keeps the shift form of
+the three framebuffer strides (1024x768 bytes unchanged), any other width rewrites them in place
+with `imul`; past 34 tiles across the six x144 lightmap row idioms of draw_terrain become x256
+(x512 past 62). The viewport must still come out a whole number of 32 px tiles in both axes:
+1280x800 (36x24), 1280x1024, 1152x864, 1280x960 do; 1920x1080 does not (1048 rows) until the
+HUD absorbs the remainder.
 """
 
 import argparse
@@ -142,6 +149,7 @@ LIGHTMAP_ROOM = LIGHTMAP_BASE + 0x2E
 LIGHTMAP_STRIDE = 144
 LIGHTMAP_FRAME = 0x14CC
 LIGHTMAP_MAX_TILES_X = 34          # 4 * (2*tx + 2) < 2 * 144: a double wrap would collide
+LIGHTMAP_WIDE_STRIDES = (256, 512)  # 8 << 5, 8 << 6: up to 62 resp. 126 tiles across (doc 10.24)
 
 # Watcom emits no stack probe, so a frame that jumps by several pages must land on stack that is
 # already committed: the stock header commits only 64 KB and reserves 80000 bytes. Raise both.
@@ -152,14 +160,15 @@ STACK_COMMIT = (0x10000, 0x40000)
 class Geometry:
     def __init__(self, width, height, viewport=None):
         self.w, self.h = width, height
+        # The three framebuffer strides are compiled as `lea r,[y*4]; add r,y; shl r,7` (= y*640).
+        # For a power-of-two width they stay a shift (the 1024x768 build's bytes, unchanged since
+        # 9 Sep 2026); for any other width the 7-byte lea becomes `imul r,y,W` + nop and the add
+        # and shl are neutralised (doc 10.24). Both forms keep every instruction boundary.
         self.shift = width.bit_length() - 1
-        if 1 << self.shift != width:
-            raise ValueError(
-                'width must be a power of two. The three framebuffer strides are compiled as\n'
-                '    (y*4 + y) << 7      [= y*640]\n'
-                'and can only be rewritten without relocating code as\n'
-                '    (y*4) << (log2(width) - 2).\n'
-                'Use 1024, the documented target. 800 would need a real imul and code motion.')
+        self.pow2 = (1 << self.shift) == width
+        if width < 640 or width > 0x7FFF or height < 480 or height > 0x7FFF:
+            raise ValueError('screen %dx%d: supported range is 640..32767 x 480..32767'
+                             % (width, height))
         self.view_w = width - INSET_X - PANEL_W
         self.view_h = height - INSET_Y - BOTTOM_H
         if viewport:
@@ -171,13 +180,19 @@ class Geometry:
                 raise ValueError('viewport %dx%d exceeds the %dx%d the screen allows'
                                  % (vw, vh, self.view_w, self.view_h))
             self.view_w, self.view_h = vw, vh
+        # The view is whole 32 px tiles. Rows left over (1280x720: 720-6-26 = 688 = 21 tiles + 16)
+        # go to the HUD's bottom bar, which hud_layout.py builds that much taller (doc 10.25);
+        # the exe only needs the view height. Columns left over (1366x768: 22) have no home yet.
+        self.slack_y = self.view_h % TILE
+        self.view_h -= self.slack_y
         for what, v in (('viewport width', self.view_w), ('viewport height', self.view_h)):
             if v <= 0:
                 raise ValueError('%s comes out %d: the screen is too small for the HUD'
                                  % (what, v))
-            if v % TILE:
-                raise ValueError('%s comes out %d, not a multiple of the %d px tile size'
-                                 % (what, v, TILE))
+        if self.view_w % TILE:
+            raise ValueError('viewport width comes out %d, not a multiple of the %d px tile size '
+                             '(%d px would have to go into the HUD panel, which hud_layout.py '
+                             'cannot do yet)' % (self.view_w, TILE, self.view_w % TILE))
         self.tiles_x = self.view_w // TILE
         self.tiles_y = self.view_h // TILE
         if not 1 <= self.tiles_y <= 127:
@@ -186,14 +201,28 @@ class Geometry:
                 'time as a signed 8-bit lea displacement, so it has to fit in 1..127'
                 % self.tiles_y)
         # draw_terrain 0x00453910 keeps a half-tile lightmap in its own stack frame (doc 10.4).
-        # If the view does not fit the stock room, grow the frame (doc 10.5).
-        if self.tiles_x > LIGHTMAP_MAX_TILES_X:
-            raise ValueError(
-                '%d tiles across: the draw_terrain lightmap rows (144 bytes) would wrap twice '
-                'and collide; at most %d fit' % (self.tiles_x, LIGHTMAP_MAX_TILES_X))
+        # If the view does not fit the stock room, grow the frame (doc 10.5). Past 34 tiles
+        # across the stock 144-byte row stride would wrap twice and collide, so the six x144
+        # idioms become x256 or x512 (`add` neutralised, shift 4 -> 5 or 6; doc 10.24): the
+        # single-wrap argument of doc 10.5 holds for any even column count.
         self.lm_cols = 2 * self.tiles_x + 3
         self.lm_rows = 2 * self.tiles_y + 3
-        self.lightmap_bytes = (LIGHTMAP_STRIDE * (self.lm_rows - 1)
+        row_bytes = 4 * (self.lm_cols - 1)
+        self.lm_stride = LIGHTMAP_STRIDE
+        if row_bytes >= 2 * LIGHTMAP_STRIDE:
+            for candidate in LIGHTMAP_WIDE_STRIDES:
+                if row_bytes < 2 * candidate:
+                    self.lm_stride = candidate
+                    break
+            else:
+                raise ValueError(
+                    '%d tiles across: even a %d-byte lightmap row stride would wrap twice; '
+                    'at most %d tiles fit'
+                    % (self.tiles_x, LIGHTMAP_WIDE_STRIDES[-1],
+                       LIGHTMAP_WIDE_STRIDES[-1] // 4 - 2))
+        self.lm_stride_patch = self.lm_stride != LIGHTMAP_STRIDE
+        self.lm_shift = (self.lm_stride // 8).bit_length() - 1       # stride = 8 << lm_shift
+        self.lightmap_bytes = (self.lm_stride * (self.lm_rows - 1)
                                + 4 * (self.lm_cols - 1) + 4)
         over = self.lightmap_bytes - LIGHTMAP_ROOM
         self.lm_delta = -(-over // 16) * 16 if over > 0 else 0
@@ -222,13 +251,21 @@ class Geometry:
     def describe(self):
         return [
             'screen           %d x %d' % (self.w, self.h),
-            'map viewport     %d x %d = %d x %d tiles, at (%d, %d)'
-            % (self.view_w, self.view_h, self.tiles_x, self.tiles_y, INSET_X, INSET_Y),
+            'map viewport     %d x %d = %d x %d tiles, at (%d, %d)%s'
+            % (self.view_w, self.view_h, self.tiles_x, self.tiles_y, INSET_X, INSET_Y,
+               '; %d spare rows -> HUD bottom bar %d px tall (hud_layout.py)'
+               % (self.slack_y, BOTTOM_H + self.slack_y) if self.slack_y else ''),
             'occlusion mask   %d bytes (0x%X)' % (self.mask_bytes, self.mask_bytes),
             'minimap          %d x %d at (%d, %d), framebuffer byte offset 0x%X'
             % (MINIMAP_W, MINIMAP_H, self.minimap_x, INSET_Y, self.minimap_off),
             'framebuffer      stride %d px, %d px total, %d bytes per row'
             % (self.w, self.w * self.h, self.w * 2),
+            'framebuffer y*W  %s' % ('shifts (power-of-two width)' if self.pow2
+                                     else 'imul (width %d is not a power of two)' % self.w),
+            'terrain lightmap row stride %d bytes%s' % (
+                self.lm_stride, ' (stock 144: 34 tiles across at most)' if not self.lm_stride_patch
+                else ' (six x144 idioms -> x%d, %d tiles across at most)'
+                % (self.lm_stride, self.lm_stride // 4 - 2)),
             'terrain lightmap %d x %d half-tiles, %d bytes of %d: %s'
             % (self.lm_cols, self.lm_rows, self.lightmap_bytes, LIGHTMAP_ROOM,
                'frame grown 0x%X -> 0x%X (+0x%X)' % (LIGHTMAP_FRAME, self.lm_frame,
@@ -261,7 +298,11 @@ SITES = [
     (1, 0x2B763, 'b9e0010000', 1, lambda g: g.h, 'driver.c clip rect height'),
     (1, 0x2B594, 'bb80020000', 1, lambda g: g.w, 'driver.c row advance (a)'),
     (1, 0x2B661, 'ba80020000', 1, lambda g: g.w, 'driver.c row advance (b)'),
-    # the three strength-reduced strides: drop the "+ y", then shift one place further
+]
+
+# The three strength-reduced strides (doc 8.2), compiled as `lea r,[y*4]; add r,y; shl r,n`.
+# Power-of-two width: drop the "+ y", then shift one place further (the 1024x768 bytes).
+STRIDE_SHIFT_SITES = [
     (1, 0x2B613, '01ca', None, lambda g: b'\x89\xd2',
      'driver.c y*640: neutralise add edx,ecx'),
     (1, 0x2B618, 'c1e207', None, lambda g: bytes((0xC1, 0xE2, g.shift - 2)),
@@ -274,6 +315,32 @@ SITES = [
      'engmain.c y*1280: neutralise add eax,edi'),
     (1, 0x354BE, 'c1e008', None, lambda g: bytes((0xC1, 0xE0, g.shift - 1)),
      'engmain.c y*1280 -> y*W*2: shl eax'),
+]
+# Any other width (doc 10.24): the 7-byte `lea r,[y*4+0]` (8D /r 00000000, no .reloc entry on
+# the zero displacement) becomes a 6-byte `imul r,y,W` (69 /r imm32) + nop, the `add` a
+# 2-byte `mov r,r` and the `shl` a 3-byte `lea r,[r+0]`. The y*1280 site has no lea: its
+# `shl eax,2; add eax,edi; mov ebx,[ebx+8]; shl eax,8` window (11 bytes) becomes
+# `imul eax,eax,W*2; mov ebx,[ebx+8]; nop; nop` (edi keeps y, loaded at 0x004360B3). No jump
+# lands inside the three windows and no flag consumer follows before the next flag writer.
+STRIDE_IMUL_SITES = [
+    (1, 0x2B609, '8d148d00000000', None, lambda g: b'\x69\xd1' + struct.pack('<I', g.w) + b'\x90',
+     'driver.c y*640 -> y*W: lea edx,[ecx*4] -> imul edx,ecx,W'),
+    (1, 0x2B613, '01ca', None, lambda g: b'\x89\xd2',
+     'driver.c y*640: neutralise add edx,ecx'),
+    (1, 0x2B618, 'c1e207', None, lambda g: b'\x8d\x52\x00',
+     'driver.c y*640: neutralise shl edx,7 (lea edx,[edx+0])'),
+    (1, 0x357B6, '8d048d00000000', None, lambda g: b'\x69\xc1' + struct.pack('<I', g.w) + b'\x90',
+     'engmain.c y*640 -> y*W: lea eax,[ecx*4] -> imul eax,ecx,W'),
+    (1, 0x357BD, '01c8', None, lambda g: b'\x89\xc0',
+     'engmain.c y*640: neutralise add eax,ecx'),
+    (1, 0x357C5, 'c1e007', None, lambda g: b'\x8d\x40\x00',
+     'engmain.c y*640: neutralise shl eax,7 (lea eax,[eax+0])'),
+    (1, 0x354B6, 'c1e00201f88b5b08c1e008', None,
+     lambda g: b'\x69\xc0' + struct.pack('<I', g.w * 2) + b'\x8b\x5b\x08\x90\x90',
+     'engmain.c y*1280 -> y*W*2: shl/add/shl window -> imul eax,eax,W*2; mov ebx,[ebx+8]'),
+]
+
+SITES += [
 
     # -- stage 2: chrome, mouse, cursor, loading screens -------------------------------------
     (2, 0x004E5, 'bf7f020000', 1, lambda g: g.w - 1, 'main.c full-screen rect right'),
@@ -524,8 +591,42 @@ SITES.append((3, 0x4542BC - AUTO_VA_TO_FILE, '8db800020000', 2, lambda g: g.view
               'lightplane row advance 31/32 (lea edi)'))
 
 
+# Only applied when Geometry.lm_stride_patch is set (more than 34 tiles across, doc 10.24). The
+# six x144 row idioms of draw_terrain, `lea r,[row*8]; add r,row; shl r,4`: the add becomes
+# `mov r,r` and the shift count log2(stride/8), so the row term is row * (8 << shift). The two
+# other `shl ...,4` in the range (0x00453C0E, 0x00453C50) are the x544 stride of the light table
+# at 0x00533C90 and stay. Column terms (4 bytes per half-tile) are unchanged.
+LIGHTMAP_STRIDE_IDIOMS = [
+    # (VA of `add r,row`, add bytes, mov r,r bytes, VA of `shl r,4`, shl bytes, description)
+    (0x453B0E, '01f0', '89c0', 0x453B10, 'c1e004', 'loop 1 row 2r+2 (eax,esi)'),
+    (0x453B5C, '01d8', '89c0', 0x453B5E, 'c1e004', 'loop 2 row r+2 (eax,ebx)'),
+    (0x453B72, '01d0', '89c0', 0x453B74, 'c1e004', 'loop 2 row r (eax,edx)'),
+    (0x453BA6, '01f0', '89c0', 0x453BA8, 'c1e004', 'loop 2 row r+1 (eax,esi)'),
+    (0x453BFB, '01c2', '89d2', 0x453C00, 'c1e204', 'loop 3 row 2i+1 (edx,eax)'),
+    (0x453C23, '01c8', '89c0', 0x453C25, 'c1e004', 'loop 3 row 2i+3 (eax,ecx)'),
+]
+LIGHTMAP_STRIDE_SITES = []
+for _add_va, _add, _mov, _shl_va, _shl, _what in LIGHTMAP_STRIDE_IDIOMS:
+    LIGHTMAP_STRIDE_SITES.append(
+        (3, _add_va - AUTO_VA_TO_FILE, _add, None, (lambda m: lambda g: bytes.fromhex(m))(_mov),
+         'lightmap x144 -> x%%d, %s: neutralise add' % _what))
+    LIGHTMAP_STRIDE_SITES.append(
+        (3, _shl_va - AUTO_VA_TO_FILE, _shl, None,
+         (lambda s: lambda g: bytes.fromhex(s)[:2] + bytes((g.lm_shift,)))(_shl),
+         'lightmap x144 -> x%%d, %s: shl 4 -> shl log2(stride/8)' % _what))
+
+
 def sites_for(geom):
-    return SITES + (LIGHTMAP_SITES if geom.lightmap_patch else [])
+    # the stride sites keep their historical place right after the stage-1 row advances, so the
+    # 1024x768 edit list (and the generated patcher script) reads exactly as before
+    cut = 1 + next(i for i, s in enumerate(SITES) if s[5] == 'driver.c row advance (b)')
+    sites = SITES[:cut] + (STRIDE_SHIFT_SITES if geom.pow2 else STRIDE_IMUL_SITES) + SITES[cut:]
+    if geom.lightmap_patch:
+        sites += LIGHTMAP_SITES
+    if geom.lm_stride_patch:
+        sites += [(st, off, exp, imm, fn, what % geom.lm_stride)
+                  for st, off, exp, imm, fn, what in LIGHTMAP_STRIDE_SITES]
+    return sites
 
 
 def stack_sites(data):
