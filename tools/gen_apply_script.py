@@ -152,14 +152,14 @@ def ozi_data(g, mode=None):
 
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
-           'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
+           'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
-           'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
+           'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
@@ -293,14 +293,6 @@ def blocks_restore(g):
 def blocks_pool(g):
     m = re.search(r'site file 0x([0-9a-f]+)', plan(g, 'pool'))
     return [(int(m.group(1), 16), 5, 'mov eax,imm32 before call SMalloc_Pool: pool size 11 500 000 (0x00AF79E0) -> 33 554 432 bytes (0x02000000, 32 MiB)')]
-
-def blocks_speed(g):
-    t = plan(g, 'speed'); out = []
-    m = re.search(r'tick_ms initialiser\s+file 0x([0-9a-f]+)', t)
-    out.append((int(m.group(1), 16), 4, 'game-state initialiser: imm32 of mov dword ptr [esi+970h],imm32 (gs->tick_ms) 66 ms -> 44 ms'))
-    m = re.search(r'persistent setting \(desired tick\)\s+file 0x([0-9a-f]+)', t)
-    out.append((int(m.group(1), 16), 4, 'DGROUP: persistent "desired tick" settings global (4th of four settings dwords) 66 ms -> 44 ms'))
-    return out
 
 def blocks_clock(g):
     t = plan(g, 'clock')
@@ -483,14 +475,6 @@ info, game state, AI, widgets) is carved from one arena created at start-up with
 786 KB each, and extra sprite banks exhausted the arena ("SMalloc: Out of memory in local
 pool" in error.log).  The fix is the constant: 0x00AF79E0 -> 0x02000000 (32 MiB).  Block
 headers are 32-bit and the size check unsigned, so nothing else changes.'''),
- dict(id='speed', name='Default game speed 150 %', date='10 Sep 2026', tool='tools/patch_speed.py --percent 150',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.14', blocks=blocks_speed,
-      desc='''One simulation tick runs every gs->tick_ms milliseconds.  Two stock values feed it and both
-must change or the game resets the speed within a second: the game-state initialiser
-("mov dword ptr [esi+970h],66") and the persistent "desired tick" setting in DGROUP that the
-options screen and the speed negotiation read.  66 ms = 100 %, 44 ms = 150 % (the slider shows
-6600 / tick_ms).  Multiplayer speed comes from the server, saved games keep their own speed.
-Cosmetic; pick it if you like the faster default.'''),
  dict(id='clock', name=lambda mode: 'Day/night clock hand re-anchored (%s)' % mode, date='13 Sep 2026', tool='tools/patch_clock.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.15', blocks=blocks_clock,
       requires=['resolution'],
@@ -652,10 +636,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'restore', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'restore', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),

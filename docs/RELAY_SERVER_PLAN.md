@@ -1749,6 +1749,13 @@ above, so that the plan can be followed from scratch without repeating the disco
   file 2 s after the click, OK → exit code 0, error.log had the line. `dc16.asm` / `dcexp16.asm`
   regenerated from the new 1024x768 exes.
 
+**21 Sep 2026, maintainer: "remove 150% speed patch from patcher"** — fix `speed` (`patch_speed.py`,
+§10.14 of the display doc, 10 Sep 2026) dropped from `gen_apply_script.py` and the regenerated
+`Apply-DarkColonyPatches.ps1`; the published exes and the game folder's 1280x800 builds are back to
+the stock 66 ms in both tick dwords (default 100 %). Published 1024x768 builds: Classic `36d3bada…`,
+Council Wars `57b28dbf…`. The tool itself stays in `tools/`. Multiplayer speed was never affected (the
+relay sets it, F11).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a

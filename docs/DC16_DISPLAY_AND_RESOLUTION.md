@@ -1910,6 +1910,14 @@ each unique in both builds). The slider keeps working, multiplayer is unaffected
 server dictates `TICK_SPEED(33)` (plan R11), and a save game carries the speed it was saved with.
 Applied to both repository exes on 10 Sep 2026.
 
+* **Removed from the patcher and the published exes on 21 Sep 2026 (maintainer request "remove 150%
+  speed patch from patcher"):** `dc16new.exe` / `engexp16new.exe` carry the stock 66 ms in both dwords
+  again (default 100 %), `Apply-DarkColonyPatches.ps1` no longer offers `speed` (order now `nocd,
+  resolution, hdpaths, cursor, pool, clock, ddraw, camera, restore` + `movies`/`sounds` or `ozi`), the
+  game folder's 1280x800 builds were reverted in place with `patch_speed.py --percent 100`. The tool
+  stays for anyone who wants the faster default. Published 1024x768 builds: Classic `36d3bada…`,
+  Council Wars `57b28dbf…` (byte-identical rebuild from the originals).
+
 #### 10.15 Three leftovers found in play: the battlefield dialogs, a black box at every screen change, and the clock hand **(verified by disassembly and pixel comparison; game test pending)**
 
 Reported 13 Sep 2026 after playing the 1024×768 build: (1) the in-game pop-up dialogs (options,
