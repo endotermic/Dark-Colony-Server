@@ -2619,6 +2619,93 @@ the Council Wars build is unchanged (`13c95489…`), `-Patches sounds` alone und
 writes exactly the four bytes. **Confirmed in game 19 Sep 2026** (maintainer: Classic mission 1 plays
 the Classic briefing).
 
+#### 10.22 Crash the moment the battlefield appears when the start position is near the far map edge: the unclamped start camera **(21 Sep 2026, maintainer report "when endotermic entered the battlefield his client hanged and was thrown out, the game continued as bots vs the second client"; traced in the Fly log, the Windows Application log and both exes; patched — fix `camera`, `tools/patch_camera.py`; confirmed in game the same day: the pre-fix exe reproduces the crash in replay mode, the fixed one plays the recording to the victory screen)**
+
+**Evidence.** Fly log, 19 Sep 2026 18:26:55 UTC, room 1 (Plink - O, J8PLAY01, 160×140 tiles):
+endotermic (slot 6) and Delaro (slot 3) with six Krusty bots. Both clients loaded (MREADY: Delaro
+game player 2, endotermic **game player 0**), the server issued frame 0 at 18:26:57.16, Delaro
+echoed it within 247 ms, endotermic never echoed anything (`latencyMs null, pendingEchoes 6`) and
+was evicted after `ECHO_TIMEOUT_MS`: `client left … reason "no echo for frame 0"`; a Krusty
+takeover played the base and Delaro's game ran 25 575 ticks with 0 checksum mismatches. Frame 0 was
+the usual `TICK_SPEED(44)` plus two greeting chat lines, identical in structure to the other
+Krusty-era games; the only thing peculiar to endotermic was the seat — in the 19 recordings before,
+human clients had been game players 1, 2, 4, 6 and 7, never 0. On the same PC the game's
+`error.log` stayed empty (only asserts write it), but the **Windows Application log** has an
+`Application Error` (Event 1000) for `dc16new.exe` at 21:26:57 local = 18:26:57 UTC, the second
+of "running": exception `0xC0000005`, fault offset `0x00045B52`, i.e. VA **`0x00445B52`**. Windows Error Reporting held the dying process (its dialog behind the exclusive
+full-screen surface = the "hang"), so the TCP connection stayed open through the 5 s echo timeout;
+`error.log`'s change time 21:27:12 is the moment the process finally went away.
+
+**The faulting code.** `0x00445B52` is `test dword ptr [edx],ecx` inside `0x00445AA4`
+(`gs, x0, tiles_x, z0, tiles_y`): the routine that counts the terrain classes of the tiles on
+screen that the local player can see (`ecx` = `player(me).VISION` mask from `+0x19C4`) and returns
+the most frequent class — the ambience picker (`0x00432040`, day/night `JUNGLE.AMB` etc.) calls
+it from the client step `0x0040AAFC` every 5 s / 7 s, and at once on the first frame (its
+timestamps start at 0). It checks only the origin (`x0 ≤ W`, `z0 ≤ H`, negatives return early)
+and then loops `z0 … z0+tiles_y` × `x0 … x0+tiles_x` through the vision-plane row table
+`map+0x804[z]` (`edx = row[z] + x*4`). Rows at or beyond the map height hold NULL: the fault.
+
+**Why the camera was there.** The client step derives the rectangle from the camera:
+`origin = (cam − half) >> 8` (`0x0040AB1C` / `0x0040AB2B`, half = `0xB80` / `0xE00` since the
+stage-3 viewport edits of `patch_resolution.py`). The camera itself is set at game start by `proto.c`'s init: `cam_x = start_x << 8`,
+`cam_z = start_z << 8` from the local player's record (`player+0xBD0/0xBD4`, `0x0041ED11..0x0041ED48`,
+into `ui 0x004AA9D0` `+0x108` / `+0x110`), **then** the bounds `[half, map − half]` are computed and
+stored in `ui+0x114..0x120` (`0x0041EE66..0x0041EEA9`) — and never applied to that first position.
+The only clamp is in the render path (`clamp2d 0x00436668`, called at `0x0040AF16` with the six
+bounds/camera pointers, then the low bytes are zeroed = tile snap), which runs **after** the
+client step. So the very first frame scans `start − 11.5 … start + 11.5` rows. Team 0 of Plink - O
+starts at (18,131) on a 140-row map: rows 119…141 → NULL row pointers → crash. Stock 16×14 (half
+8/7) would have needed a start within 7 rows of the far edge, which no shipped map has (the
+nearest is 8); at 28×23 every start row within 11 of the far edge crashes: J8PLAY01 teams 0 and 1,
+D8PLAY01 team 3, D8PLAY03 teams 1 and 2, D8PLAY05 teams 0 and 1, J8PLAY07 team 3 … The low edge is
+safe (`z0 < 0` returns early), the x direction only reads garbage inside the plane. The clamped
+camera is also what draw_terrain renders, which is why nothing else complained; and once the player
+scrolls, the render clamp keeps the camera inside, so the crash is a first-frame (and single-tick
+"camera parked at the very top" ambience-tick) affair — Delaro, Kamyck and endotermic's own earlier
+games at players 2/6/7 never hit it.
+
+**Fix (`tools/patch_camera.py`, both exes, pattern-located, `.camera.bak`, patcher fix `camera`
+after `ddraw`).** Right after the bounds are stored the init does `mov eax,ui; mov edx,name;
+call load_ambience` (`0x0041EEB8` → `0x00432F80`; CW `0x0041EF18` → `0x00432FE0`). That call is
+redirected to a 33-byte stub in the AUTO zero tail — Classic `0x0047F1DC` (right after the
+`cursor` stub), Council Wars `0x0047F310` (after the `ozi` stubs):
+
+```
+8D B0 08 01 00 00   lea  esi,[eax+108h]        ; esi = &cam_x (ui in eax)
+8D 4E 08            lea  ecx,[esi+8]            ; &cam_z
+51 56               push ecx ; push esi         ; &cam_z, &cam_x
+FF 76 18            push [esi+18h]              ; max_z   ui+0x120
+FF 76 14            push [esi+14h]              ; max_x   ui+0x11C
+FF 76 10            push [esi+10h]              ; min_z   ui+0x118
+FF 76 0C            push [esi+0Ch]              ; min_x   ui+0x114
+E8 rel32            call clamp2d                ; 0x00436668 / CW 0x004366C8, ret 18h, preserves eax and edx
+E9 rel32            jmp  load_ambience          ; returns to the init as before
+```
+
+Register-relative only, so no `.reloc` entries; `load_ambience` reads only `eax` (and `edx`), which
+the stub leaves untouched (`clamp2d` saves everything it uses). Two edits per exe: the rel32 of the
+call and the 33 zero bytes. `verify` re-derives every address (bounds site, `clamp2d` also
+cross-checked against the render path's call at `0x0040AF16`, the camera init two dozen
+instructions earlier) and refuses anything unexpected. Harmless without `resolution` and in
+single-player (the clamp can only move the camera inward). Both repository exes carry it; the
+patcher rebuilds them byte-identically (SHA-256 Classic `09e9c007…`, CW `c098d3dc…`).
+
+**Reproduction / confirmation (21 Sep 2026):** `REPLAY_FILE=logs/replays/2026-09-19T18-26-56-991Z-room1-J8PLAY01.jsonl REPLAY_SLOT=6 node src/index.js`
+seats the viewer in endotermic's slot, so the real client becomes game player 0 at (18,131). The
+exe before the fix (git `HEAD` copy, run as `dc16old.exe`) died at the first frame exactly as on Fly
+(Event 1000, offset `0x45B52`, server: "no echo for frame 0"); the fixed `dc16new.exe` showed the
+battlefield and followed the whole 1125 s recording to the victory screen. (The replay server
+needed a fix of its own on the way: its frame cursor did not rewind between games, plan §16.)
+
+**A second, unrelated crash in the same log**: the relaunched game (21:27:12 local, room 2,
+Armageddon, seven bots, game player 4) ran 50 s, the player left the battle (`connection closed`
+18:28:56 UTC) and the process died at 21:29:17 with fault offset `0x2F8B8` = `0x0042F8B8`: the
+surface `Lock` wrapper `0x0042F828` found `[0x489734] == 1` ("Lock when already locked" printed to
+the buffered `error.log`, lost in the crash), ran `assert(0)` at `ddex4.c` line 1197 through the
+soft assert helper and then called `Lock` on the surface pointer `[0x489720]`, which was already
+NULL — a quit-time display shutdown ordering bug. Not fixed; noted here so it is not mistaken for
+§10.16 or for this section.
+
 ## 11. Risks
 
 | Risk | Assessment |

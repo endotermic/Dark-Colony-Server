@@ -6,6 +6,22 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Client crash at battle start fixed for start positions near the map edge** (21 Sep 2026,
+  maintainer report: a player "entered the battlefield, his client hanged and was thrown out, the
+  game continued as bots vs the second client"; plan §16 entry of 21 Sep, F55,
+  `docs/DC16_DISPLAY_AND_RESOLUTION.md` §10.22). The Fly log showed the client evicted with "no echo
+  for frame 0" and Windows' Application log an access violation of `dc16new.exe` at that second: the
+  1024x768 build's first frame hands the unclamped start camera to the ambience picker, whose
+  terrain scan walks past the map's row table when the start row is within 11 tiles of the far edge
+  (game player 0 of Plink - O, and about a dozen other start positions of the room maps). New exe
+  fix **`camera`** (`tools/patch_camera.py`, both games): a 33-byte stub in the code section's zero
+  tail clamps the camera with the game's own limits right after they are computed. Both repository
+  exes carry it; the patcher `Apply-DarkColonyPatches.ps1` was regenerated. Confirmed in game the
+  same day with replay mode (`REPLAY_SLOT=6` = that seat): the pre-fix exe crashes at the first
+  frame, the fixed one plays the recording to the victory screen.
+- **Replay mode: the frame cursor rewinds when the room resets** (21 Sep 2026, found during that
+  test): a second client of a replay server used to start mid-stream (the game's sync assert at the
+  first checksum) and a third got no frames at all; `Replay.rewind()` from `Room.reset()`.
 - **The game's own AI plays the bots; one bot by default; `/botcount N` in the room chat** (19 Sep
   2026, maintainer request "reverse engineered main AI bot built into the server, count of bots
   updated by `/botcount`, by default only the bare minimum one master bot"; plan §19.10, F52-F54,
@@ -26,7 +42,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   bot comes back). The bots no longer keep a standing peace among themselves (maintainer, same day):
   they are rivals unless the same player has hired both. The bots are named **Mercenary** and
   **Marauder** again (no "AI" prefix; maintainer, same day) and each plays a **random race**
-  (`MERCENARY_RACE=random`, Human or Gray drawn per bot). The bots say only
+  (`MERCENARY_RACE=random`, Human or Gray drawn per bot). The room greeting is shorter and names the
+  commands: "Mercenary: Hi! I am the AI host.", "Bots: 1 krusty, hire off. /botcount N", "/bottype,
+  /bothire, /help for more." The bots say only
   the deal in battle (offer, payment, refund, end); their actions are no longer chatted, not even to the
   ally. In bot mode two of the original AI's bugs are repaired: the weapon/armour upgrade goals work
   (the original's never fired) and the attack planner no longer sends both groups at the same zone or

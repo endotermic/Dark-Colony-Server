@@ -86,14 +86,14 @@ def ozi_data(g):
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'speed': 'patch_speed.py', 'clock': 'patch_clock.py',
-           'ddraw': 'patch_ddraw_lost.py', 'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py',
-           'ozi': 'patch_ozi_menu.py',
+           'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'movies': 'patch_movies.py',
+           'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool', 'speed': 'speed',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
 _plans = {}
@@ -197,6 +197,15 @@ def blocks_ddraw(g):
         name = m.group(1).strip()
         out.append((int(m.group(2), 16), lens[name], name))
     out += reloc_lines(t, '.reloc table: ')
+    return out
+
+def blocks_camera(g):
+    t = plan(g, 'camera'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 2, (g, len(out))                                   # the call operand + the 33-byte stub
     return out
 
 def blocks_pool(g):
@@ -392,6 +401,27 @@ assert branches become "skip and continue": three "push format-string" instructi
 turn into "jmp next-palette-index", and the Flip check's je becomes jmp.  The game's own
 per-frame restore path repairs the surfaces at the first frame.  The three push operands were
 absolute pointers, so their .reloc entries become type 0 ABSOLUTE padding.'''),
+ dict(id='camera', name='Camera clamped at battle start: no crash when the start position is near the map edge', date='21 Sep 2026',
+      tool='tools/patch_camera.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.22', blocks=blocks_camera,
+      desc='''When a battle starts the game puts the camera on the player's start position and only
+afterwards computes the camera limits ("half a screen from every map edge") - but it never applies
+them to that first position.  The per-frame scrolling code clamps the camera, yet the very first
+frame already uses the unclamped position: it hands "camera minus half a screen" as the visible
+tile rectangle to the routine that picks the ambient sounds from the terrain on screen, and that
+routine walks the rectangle row by row through the map's row-pointer table without checking the far
+edge.  With the original 16x14-tile view no shipped start position was close enough to an edge for
+the rectangle to leave the map; with the 1024x768 view (28x23 tiles, "1024x768" fix) every start
+row within 11 tiles of the far map edge does - the row pointers past the map are NULL and the game
+dies with an access violation the moment the battlefield appears (Windows' crash dialog stays
+hidden behind the full-screen surface, so it looks like a hang; a relay server then drops the
+player after 5 s and the other players continue).  Hit on Fly on 19 Sep 2026 by the player whose
+game slot got start position 0 of "Plink - O" (row 131 of 140); Plink - O positions 0 and 1,
+Armageddon 3, Circle of Friends 1 and 2, Olympus Mons 0 and 1 and others are affected the same way.
+The fix redirects the call that follows the limit computation into a 33-byte routine placed in the
+unused zero bytes at the end of the code section: it calls the game's own 2-D clamp function with
+those limits on the camera and then continues into the routine the call originally targeted.
+Only register-relative addressing, no relocation entries, nothing moves.  Harmless without the
+1024x768 fix and in single-player missions (a clamp can only move the camera inside the map).'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=['hdpaths'], data=movie_data,
@@ -485,10 +515,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'speed', 'clock', 'ddraw', 'camera', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),

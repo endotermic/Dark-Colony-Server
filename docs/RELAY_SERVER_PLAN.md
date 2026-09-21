@@ -89,6 +89,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F52 | **The local pool zero-fills.** `smalloc 0x40C09C` clears every block it returns (`0x40C1B5..0x40C1BC`: `memset(block+0x10, 0, size)`), so Krusty's state (`krusty_alloc 0x44BD50`, 0x6C40 bytes, "Krusty AI") starts as all zeros except what the allocator writes; the attack ratio `kai+0x6C34`, which nothing initialises, is therefore 0 and the enemy-avoiding zone route `0x4579F0` never runs in an unscripted game. | `0x40C09C`, `0x44BD50`; `DC16_AI.md` §23 | The port allocates a zeroed Buffer and leaves `+0x6C34` alone; `avoiding_route` is not ported (assert if ever reached) |
 | F53 | **The vent bit lives in the file-order row.** The loader sets attribute bit 4 (load bit 26, "a living vent here") through `map+4[z]` (`0x41C758`), and BOTH readers use the same table: the trigger primitive `m(x, z)` (`0x43D15C`) and the exhausted-vent assert/clear of `stateHarvest` (`0x413B87`, `0x413C28`). So `m(x, z)` is simply "vent alive at (x, z)". The port read the two sites z-ordered until 19 Sep 2026: the first exhausted vent of a game asserted (`gs->map->load[...] & (1<<ALIVE_MINE)`) and cleared the bit of a cell in the mirrored row, and `m()` looked at the wrong cell. Load bits are not in the checksum; the trigger result can be (a re-armed eruption draws `rand()`). Found by the Krusty bots' long self-play (vents ran dry after ~16 000 ticks). | `0x41C747..0x41C758`, `0x43D152..0x43D15C`, `0x413B61..0x413B87`, `0x413BFF..0x413C2C` | `grid.ventBitTest/ventBitClear` at both sites; `test/engine-renat.test.js` sets the bit as the loader does. The seven D8PLAY01 recordings of 11 Sep replay unchanged (their eruption trigger 40 also needs `s(4,0)==1`) |
 | F54 | **AI schedule details.** `ai_turn` tests the literal `TICK == 4` (`0x41AE56`), not a start-relative tick; `ai_think` draws one `rand()` per personality pair whatever the weight, chosen iff `w > r·(cum+w)·C` with `C = 0x3F00002000400080` = exactly the double `1/32767`; a lobby slot of type 3 never becomes a type-4 player in multiplayer (the start-up loop skips empty records before the type test, `0x4016F2`), so a humans-only game draws nothing in `ai_turn` - which is why the engine matched real games without any AI code. | `0x41AE38`, `0x41AD30`, `0x48385C`, scenario.js `0x4016F2..0x401757` | `engine/ai.js` reproduces the schedule and the choice; the personality stubs for types 1/2 draw their `rand()`s and do nothing |
+| F55 | **The battle-start camera is never clamped, and the 1024x768 build's first frame reads past the map for start rows near the far edge.** `proto.c` init sets `cam = start_tile << 8` from the local player's record (`player+0xBD0/0xBD4`, code `0x41ED11..0x41ED48`, into `ui 0x4AA9D0` +0x108/+0x110), then stores the bounds `[half, map_world − half]` into `ui+0x114..0x120` (`0x41EE66..0x41EEA9`; half = 0xE00/0xB80 after fix `resolution`, 0x800/0x700 stock) without applying them; only the render path clamps (`clamp2d 0x436668` from `0x40AF16`), and it runs after the client step. The first client step `0x40AAFC` computes `view origin = (cam − half) >> 8` (`0x40AB1C/0x40AB2B`) and calls the ambience picker `0x432040` → `0x445AA4(gs, x0, tiles_x, z0, tiles_y)`, which checks only `x0 ≤ W`, `z0 ≤ H` and then loops `z0..z0+tiles_y` through the vision-plane row table `map+0x804[z]`; rows ≥ H hold NULL → `test [edx],ecx` at `0x445B52` faults. Stock (16x14) needed a start within 7 rows of the far edge, which no shipped map has; at 28x23 every start row within 11 rows does: J8PLAY01 teams 0 (18,131) and 1 (120,132), D8PLAY01 3 (148,128), D8PLAY03 1 (80,130) and 2 (131,130), D8PLAY05 0 (43,128) and 1 (129,129), J8PLAY07 3 (142,126) … (map height 140; the low edge is protected by the `z0 ≥ 0` early return). A crashed client that Windows Error Reporting holds keeps its socket open: the relay sees `no echo for frame 0` after `ECHO_TIMEOUT_MS`, exactly like the sync assert. | `0x41ED11`–`0x41EEB8`, `0x40AAFC`–`0x40AB37`, `0x432040`, `0x445AA4`–`0x445BF0`, `0x436668`, `0x40AF16`; Fly log 19 Sep 2026 18:26 UTC + Windows Application Event 1000 (`dc16new.exe`, `0xC0000005`, fault offset `0x45B52`) | Fix `camera` (`tools/patch_camera.py`, 21 Sep 2026, both exes): the `call load_ambience` after the bounds stores (`0x41EEB8` / CW `0x41EF18`) goes through a 33-byte stub in the AUTO zero tail (`0x47F1DC` / `0x47F310`) that calls `clamp2d` on the camera with the freshly stored bounds and jumps on. The server cannot work around it (the client picks the seat→player shuffle and the start position); an evicted-at-frame-0 client is the signature to look for |
 | F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
 ---
@@ -1643,6 +1644,57 @@ above, so that the plan can be followed from scratch without repeating the disco
   `Mercenary`, `FAKE_NAMES` `Mercenary,Marauder,...`; `MERCENARY_RACE` defaults to `random`: every
   fake slot draws Human or Gray when it is made (`Room.fakeSlot`), so the bots' races differ from
   game to game and bot to bot. A takeover bot still speaks as `AI <name>` (it is not one of the fakes).
+  Committed `c09ce00`, deployed.
+- Then: "update the initial greeting in the lobby, mention /botcount, shorten the greeting from the
+  mercenary bot" - the room header is now four rows: the room line, "Mercenary: Hi! I am the AI
+  host." (plus " 1000 in battle hires me for 45 s." when hiring is on; no bot names, they are the
+  player rows anyway), "Bots: 1 krusty, hire off. /botcount N", "/bottype, /bothire, /help for more."
+  Without the engine: "Mercenary: Hi! I am the AI host. My base stays idle." 245 tests.
+
+**21 Sep 2026, maintainer report: "when endotermic entered the battlefield his client hanged and was thrown out, the game continued as bots vs the second client" = a client crash at battle start for start positions near the map edge (F55; fix `camera`, `tools/patch_camera.py`, `DC16_DISPLAY_AND_RESOLUTION.md` §10.22)**
+
+- **The log** (`tools/logs2replay.js --fetch dark-colony-server --since 3d --raw ...`): the last game
+  with endotermic is 19 Sep 18:26:55 UTC, room 1 (Plink - O), endotermic (slot 6) and Delaro (slot 3)
+  plus six Krusty bots (`/botcount 6`, hire toggled on and off in the lobby). Both clients sent
+  MREADY (Delaro game player 2, endotermic **game player 0**); at "running" + 0.25 s the stats line
+  shows endotermic with `latencyMs null, pendingEchoes 6` while Delaro had echoed frame 0 already
+  (247 ms). After `ECHO_TIMEOUT_MS` the watchdog evicted endotermic: `client left ... reason "no echo
+  for frame 0"`, the Krusty takeover took the base, Delaro played 25 575 ticks against seven bots
+  and the recording (`mu8pynofr1`) replays with 0 mismatches. The frames were fine: frame 0 is the
+  usual `TICK_SPEED(44)` + two greeting chat lines, identical in structure to the three other
+  Krusty-era games that ran to the end. Nothing server-side differed for endotermic except the
+  seat: no human client had ever been game player 0 in any of the 19 recordings before (humans
+  were 1, 2, 4, 6, 7).
+- **The client side** (endotermic is the maintainer's own PC): the game's `error.log` stayed empty,
+  but the Windows Application log has `Application Error` 1000 for `dc16new.exe` at 21:26:57 local
+  = 18:26:57 UTC, the very second of "running": exception `0xC0000005`, fault offset `0x45B52` =
+  VA `0x445B52`, `test dword ptr [edx],ecx` in the dominant-terrain-class scan of the ambience
+  picker (`0x445AA4`, called from `0x432040` out of the first client step `0x40AAFC`). The WER
+  dialog sat behind the full-screen surface (the "hang"); the process was held by WER until
+  21:27:12 (the `error.log` change time), which is why the socket stayed open through the 5 s echo
+  timeout. Root cause and fix: F55. A second crash of the relaunched game (21:29 local, room 2,
+  `Lock when already locked` -> `assert(0)` ddex4.c line 1197 -> `Lock` on a NULL surface at
+  `0x42F8B8`, after the player had left the battle) is a different, quit-time display bug; noted in
+  §10.22, not fixed.
+- **Why the relay saw only "no echo"**: a crashed client that WER holds keeps its TCP connection
+  open, so the first sign is the missing echo, not a closed socket; the same signature as the sync
+  assert of 19 Sep. Both `error.log` of the client (asserts) and the Windows Application log
+  (access violations) tell them apart.
+- Fix applied to both repository exes (`dc16new.exe`, `engexp16new.exe`), patcher fix `camera`
+  (after `ddraw`, before `movies`/`sounds`/`ozi`), docs.
+- **Confirmed in game the same day with replay mode** (`REPLAY_FILE=logs/replays/2026-09-19T18-26-56-991Z-room1-J8PLAY01.jsonl REPLAY_SLOT=6`,
+  the viewer becomes game player 0 at start position (18,131)): the exe before the fix (extracted
+  from git as `dc16old.exe`, deleted afterwards) died at the first frame exactly as on Fly (Event
+  1000, fault offset `0x45B52`, "no echo for frame 0"); the fixed `dc16new.exe` showed the
+  battlefield and followed the whole 1125 s recording to the victory screen (19 minutes, connection
+  closed by the client at the end, no assert, `error.log` empty).
+- **Replay-mode bug found on the way, fixed:** the room reset after every game but the `Replay`
+  cursor did not, so the second client of a replay server started mid-stream (the first game had
+  consumed ~127 frames before its eviction; the client then simulated ticks 0..134 without the
+  recorded commands and hit the game's sync assert at the first checksum it received, `sync error:
+  time 135`) and a third got nothing at all (`stalled until 322, minClientTime 0`: the lag guard
+  blocked frames 200+ ticks ahead of a client at time 0, eviction "idle"). `Replay.rewind()` is
+  called from `Room.reset()`; every game of a replay server now starts at frame 0.
 
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 

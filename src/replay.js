@@ -56,6 +56,21 @@ export class Replay {
     this.reported = false;
   }
 
+  /**
+   * Back to the first frame for the next game (21 Sep 2026): the room resets after every game, but
+   * the cursor did not, so a second client started mid-stream (missing commands -> the game's sync
+   * assert at the first checksum it received) and a third got nothing (the lag guard blocked frames
+   * far ahead of a client at time 0). Found while confirming fix `camera` with three runs.
+   */
+  rewind() {
+    this.cursor = 0;
+    this.dropped = 0;
+    this.ignored = {};
+    this.compared = 0;
+    this.divergedAt = null;
+    this.reported = false;
+  }
+
   get seatSlot() {
     return this.header.lobby.slots[this.seat];
   }

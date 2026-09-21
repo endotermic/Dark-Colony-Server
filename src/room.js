@@ -517,6 +517,7 @@ export class Room {
     this.botType = this.config.BOT_TYPE;
     this.botHire = this.config.BOT_HIRE;
     this.minPlayers = this.replay ? 1 : this.minPlayersFor(this.botCount);
+    this.replay?.rewind(); // every game of a replay server starts at the first recorded frame
     this.resetSlots();
     this.bots.reset(); // one bot per (freshly placed) fake slot
     this.lobby.reset();
