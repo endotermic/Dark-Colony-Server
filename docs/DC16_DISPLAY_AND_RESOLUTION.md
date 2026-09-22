@@ -3370,6 +3370,26 @@ codec is compiled) the window simply froze. Now:
   README, test and shortcut names these files, so a free choice only produced exes in the wrong
   folder. The command line keeps `-Output` for special cases.
 
+**Known wart, TODO (22 Sep 2026, found while rebuilding the game-folder exes from a tool session):
+a relative `-Output` is resolved against the PROCESS working directory, not PowerShell's location.**
+`Set-Location` changes only PowerShell's `$PWD`; `[System.IO.Path]::GetFullPath($Output)` (the
+`$gameDir` derivation at the CLI entry, the `Get-DataProblems` folder, `Write-InterfaceSet`'s target)
+and `[System.IO.File]::WriteAllBytes($OutputPath, ...)` in `Invoke-PatchRun` use .NET's
+`Environment.CurrentDirectory`, which a `Set-Location` in the same session does not move (it stays
+where the shell was started). `Test-Path` / `Resolve-Path` on the same `-Output` DO use `$PWD`, so the
+two halves disagree: in the observed run (`Set-Location <repo>; .\Apply-DarkColonyPatches.ps1 -Original
+"DC - Council wars\dc16.exe" -All -Output "DC - Council wars\dc16new.exe" -Overwrite`) the resource
+check looked in `<process cwd>\DC - Council wars\` and greyed out `resolution`, `hdpaths`, `clock`,
+`music`, `movies`/`ozi` as `RESOURCES NOT FOUND`, the remaining fixes were applied, and the write then
+failed with `Could not find a part of the path`. Nothing was written, so the wart is harmless but
+confusing; from an interactive shell started in the repo folder it never shows. `-Original` is safe
+because the entry point runs `Resolve-Path` on it first. **Fix (in `gen_apply_script.py`, the emitted
+CLI entry right after the `$Output` default is chosen):** normalise once with
+`$Output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)` (works for
+files that do not exist yet, honours `$PWD`), and do the same for the window's redirected output path;
+then every later `GetFullPath`/`WriteAllBytes` sees an absolute path. Regenerate and re-run the CLI
+test with a relative `-Output` from a different `Set-Location`.
+
 #### 10.31 CD music: how the game plays its soundtrack, why it was silent, and the MP3 player that replaced the CD-audio module **(22 Sep 2026, maintainer request "investigate how to add original music from CDs", then "extract the tracks and encode them to mp3 at 192 kbit/s and update patcher to use original tracks in corresponding executables"; fix `music`, `tools/patch_music.py`, both exes; option 2 below was implemented the same day)**
 
 Both game CDs are mixed-mode discs: track 1 is the data track, tracks 2..5 are Red Book audio - the
