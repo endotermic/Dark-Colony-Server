@@ -3327,6 +3327,49 @@ on (14 s sampled, `error.log` empty); both builds re-verified byte-exact through
 patcher (published 1024x768 exes Classic `71b570fa…`, CW `d4ca8555…`; old published + tool =
 the same bytes). Not fixed and not affected: the Watcom runtime's own `MAX_PATH` (260) limit.
 
+#### 10.30 The patcher window's popups: in progress, succeeded, failed **(22 Sep 2026, maintainer request "in patcher gui - show a popup when patching is in progress and when it succeeds and when it fails"; `gen_apply_script.py` → `Apply-DarkColonyPatches.ps1`, window only, the command line is unchanged)**
+
+Until now *Apply selected fixes* only changed the two-line log label at the bottom of the window, and
+during an HD run (the exe plus the ~60-file `INTRF_HD` set, 3-5 s, longer the first time the C# GIF
+codec is compiled) the window simply froze. Now:
+
+* **In progress.** `Invoke-PatchRun` takes an optional `$Progress` script block and calls it with one
+  line before each step (`Applying fix 3 of 12: 'hdpaths' (…, 30 edits)...`, `Writing dc16new.exe
+  (659456 bytes)...`, `Writing the 1280x800 interface set into INTRF_HD …`). The window passes
+  `$script:gui.Progress`, which writes the line into the log label and into a small owned form
+  "Patching in progress" (fixed dialog, no control box, marquee bar, the current step as text).
+  The run is synchronous on the UI thread, so the box is repainted by hand (`Refresh()` +
+  `Application.DoEvents()`) and the main window is disabled with a wait cursor until the `finally`
+  closes the box — a modal box could not be opened and closed by the same code path, and without
+  the disabled owner a second click on *Apply* during `DoEvents` would re-enter the handler.
+* **Outcome.** One message box after the run: *Patching succeeded* (information icon: the file
+  written, size, fixes, SHA-256 and the "byte-identical to the exe published in the repository" /
+  "to the reference build for WxH" note, "Start the game with this file"), *Patched, but the result
+  differs from the reference build* (warning, asks for a report with the original's SHA-256),
+  *Patching failed* (error: the exception text and "Nothing was written to …" — the bytes are
+  checked before anything is written, so an exception means no file; **or** the exe was written but
+  `Write-InterfaceSet` failed, which `Invoke-PatchRun` reports as a `NOT WRITTEN` line in
+  `Generated` — that case is an error box too, the game would fail at start-up), *Nothing to do*
+  (no fix ticked, empty output path, output = original) and the existing *Prerequisites missing*
+  box. The log label keeps the same text as before.
+* **Testability.** Every box goes through `$script:gui.Notify` (`param($text, $title, $icon)`,
+  default `MessageBox.Show`); the headless test replaces it with a recorder and runs `& $script:gui.Apply
+  $true`, while `$false` (the old `$confirmOverwrite` parameter, now `$interactive`) skips the
+  overwrite question and every popup. Run under pwsh 7 and Windows PowerShell 5.1: all 12 Classic
+  fixes at 1280x800 → `371cf781…` = `dc16new.exe` with the busy form closed and the window
+  re-enabled afterwards; the refused, failed (output folder does not exist → `WriteAllBytes`
+  throws), partial (`nocd` only at 640x480) and silent paths. Pitfall: in a double-quoted string
+  `fixes$modeText:` parses as the scoped variable `$modeText:…` (a `ParserError` when the script is
+  loaded) — write `${modeText}:`.
+* **No output selection (same day, maintainer request "disable resulting path and filename
+  selection").** The "Write to" box became a read-only "Written to" display and its `...`
+  `SaveFileDialog` button was removed: the window always writes the build's `OutputName`
+  (`dc16new.exe`, `engexp16new.exe`, `maped_ozi_ns_v1.2.exe`) beside the original — or, when the
+  player browsed to an already patched exe and the window redirected the input to the untouched
+  original beside it, that browsed file. The game needs its data files next to the exe and every
+  README, test and shortcut names these files, so a free choice only produced exes in the wrong
+  folder. The command line keeps `-Output` for special cases.
+
 ## 11. Risks
 
 | Risk | Assessment |
