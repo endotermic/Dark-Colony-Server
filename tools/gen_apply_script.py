@@ -306,7 +306,7 @@ def blocks_widemap(g):
     t = plan(g, 'widemap'); out = []
     for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
-        assert len(old) == len(new) == int(m.group(3)) and len(old) in (204, 5, 3, 6, 7, 12, 50, 48, 14), (g, len(old))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (207, 5, 3, 6, 7, 12, 50, 48, 14), (g, len(old))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 12, (g, len(out))                                  # body, bounds call, 6 drawer edits, lightmap, clip call, ambience, spot order
     out += reloc_lines(t, '.reloc table: ')

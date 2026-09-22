@@ -3705,7 +3705,7 @@ Council Wars, nothing moves. The code lives in the **dead body of `cd_probe`**
 reached again; CW `0x405E8D`, the one function in `safefunc.c` that is −0x20, not +0x60) — the
 first use of that region; its 14 HIGHLOW `.reloc` entries are re-pointed to the 11 new absolute
 operands (10 bounds, 1 view-map pointer), the three spare ones become type 0. The four blocks
-take 204 bytes; the remaining two stages are in place.
+take 207 bytes; the remaining two stages are in place.
 
 | stage | where | what | bytes |
 |---|---|---|---|
@@ -3714,7 +3714,7 @@ take 204 bytes; the remaining two stages are in place.
 | 3 lightmap pass `0x453A80..0x453AB1` | in place (the 50-byte edge-flag application) | `row = clamp(view_ty+row, 0, h−1)`, `col = clamp(view_tx+col, 0, w−1)` with esi/edi as scratch (both dead there); identical to the stock ±1 corrections at the edges, defined everywhere; the flag computation `0x4539DD..0x453A3B` is now dead | 50 |
 | 4 vision rect | 34-byte stub at body +124: `clip_view_to_map`'s `call make_rect` (`0x435E62`) → stub | `call make_rect` (eax = &rect), then `x0 = max(x0, 0)`, `x1 = min(x1, w)` (map from `view+0x14` = `0x5044C0`, the one new absolute operand); both callers (`0x4396D4` scan, `0x409A00`) get the clipped rect | 34 |
 | 5 ambience `0x445ABD..0x445AEC` | in place (the two origin guards) | `x0 = max(x0, 0)`, `w = min(w, W − x0)`; the z guard keeps its stock meaning, returning 0 through the function's own path `0x445BEA` (the inline epilogue the stock z guard used is gone, 3 NOPs) | 48 |
-| 6 spot order `0x40968C` | 46-byte stub at body +158, called from the two 16-bit stores `0x40969F` (14 → 5 + 9 NOP) | `x = clamp(x, 0, map_w·256 − 1)` (map from `gs+0x46F4C`), `esi = x` (the click marker's copy), then the displaced stores; ecx (gs copy) saved | 46 |
+| 6 spot order `0x40968C` | 49-byte stub at body +158, called from the two 16-bit stores `0x40969F` (14 → 5 + 9 NOP) | `x = clamp(x, 0, map_w·256 − 1)` (map from `[cl+0xC]+0x46F4C`: the builder's eax is the **client object**, its game-state pointer sits at `+0xC`, exactly as the pick `0x409850` reads it), `esi = x` (the click marker's copy), then the displaced stores; ecx (cl copy) saved | 49 |
 
 Rows are never off the map for the shipped maps (the tallest view, 44 rows at 5120×1440, is
 shorter than the smallest map, 56 rows), so stages 2, 4 and 6 handle the column direction only;
@@ -3725,6 +3725,29 @@ played by the maintainer without crash, `error.log` empty; the `plan`/`verify`/`
 idempotent on both exes; the Council Wars 3840×1080 build (`engexp16uw.exe`) reached its menu and
 the demo battle. Not yet seen: a 64-tile map with the camera at the top row (the case the trace
 called probable), a click on the black margin, the ambience picking up again.
+
+**First-click crash of the first published form (22 Sep 2026 evening, maintainer: "your last changes
+broke patched executables. on the battlefield first click hangs the game"):** the stage-6 stub's first
+form loaded the map pointer as `mov ecx,[eax+46F4Ch]`, taking the order builder's `eax` for the game
+state. It is the **client object** `cl`: the mouse handler `0x4098D4` passes the same object to the
+pick `0x409850`, which reads `mov eax,[eax+0Ch]; mov esi,[eax+46F4Ch]` - the game-state pointer sits
+at `cl+0xC`, `cl+0x46F4C` is garbage. Windows Application log: Event 1000 `0xC0000005` in
+`dc16new.exe` at fault offset `0x5F58` (VA `0x405F58` = stub +13, the `cmp edx,[ecx+9A4B8h]`) and in
+`engexp16new.exe` at `0x5F38` (the same +13), twice before that at `0x2BF32` (`mov word ptr [esi],di`
+in the 16-bpp rect fill `0x42BEB8`: when the garbage pointer happened to be readable the "clamped" x
+was garbage and the click marker was drawn off the surface). No `error.log` line - an access violation,
+not an assert; the WER box behind the full-screen surface is the "hang". Every ground click in every
+battle at every resolution hit it: the published `b0551fc0…` / `f00fc454…` (commit `91e3f06`; the
+maintainer ran the GitHub ZIP from `Downloads`) were broken for about an hour. Fix: `mov ecx,[eax+0Ch]`
+before the map load (stub 49 bytes, body 207 of 219, the other blocks and the `.reloc` edits unchanged;
+the fixed exes differ from the broken ones in the 49 bytes at file `0x534D` / `0x532D` only). Published
+1024x768 exes since: Classic `a71d038b…`, Council Wars `bb6a1e77…`. Confirmed by the maintainer in game
+and by scripted `SendInput` clicks from a `subst V:` copy of the game folder (Esc skips the movie, NEW
+CAMPAIGN -> leader name -> START CAMPAIGN -> NEXT -> TO BATTLE; then select a unit and give three spot
+orders, one into unexplored ground): Classic mission 1 and Council Wars council mission 1, units move,
+process alive, no Event 1000, `error.log` empty. Rule from this: nothing that touches the click path is
+published without a ground click in game - the afternoon's checks (bounds read-back, rig run) never
+gave an order.
 
 **Tool.** `patch_widemap.py verify|plan|apply EXE` (`.widemap.bak`), pattern-located, both exes.
 `plan` and `verify` also work on the untouched original — the generator takes every plan on the
@@ -3745,7 +3768,7 @@ builds, SHA-256 `db313c2f…`). The patcher's data check wants the per-size pict
 the exe: a copy of the game folder without `INTRF_HD\<WxH>\` silently drops `resolution`,
 `hdpaths`, `clock` and `movies` under `-All` ("RESOURCES NOT FOUND") and every mode then comes out
 identical — read the `skipping` lines before trusting a hash. Published 1024×768 outputs with
-`widemap`: Classic SHA-256 `b0551fc0…`, Council Wars `f00fc454…` (before: `5a2e10b7…` /
+`widemap`: Classic SHA-256 `a71d038b…`, Council Wars `bb6a1e77…` (the first published form `b0551fc0…` / `f00fc454…` crashed on the first battlefield click, see the paragraph above) (before: `5a2e10b7…` /
 `d7b30c1a…`); `dc16.asm` / `dcexp16.asm` regenerated from them.
 
 **What a real 32:9 monitor still lacks:** the interface set and exes for 3840×1080 / 5120×1440 exist

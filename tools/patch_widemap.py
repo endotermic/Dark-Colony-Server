@@ -42,13 +42,17 @@ type 0) or in place where the stock bytes leave room:
 5. Ambience pick (48 bytes in place, `0x00445ABD`): the origin guards become clamps - x0 >= 0 and
    the width shortened to w - x0 - so the pick counts the visible on-map tiles instead of returning
    "class 0"; the z guard keeps its stock meaning through the function's existing return path.
-6. Spot order (46-byte stub in the body): the builder `0x0040968C` stores the world x/z as 16-bit
+6. Spot order (49-byte stub in the body): the builder `0x0040968C` stores the world x/z as 16-bit
    words; x is clamped to [0, map_w*256-1] first (and its copy in esi, which the click marker
    uses), so a click on the black margin orders a move to the map edge instead of to tile 251.
+   The builder's eax is the CLIENT object `cl`, whose game-state pointer is at `cl+0xC` (the pick
+   `0x00409850` reads the map the same way, `mov eax,[eax+0Ch]; mov esi,[eax+46F4Ch]`); the first
+   form of this stub (published 22 Sep 2026 for a few hours) read `[cl+0x46F4C]` as if eax were
+   the game state and crashed with an access violation on the first battlefield click.
 
 Rows are never off the map for the shipped maps (the tallest view, 44 rows at 5120x1440, is
 shorter than the smallest map, 56 rows), so the row direction is left as it is in stages 2, 4 and
-6 - the body has 219 bytes and the four blocks take 204.
+6 - the body has 219 bytes and the four blocks take 207.
 
 Requires `nocd` (the body must be dead) and `camera` (the call the bounds block chains into).
 Council Wars offsets are found by pattern (code +0x60, cd_probe -0x20, the `.bss` operands read
@@ -257,8 +261,9 @@ def vision_stub(stub_va, make_rect_va, view_map_va):
 
 def order_stub():
     """Clamp the world x of a spot order to the map, then run the two displaced stores."""
-    b = (b'\x51'                                      # push ecx                  (ecx = gs copy, live in the caller)
-         b'\x8B\x88' + struct.pack('<I', GS_MAP) +    # mov  ecx,[eax+46F4Ch]     map
+    b = (b'\x51'                                      # push ecx                  (ecx = cl copy, live in the caller)
+         b'\x8B\x48\x0C'                              # mov  ecx,[eax+0Ch]        cl->gs: eax is the CLIENT object, its game-state pointer is at +0Ch
+         b'\x8B\x89' + struct.pack('<I', GS_MAP) +    # mov  ecx,[ecx+46F4Ch]     map
          b'\x85\xD2'                                  # test edx,edx
          b'\x7D\x02'                                  # jge  +2
          b'\x31\xD2'                                  # xor  edx,edx              x = 0
@@ -270,7 +275,7 @@ def order_stub():
          b'\x59'                                      # pop  ecx
          + ORDER_STORES +                             # mov word [eax+792h],bx ; mov word [eax+790h],dx   (displaced)
          b'\xC3')                                     # ret
-    assert len(b) == 46
+    assert len(b) == 49
     return b
 
 
@@ -418,7 +423,7 @@ def analyse(data):
                   'spot order: the two 16-bit stores of the world point -> call order stub (clamps x to [0, map_w*256-1], updates esi, then stores)'))
 
     new_body = block + col + vis + order_stub()
-    assert len(new_body) == 204 <= BODY_LEN
+    assert len(new_body) == 207 <= BODY_LEN
     old_body = bytes(data[body_off:body_off + BODY_LEN])
     if state == 'patched' and old_body[:len(new_body)] != new_body:
         raise SystemExit('the cd_probe body at %#x carries code that is not ours' % body_va)
