@@ -149,7 +149,7 @@ LIGHTMAP_ROOM = LIGHTMAP_BASE + 0x2E
 LIGHTMAP_STRIDE = 144
 LIGHTMAP_FRAME = 0x14CC
 LIGHTMAP_MAX_TILES_X = 34          # 4 * (2*tx + 2) < 2 * 144: a double wrap would collide
-LIGHTMAP_WIDE_STRIDES = (256, 512)  # 8 << 5, 8 << 6: up to 62 resp. 126 tiles across (doc 10.24)
+LIGHTMAP_WIDE_STRIDES = (256, 512, 1024)  # 8 << 5, 6, 7: up to 62, 126, 254 tiles across (doc 10.24; 1024 for 32:9, doc 10.33)
 
 # Watcom emits no stack probe, so a frame that jumps by several pages must land on stack that is
 # already committed: the stock header commits only 64 KB and reserves 80000 bytes. Raise both.
@@ -240,10 +240,14 @@ class Geometry:
         # that draws on top of them has to move by the same offset (doc 10.7).
         self.menu_dx = (width - 640) // 2
         self.menu_dy = (height - 480) // 2
-        # Movies: the 320x180 frames are stretched across the full width at 16:9 and centred,
-        # as the stock game did at 640x480 (640x358 in 480 rows) (doc 10.8).
+        # Movies: the 320x180 frames are stretched to 16:9 and centred, as the stock game did at
+        # 640x480 (640x358 in 480 rows) (doc 10.8): letterboxed on screens taller than 16:9,
+        # pillarboxed on wider ones (21:9, 32:9), so the picture keeps its proportions either way.
+        # A non-zero dest.left becomes an immediate in the Blt block (22 Sep 2026, doc 10.32).
+        movie_w = min(width, height * 16 // 9)
         movie_h = min(height, width * 9 // 16)
-        self.movie_rect = (0, (height - movie_h) // 2, width, (height + movie_h) // 2)
+        left, top = (width - movie_w) // 2, (height - movie_h) // 2
+        self.movie_rect = (left, top, left + movie_w, top + movie_h)
         # set per build by resolve()/cmd_verify(); Classic is 0 for both
         self.dgroup_shift = 0
         self.bss_shift = 0
@@ -484,7 +488,11 @@ def movie_blt_block(g, stock):
                 + bytes.fromhex('5231ff8b15') + yoff
                 + bytes.fromhex('5301d2897d5252897d56894d5e68a00000008b0850ff511c'))
     left, top, right, bottom = g.movie_rect
-    return (bytes.fromhex('31ff897d62')                                  # xor edi,edi; [ebp+62h]=0
+    # dest.left: zero through edi as the stock code did (5 bytes), or, for a pillarboxed movie,
+    # an immediate (9 bytes; edi is still zeroed) that takes four of the six trailing NOPs.
+    store_left = (bytes.fromhex('31ff897d62') if left == 0               # xor edi,edi; [ebp+62h]=edi
+                  else bytes.fromhex('31ff') + b'\xC7\x45\x62' + struct.pack('<I', left))
+    return (store_left
             + b'\xC7\x45\x66' + struct.pack('<I', top)                   # dest.top
             + b'\xC7\x45\x6A' + struct.pack('<I', right)                 # dest.right
             + b'\xC7\x45\x6E' + struct.pack('<I', bottom)                # dest.bottom
@@ -495,12 +503,7 @@ def movie_blt_block(g, stock):
             + bytes.fromhex('8d556252')                                  # lea edx,[ebp+62h]; push
             + b'\xA1' + primary + b'\x50'                                # mov eax,[primary]; push
             + bytes.fromhex('8b08ff5114')                                # call [vtbl+14h] = Blt
-            + b'\x90' * 6) if left == 0 else _unsupported_left(left)
-
-
-def _unsupported_left(left):
-    raise ValueError('movie dest rect must start at x=0 (got %d): the block stores dest.left '
-                     'with xor edi,edi' % left)
+            + b'\x90' * (6 if left == 0 else 2))
 
 
 # -- stage 2: code-positioned menu furniture (doc 10.7) -------------------------------------

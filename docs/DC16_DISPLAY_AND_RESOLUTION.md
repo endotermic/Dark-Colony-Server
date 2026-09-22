@@ -3517,6 +3517,274 @@ was rewriting the INTRF_HD set in the same folder, another right after an Esc th
 the main menu (Esc = quit there) - re-test before blaming the module.
 
 
+#### 10.32 32:9 (super ultra-wide) screens: the view wider than the map, a pillarboxed movie, and a dgVoodoo test rig **(22 Sep 2026, maintainer request "investigate how to add support for 32:9 (Super Ultra-Wide) screen and test it using voodoo virtual video card"; assessment plus one tool change (`patch_resolution.py` movie rectangle); nothing changed in the published exes or the patcher; 3840×1080 run on this PC through dgVoodoo 2 up to the main menu, no battle yet)**
+
+**Modes.** 32:9 monitors are 3840×1080 (DFHD) and 5120×1440 (DQHD); 3840×1200 is the 32:10
+variant. What the tool does with them today (`patch_resolution.py plan` on the stock Classic exe):
+
+| mode | map view | slack rows | lightmap | edits | status |
+|---|---|---|---|---|---|
+| 3840×1080 | 3712×1024 = **116×32** tiles | 24 → HUD bar 50 px | stride 512, frame `0x14CC → 0x87FC` (34 732 B) | 178 | plans and runs (below) |
+| 3840×1200 | 116×36 | 16 | 512, `0x97FC` | 178 | plans |
+| 2560×1080 (21:9) | 76×32 | 24 | 512 | 178 | plans |
+| 5120×1440 | 156×44 | 0 | **refused**: 156 tiles need a 1024-byte row stride (`shl …,7`; `LIGHTMAP_WIDE_STRIDES` stops at 512, cap 126 tiles); the frame would be ~92 KB, inside the 256 KB commit the patch sets | — | one constant + a re-check of the §10.5 parity argument |
+
+**The blocker is the map, not the exe.** Every shipped map is 64, 96, 108, 112, 128 or 160 tiles
+wide (`.MAP` headers, 292 files): 64×56 = the 14 training maps + `D2PLAY07`/`J2PLAY09`; 96×84 =
+campaign missions 1–2 of both races, 18 + 4 two-player maps, `ALIEN01/02`, `HUMAN01/02`, three OZI
+maps; 112×98 = missions 3–8; 128×112 and 160×140 = the rest. A 3840 screen shows 116 tiles, a 5120
+screen 156: the view is wider than every 96- and 64-tile map, and at 5120 wider than everything but
+the 160-tile maps. (The exposure already exists for 2560×1440/2560×1600 — 76 tiles > 64 — on the
+16 small maps; the patcher does not offer those modes.) `proto.c` computes the camera bounds as
+`[half, map − half]` (`0x41EE66..0x41EEA9`) and `clamp2d 0x436668` applies min first, then max, so
+with `half > map/2` the camera sits at `max` and the view starts at a negative tile x (116 on 96:
+tile −20). Two independent reading passes over `dc16.asm` (22 Sep 2026) traced what each consumer
+then does; nothing clips to the map by itself, every consumer relies on the camera bounds:
+
+| consumer | wider than the map | taller than the map | guard today |
+|---|---|---|---|
+| tile drawer `0x45011C` (bg/fg tiles + occlusion mask, called from `draw_objects 0x4544A8`) | flat pointer `map+4[0] + 4·(w·ty + tx)`: off-map columns continue into the neighbouring row (the far side of the map drawn shifted by a row); at row 0 / row h−1 the read leaves the tile block into the `smalloc` header → tile ids > 1415 → wild image pointer → **AV in the blitter** (`0x450316` or `0x48C14C/5C`) as soon as the camera reaches the top or bottom edge | same | none |
+| `draw_terrain 0x453910` (lightmap pass, loop 1 `0x453A40..0x453B2D`, rows/cols −1..n) | reads `[row + col·4]` before/after the row: garbage light on the off-map strip, no fault | `view_ty < 0` → row index ≥ h → NULL row pointer → **AV `0x453ADE`** | equality flags for the ±1 border only (`0x4539DD..0x453A3B`) |
+| vision/draw-list scan `0x4396D4` (rect from `clip_view_to_map 0x435E24`, which does **not** clip: `make_rect 0x4365BC` is four stores) | neighbour-row words, a wrong object may count as visible; header words at the block ends | **AV `0x439D5E`** (§10.2) | none |
+| ambience pick `0x445AA4` | origin test only (`0x445ABD..0x445AE0`): `x0 < 0` → returns 0 → terrain class 0, **silent** | `z0 + 23 > h` → **AV `0x445B52`** (§10.22) | start corner only |
+| minimap view box `0x43A064` (`0x43A19C..0x43A2D1`) | rect-intersect `0x436528` + the frame primitive `0x42BF5C` clip to the minimap → the box degenerates to the minimap border, **safe** | safe | yes |
+| `draw_objects 0x4543FC` | iterates sprites, culls against the view — **safe** | safe | n/a |
+| mouse pick `0x409850` / `0x4350D4` | tile bounds tested before any row lookup — safe; but a click on off-map ground gives pick −1 and a **spot order with the world point stored as 16-bit words** (`0x40969F/A6`, no range check: −0x500 → tile 251); what `begin_move 0x414FD0` does with it was not traced | same | partial |
+| scrolling `0x40AE73..AC`, minimap drag `0x40A1D4/DA` | no own test, repaired by `clamp2d` at `0x40AF16` before rendering | same | via clamp |
+
+Only two callers of `clamp2d` exist (`0x40AF16` and the `camera` stub `0x47F1F3`); the bounds are
+read by them and the save writer `0x43BC98` only.
+
+**Three ways to support 32:9, in ascending order of work:**
+
+* **A. Cap the map view** at the smallest map the build must run (64 tiles = 2048 px; 96 tiles =
+  3072 px if the training maps and the two small MP maps are given up) and hand the remaining
+  columns to the HUD. `Geometry(viewport=…)` already builds such an exe (`--viewport 2048x1024`;
+  `dc16uwc.exe` below plans clean, 178 edits) — what is missing is the HUD side:
+  `hud_layout.target()` grows the right panel only by the frame delta and refuses spare columns,
+  and `INSET_X` is fixed at 4 in the tool, so the view cannot be centred between two side panels
+  without adding the view-rect x sites (`proto.c 0x41ED63`, `engmain.c` stride/pointer arithmetic)
+  to the site list. Works on every map, but a 3840 screen ends up with 1664–2688 px of panel.
+* **B. Pillarbox the map view per map at run time** (shrink the gc clip rect `ui+8` and offset the
+  destination so `view.x/y ≥ 0` always): the renderers stay untouched, the HUD frame needs no
+  change, but the view size is an immediate in ~40 sites, so this needs run-time code that
+  recomputes the view struct (`0x435E7C`) and the clip rect from the map size at battle start —
+  a stub of a few hundred bytes plus the bounds rule; the black side bars would show the HUD
+  frame's hole colour.
+* **C. Let the engine tolerate a view larger than the map** ("small map centred"): bounds rule
+  `if max < min: min = max = map/2` at the bounds computation (both axes; the tile snap
+  `0x40AF1E/2B` keeps it aligned), and clamps in the four consumers that read map rows from the
+  view rect — tile drawer (per-tile `clamp(tx+col, 0, w−1)` / `clamp(ty+row, 0, h−1)` through the
+  row table instead of the flat pointer, ~45 bytes), lightmap pass (replace the 50-byte flag
+  application `0x453A80..0x453AB2` with clamps, fits in place), vision scan (intersect the rect
+  after `call 0x4365BC` at `0x435E62`, ~28 bytes, also fixes the second caller `0x409A00`),
+  ambience (~20 bytes in place of the two early returns), plus a refusal of off-map spot orders in
+  the release handler. Off-map tiles then repeat the edge tile (or, with one more test, draw
+  black). Room: the Classic AUTO zero tail is full (3 bytes); the dead `cd_probe` body
+  `0x405EAC..0x405F88` (`ret` since `nocd`, ~220 bytes) is the obvious home, else a new PE
+  section. **This is the only option that is 32:9 support rather than a workaround, and it also
+  closes the 2560×1440 exposure.** Estimate: one to two days including the same test on Council
+  Wars (+0x60 rule) and a game test on a 96-tile and a 64-tile map.
+
+Whichever option: nothing is scaled (§9), so at 3840×1080 a unit is a quarter of its 1024×768
+apparent size on the same monitor. A 2× integer-scaled 1920×540 render would be the alternative
+"ultrawide" design and is out of reach for the exe (every blitter is 1:1); dgVoodoo can do it for
+a test (`ImageScaleFactor`), a player cannot.
+
+**Done in the tool (22 Sep 2026): the intro movie keeps its proportions.** `Geometry.movie_rect`
+was `(0, (H−16:9)/2, W, …)` — the 320×180 frames stretched to the full width, at 32:9 twice as wide
+as tall as they should be (seen in the first run, screenshot below). Now
+`movie_w = min(W, H·16/9)`, `movie_h = min(H, W·9/16)`, both centred: letterboxed on screens
+taller than 16:9, **pillarboxed** on wider ones (3840×1080 → dest `(960,0)-(2880,1080)`). The Blt
+block of `draw_offscreen` (`movie_blt_block`, 62 bytes at file `0x7214`) stores `dest.left` as an
+immediate when it is not zero — `xor edi,edi; mov dword ptr [ebp+62h],imm32` (9 bytes) instead of
+`xor edi,edi; mov [ebp+62h],edi` (5), eating four of the six trailing NOPs; `_unsupported_left` is
+gone. Every mode the patcher offers has `left = 0`, so the 1024×768/1280×* plans and the generated
+script are byte-identical (checked by regenerating). Verified in the rig: the movie shows at
+960..2880 with black pillars.
+
+**Everything else at 3840×1080 worked as designed:** `SetDisplayMode(3840,1080,16)` accepted (by
+dgVoodoo, see below), the full-frame main menu (`paint_intro.py`: planet centred, two button
+columns at x 1740/1920, credits box at (+1600,+300)), the `INTRF_HD` set generated by the Python
+chain of §10.24 (54 `INTRF_HD` files + 7 `exp/intrf_hd`, HUD bar 50 px), `error.log` empty through
+intro and menu, no sign of the 32 MiB pool running out at the menu (a battle was not reached, so
+the pool at 116×32 tiles is unmeasured). What a shipped mode would still need: `3840x1080` in the
+generator's `HD_MODES` with its three pictures in `INTRF_HD\3840x1080\`, and one of A/B/C above.
+
+**The test rig: dgVoodoo 2 as the "voodoo virtual video card".** dgVoodoo 2.87.5 (GitHub release
+`dege-diosg/dgVoodoo2`, `dgVoodoo2_87_5.zip`, 9.3 MB, SHA-256 `5ffde692…`) wraps DirectDraw on
+D3D11 and presents any resolution the application asks for on whatever monitor exists: its 32-bit
+`MS\x86\DDraw.dll` beside the exe, `dgVoodoo.conf` with `FullScreenMode = true`,
+`FullscreenAttributes = fake` (a screen-size window, no exclusive mode), `ScalingMode =
+stretched_ar` (the 3840×1080 frame shown as 1920×540 letterboxed on the 1920×1200 panel),
+`CaptureMouse = true`, `dgVoodooWatermark = false`, `VRAM = 512`, `ExtraEnumeratedResolutions =
+3840x1080, 5120x1440`. The game ran from a scratch copy of the game folder mapped to `U:` with
+`subst` (the tools' 3840×1080 set installed over the folder's 1280×800 set; the repository was not
+touched). Three rig problems, each with its cause and fix:
+
+1. **Windows closed the game 20–37 s after launch** (Event 1002 "stopped interacting with Windows
+   and was closed", WER `AppHangB1`, exit code `0xCFFFFFFF`, `error.log` empty, no Event 1000),
+   from the intro movie or a few seconds into the menu, with or without the MP3 music. A thread
+   sampler (`Wow64GetThreadContext`, `scratchpad/uw/sampler.py`) put the main thread in the
+   movie wait loop `0x40903E` (`PeekMessageA(&msg, 0, WM_KEYDOWN, WM_KEYDOWN, PM_REMOVE)` +
+   `Sleep(100)`, i.e. no general message pump — the start-up load before it has none either) and
+   the window title showed "(Not Responding)" at 14 s: the window was **ghosted**, and the ghost
+   ends in the close. The stock game never meets this because the real `ddraw.dll` disables
+   ghosting for an exclusive-mode process (inferred from behaviour: the same exe under the real
+   driver is never ghosted); dgVoodoo does not. Fix for the rig: a 3.5 KB forwarding proxy
+   (`scratchpad/uw/proxy/ddraw_noghost.c`, MSVC 32-bit) that calls
+   `DisableProcessWindowsGhosting()` on the first `DirectDrawCreate(Ex)` and forwards the other
+   13 exports to dgVoodoo's DLL renamed `dgv_ddraw.dll`. With it the game ran for minutes and
+   survived the tester's clicks (the same clicks had "crashed" it before: a click on a ghost
+   window brings the WER close dialog). **Player-facing caveat:** anyone running the game through
+   dgVoodoo (or any wrapper that skips exclusive mode) hits this; an exe-side cure would be a
+   general-range `PeekMessage` in the movie loop and the loader, not done.
+2. **The pointer reached only the left third of the frame** (tester's report), then exactly
+   half. Measured by reading the game's pointer globals (`0x4DFF14/1C`) from the process while
+   moving the mouse: **the game pointer equals the Windows cursor position 1:1** — the
+   DirectInput path `0x450E80` is inactive at the menu (its enable flag `0x5327BC` is 0, the
+   accumulator `0x5327C0/C4` stays 0; the §7 "absolute" clamp path `0x450E20` stays at its
+   (320,240) seed too), the position comes from the posted `WM_MOUSE*` messages the game peeks
+   in `frame_end`, in window client pixels. dgVoodoo clips the Windows cursor to the app
+   rectangle (y ≤ 1079) but never rescales those coordinates (it transforms `GetCursorPos`, which
+   this exe does not import). Two layers: (a) this PC runs 150 % display scaling, so the
+   DPI-unaware exe saw a 1280×800 logical screen — the left third of 3840. Fix: an external
+   manifest `dc16uw.exe.manifest` beside the exe (`dpiAware true`, `dpiAwareness
+   PerMonitorV2`), honoured because the exe has no embedded manifest; Windows caches the manifest
+   state per exe, so the exe had to be touched after adding it (`GetDpiForWindow` 96 → 144);
+   then the physical width, 1920 = half of 3840. (b) The scaling itself: the proxy DLL installs a
+   `WH_GETMESSAGE` hook on the game thread that maps every `WM_MOUSE*` message from the
+   letterboxed image rectangle (computed like `stretched_ar`, `DCUW_APP=WxH` in the environment,
+   default 3840×1080) to frame pixels — once per message, on `PM_REMOVE` only, tagged in an unused
+   `wParam` bit, because dgVoodoo and the shell peek the same message with `PM_NOREMOVE` first
+   and a first version transformed some messages two or three times. Verified: mouse (100,600) →
+   pointer (200,540), (1900,860) → (3800,1060), corners clamp; the tester reached the right-hand
+   menu column. Forcing dgVoodoo's own `[DirectX] Resolution = 1920x540` was tried first and
+   changed nothing for this game (1:1 stayed).
+3. A first guess — doubling the DirectInput deltas at `0x450EAD` in the rig exes — did nothing,
+   because that path is not the one in use at the menu; the two rig exes still carry it (34
+   bytes, `add [5327C0],eax` ×2 / `add [5327C4],eax` ×2, `jmp 0x450F41`) and it would only matter
+   if a battle turns the DirectInput flag on. Reverted before any battle measurement is trusted.
+
+None of the three exist on a real 32:9 monitor with the real DirectDraw (1:1 frame, exclusive
+mode, no scaling); only the ghosting (1) also hits players who run the game through dgVoodoo.
+Screenshots (`scratchpad/uw/*.png`) captured with `BitBlt` from the screen DC = the top-left
+1280×800 of the real desktop.
+
+**Test builds** (scratch copy only, never in the repository): `dc16uw.exe` = stock Classic +
+`nocd, resolution 3840x1080, hdpaths, cursor, pool, clock, ddraw, camera, restore, longpath,
+music, movies, sounds`; `dc16uwc.exe` = the same with `--viewport
+2048x1024` (64×32 tiles, safe on every map, HUD frame mismatched — option A without its HUD).
+Runs: full build to the main menu five times (three closed by Windows before the proxy, two
+clean), a 60 s unattended run intro → menu with music, the tester's hands-on runs. **First battle
+at 32:9 (16:01, maintainer at the mouse, `dc16uw.exe`, full 116×32-tile view): Classic mission 1
+(HUMAN01, 96×84 tiles — a map 20 tiles narrower than the view) played to the Victory debriefing
+(kills 2, losses 6), no Event 1000/1002, `error.log` empty.** So the tile drawer's flat-pointer
+read did not leave the tile block in that game (it needs the camera at the top or bottom edge
+while the horizontal overrun reaches the block header) and the lightmap/vision garbage on the
+off-map strip is not fatal; what the off-map strip looked like (the trace predicts the far side
+of the map repeated one row down) was not captured — to be screenshotted in the next run. The
+"probable crash" of the trace remains a real risk (a 64-tile map with the camera at the map's
+bottom row is the case to try), not an observed one. A control run of the untouched `dc16.exe`
+under the rig exited with code 0 after 49 s without any input or event — not investigated.
+
+**Rules learned:** processes started from the tool session are DPI-unaware by default and see a
+1280×800 desktop; check `GetDpiForWindow` before reasoning about window sizes. A hung-window close
+leaves Event 1002 + `AppHangB1` (WER 1001) and exit `0xCFFFFFFF`, an access violation Event 1000
+and `0xC0000005` — the two are told apart in the Application log. `.def` forwarder lines are
+refused by this linker for a module with an underscore in its name; `#pragma comment(linker,
+"/export:Name=module.Name")` works.
+
+**Option C was implemented the same evening: §10.33.**
+
+#### 10.33 Fix `widemap`: a view wider than the map — camera centred, every map read clamped **(22 Sep 2026, maintainer decision "go ahead with option C, start with the bounds rule"; `tools/patch_widemap.py`, patcher fix `widemap` (Requires `nocd`, `camera`), both exes; 3840×1080 and 5120×1440 added to the patcher's modes, **5120×1440 removed again the same evening** - maintainer rule "only one resolution per aspect ratio" (4:3 excepted for the stock 640×480), 3840×1080 kept because it is the size that was played; tested in the dgVoodoo rig of §10.32 on Classic mission 1, the maintainer at the mouse)**
+
+Six stages, 26 edits per exe (12 code, 14 `.reloc`), 367 bytes changed in Classic / 365 in
+Council Wars, nothing moves. The code lives in the **dead body of `cd_probe`**
+(`0x405EAD..0x405F87`, 219 bytes; the entry byte is `ret` since `nocd` and the body was never
+reached again; CW `0x405E8D`, the one function in `safefunc.c` that is −0x20, not +0x60) — the
+first use of that region; its 14 HIGHLOW `.reloc` entries are re-pointed to the 11 new absolute
+operands (10 bounds, 1 view-map pointer), the three spare ones become type 0. The four blocks
+take 204 bytes; the remaining two stages are in place.
+
+| stage | where | what | bytes |
+|---|---|---|---|
+| 1 bounds rule | body +0, entered from the init's `call` at `0x41EEB8` (the one `camera` redirected) | per axis `if max < min: min = max = (min+max)/2` (= map/2, since the two add up to the map size in world units); `jmp` on into the `camera` stub, which clamps the camera and continues into `load_ambience`. ecx only; eax/edx (ui, string) untouched | 73 |
+| 2 tile drawer `0x45011C` | 51-byte column stub at body +73, called from the column-loop head `0x4501D2` (its two displaced instructions run inside the stub); frame `sub esp,38h → 48h` for two new locals | `[ebp-44h] = 4·(clamp(tx+col, 0, w−1) − tx)` replaces `edi*4` at the three `lea` sites (`0x45020C`, `0x450293`, `0x4502B3`, 7 → 3+4 NOP), `[ebp-48h] = mask_row + edi*4` replaces the `add eax,ecx` of the occlusion-mask pointer (`0x45027B`, real column kept). Off-map columns repeat the edge tile; the flat row pointer stays | 51 + 6 edits |
+| 3 lightmap pass `0x453A80..0x453AB1` | in place (the 50-byte edge-flag application) | `row = clamp(view_ty+row, 0, h−1)`, `col = clamp(view_tx+col, 0, w−1)` with esi/edi as scratch (both dead there); identical to the stock ±1 corrections at the edges, defined everywhere; the flag computation `0x4539DD..0x453A3B` is now dead | 50 |
+| 4 vision rect | 34-byte stub at body +124: `clip_view_to_map`'s `call make_rect` (`0x435E62`) → stub | `call make_rect` (eax = &rect), then `x0 = max(x0, 0)`, `x1 = min(x1, w)` (map from `view+0x14` = `0x5044C0`, the one new absolute operand); both callers (`0x4396D4` scan, `0x409A00`) get the clipped rect | 34 |
+| 5 ambience `0x445ABD..0x445AEC` | in place (the two origin guards) | `x0 = max(x0, 0)`, `w = min(w, W − x0)`; the z guard keeps its stock meaning, returning 0 through the function's own path `0x445BEA` (the inline epilogue the stock z guard used is gone, 3 NOPs) | 48 |
+| 6 spot order `0x40968C` | 46-byte stub at body +158, called from the two 16-bit stores `0x40969F` (14 → 5 + 9 NOP) | `x = clamp(x, 0, map_w·256 − 1)` (map from `gs+0x46F4C`), `esi = x` (the click marker's copy), then the displaced stores; ecx (gs copy) saved | 46 |
+
+Rows are never off the map for the shipped maps (the tallest view, 44 rows at 5120×1440, is
+shorter than the smallest map, 56 rows), so stages 2, 4 and 6 handle the column direction only;
+stages 1 and 3 handle both. **Verified in the rig (22 Sep 2026, `dc16uw.exe` = full 3840×1080
+chain + `widemap`):** the bounds read back from the running game were `min_x = max_x = 12288`
+(96 tiles × 128), camera x pinned at 12288, z bounds `4096..17408` untouched; mission 1 (96×84)
+played by the maintainer without crash, `error.log` empty; the `plan`/`verify`/`apply` cycle is
+idempotent on both exes; the Council Wars 3840×1080 build (`engexp16uw.exe`) reached its menu and
+the demo battle. Not yet seen: a 64-tile map with the camera at the top row (the case the trace
+called probable), a click on the black margin, the ambience picking up again.
+
+**Tool.** `patch_widemap.py verify|plan|apply EXE` (`.widemap.bak`), pattern-located, both exes.
+`plan` and `verify` also work on the untouched original — the generator takes every plan on the
+original — by synthesising the state after `nocd` and `camera` (the call site's "old" bytes are the
+`camera` call, the stub address comes from `patch_camera.STUB_VA`); `apply` refuses until both are
+applied. The `.reloc` lines use the generator's `.reloc @ file 0x…: XXXX -> YYYY` form.
+
+**Patcher.** Fix `widemap` sits between `camera` and `restore` in both game builds
+(`Requires nocd, camera`); `blocks_widemap` asserts 12 code edits + 14 reloc edits per mode. With
+the 1024-byte lightmap stride (`LIGHTMAP_WIDE_STRIDES = (256, 512, 1024)`, `shl …,7`, cap 254 tiles;
+5120×1440 = 156×44 tiles, frame `0x14CC → 0x16D3C` = 93 KB inside the 256 KB commit) the modes
+**3840×1080 and 5120×1440** joined `HD_MODES`; their three shipped pictures are
+`INTRF_HD\3840x1080\` and `INTRF_HD\5120x1440\` (`INTRG.GIF`, `INTRO.GIF`, `INTRFACE.GIF`, 0.34 /
+0.57 MB, from the Python chain of §10.24). The regenerated `Apply-DarkColonyPatches.ps1` (7 modes,
+874 KB) reproduces the tool-chain builds byte for byte (checked on a scratch copy for 1024×768 and
+3840×1080, both games — the Council Wars comparison needs `ozi` appended to the chain; 5120×1440
+builds, SHA-256 `db313c2f…`). The patcher's data check wants the per-size picture folders next to
+the exe: a copy of the game folder without `INTRF_HD\<WxH>\` silently drops `resolution`,
+`hdpaths`, `clock` and `movies` under `-All` ("RESOURCES NOT FOUND") and every mode then comes out
+identical — read the `skipping` lines before trusting a hash. Published 1024×768 outputs with
+`widemap`: Classic SHA-256 `b0551fc0…`, Council Wars `f00fc454…` (before: `5a2e10b7…` /
+`d7b30c1a…`); `dc16.asm` / `dcexp16.asm` regenerated from them.
+
+**What a real 32:9 monitor still lacks:** the interface set and exes for 3840×1080 / 5120×1440 exist
+only through the patcher now (nothing else changes for the published 1024×768 build, where every
+map is wider than the 28-tile view); a game on a real 32:9 panel has not been run. The dgVoodoo rig
+notes of §10.32 do not apply there.
+
+#### 10.34 The untouched exes: music by config file, expansion without a disc **(22 Sep 2026, maintainer questions "is it possible to play this mp3 music from original executables mentioning them in some config files? is it possible to run expansion exe without a disc by tweaking config files?"; assessment from the stock disassemblies plus a live run of stock `ENGEXP16.EXE`; nothing changed in the exes or the patcher)**
+
+**Music: no.** The stock exes read no configuration at all: the import tables have no
+`GetPrivateProfile*`, no `Reg*`, no `GetDriveType`; the only start-up inputs are `HBNFUFL.A01`/`.A02`
+(drive letter), the marker file **`full`** (present in the game folder since the CD install; its
+existence clears `0x00488DF5` / CW `0x00488E1D`, the "read missing files from the CD" flag tested by the
+file-open helper at `0x004063AE`) and the data files. The soundtrack is opened as MCI device *type*
+`cdaudio` (`MCI_OPEN`, flags `MCI_OPEN_TYPE|MCI_OPEN_SHAREABLE`, no element, no drive letter, `0x004510D0`
+/ CW `0x00451130`), so the original exe can only ever play red-book tracks of whatever CD-ROM drive
+Windows picks; the scene-list playlist lines are parsed and never read (§10.31). Two ways round it
+without touching the exe, neither a game config file: (1) a mixed-mode image (`.bin` + a `.cue`, the
+repo has none) in a virtual drive that emulates audio tracks; (2) a drop-in **`WINMM.DLL` wrapper** in
+the game folder — the exe imports `WINMM.dll` by name, `winmm` is not in this PC's `KnownDLLs`, so
+the application directory wins; such wrappers redirect the `cdaudio` MCI calls to `Music\Track02.*`
+files (ogg-winmm = OGG only; cdaudio-winmm 0.3 and Direct-WinMM play MP3) with their own `.ini`.
+That is fix `music` done outside the exe, at the price of a third-party DLL beside the originals.
+
+**Expansion without a disc: yes, with two files.** The probe (`cd_probe` `0x00405E8C`, §10.19) only
+needs `<letter>:\dc\anim.dat` to open and `<letter>:\dc\a<n>` to be *un*writable; nothing checks the
+drive type. Tested on a scratch copy of the game folder (`subst V:`) with `HBNFUFL.A02` = `X:` and
+`subst X:` on a folder holding `dc\anim.dat` whose `dc` folder denies the user `WD,AD,DC` (`icacls`):
+stock `ENGEXP16.EXE` ran 90 s to the main menu, flag `0x004A49B8` = 1, CD path `X:\dc\`, no file
+written on X:, `error.log` empty, all four menu buttons active (screenshot), no `widget.c` assert (the
+assert of 14 Sep only fires when the flag is 0). Any read-only location works (a folder under a
+deny ACL, a read-only share, a mounted `.iso`); a plain `subst` of a writable folder fails the write
+test and the game runs as "no CD" (grey buttons). The in-game check (`0x004113E6`, every 5 s) only
+reacts to a *change* of the flag, so the folder must stay in place while playing. Files missing
+locally are still looked up under `<letter>:\dc\` first when the flag is 1 (helper `0x004063A1`), so a
+complete game folder is required — the repo's is. The 2025 third Council Wars byte (`0x00478DD9`,
+`jne`→`je`) sits in a Watcom C-runtime write helper (strlen + `WriteFile` to a handle at `0x00499448`),
+not in any CD test; `nocd` keeps it only because the played build has it.
+
 ## 11. Risks
 
 | Risk | Assessment |

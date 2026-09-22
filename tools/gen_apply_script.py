@@ -44,7 +44,7 @@ GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.jo
 # `hdpaths` is the same in every HD mode; the patcher checks that the folder's set is the chosen size
 # by reading the GIF header of INTRF_HD\INTRFACE.GIF (`DataSize`).  Doc 10.25.
 STOCK_MODE = '640x480'
-HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800']
+HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800', '3840x1080']  # one size per aspect ratio (4:3 keeps the stock 640x480 too); maintainer rule of 22 Sep 2026
 DEFAULT_MODE = '1024x768'           # the mode of the exes published in the repository
 # tools replayed per mode (--width/--height): the display fixes differ per size; `movies` and `ozi` have
 # a 640x480 variant (the exe is pointed at copies of the lists / the menu script that the original exe
@@ -154,14 +154,14 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
-           'longpath': 'patch_longpath.py', 'music': 'patch_music.py',
+           'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
            'music': 'music',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
@@ -300,6 +300,17 @@ def blocks_longpath(g):
         assert len(old) == len(new) == int(m.group(3)) and len(old) in (20, 14, 22, 4)
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 4, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand
+    return out
+
+def blocks_widemap(g):
+    t = plan(g, 'widemap'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (204, 5, 3, 6, 7, 12, 50, 48, 14), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 12, (g, len(out))                                  # body, bounds call, 6 drawer edits, lightmap, clip call, ambience, spot order
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 26, (g, len(out))                                  # + the 14 re-pointed entries of the dead body
     return out
 
 def blocks_music(g):
@@ -545,6 +556,32 @@ unused zero bytes at the end of the code section: it calls the game's own 2-D cl
 those limits on the camera and then continues into the routine the call originally targeted.
 Only register-relative addressing, no relocation entries, nothing moves.  Harmless without the
 1024x768 fix and in single-player missions (a clamp can only move the camera inside the map).'''),
+ dict(id='widemap', name='Maps narrower than the screen: the view is centred on the map and every map read stays inside it', date='22 Sep 2026',
+      tool='tools/patch_widemap.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.32', blocks=blocks_widemap,
+      requires=['nocd', 'camera'],
+      desc='''The battlefield view is the screen minus the panel, in whole 32-pixel tiles: 28 tiles across at
+1024x768, 36 at 1280x800, 76 at 2560x1440, 116 at 3840x1080.  The maps are 64 to 160 tiles wide
+(the training maps and two two-player maps 64, the first two campaign missions and 22 two-player
+maps 96).  Once the view is wider than the map the game's camera limits ("half a screen from every
+map edge") contradict each other and the camera settles at the far one, so the view begins left of
+the map; nothing that then reads the map checks for that: the terrain drawer continues into the
+neighbouring rows (the far side of the map drawn shifted by a row) and, at the top and bottom map
+row, past the tile block into memory whose contents it takes for tile numbers - a crash in the tile
+blitter as soon as the camera reaches those rows; the lighting pass reads before and after each row;
+the visibility scan tests tiles of the wrong row; the ambient sounds fall silent (their picker gives
+up when the visible rectangle starts left of the map); a click on the black margin sends units to
+the far side of the map (the position wraps in a 16-bit field).  The fix, in six parts written into
+the dead body of the CD-probe routine (unused since the "No CD" fix, which is therefore required,
+as is the "Camera clamped" fix whose stub the first part chains into): (1) when the limits
+contradict each other, both become the map centre, so the map sits centred in the view and cannot
+scroll sideways; (2) the terrain drawer clamps every column to the map, so the margin repeats the
+edge tiles instead of reading beyond them; (3) the lighting pass clamps rows and columns the same
+way (in place of its four edge cases); (4) the visibility rectangle is cut to the map; (5) the
+ambient-sound picker clamps its rectangle instead of giving up; (6) a spot order's x is clamped to
+the map.  The 14 relocation entries of the dead routine are re-pointed to the new absolute operands
+or neutralised.  Rows are never affected with the shipped maps (the tallest view, 44 rows at
+5120x1440, is shorter than the smallest map, 56 rows), so only the column direction is handled.
+Without a wide screen the fix changes nothing visible: every map is wider than 28 or 36 tiles.'''),
  dict(id='restore', name='Window restore after minimising: Alt+Tab and the taskbar bring the game back', date='21 Sep 2026',
       tool='tools/patch_restore.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.28', blocks=blocks_restore,
       desc='''Leave the running game with Alt+Tab, the Win key or a click on another window and DirectDraw
@@ -711,10 +748,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'music', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'music', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),
@@ -876,7 +913,7 @@ W(r'''<#
       * after writing it prints the SHA-256 of the result; with every patch selected the result
         is byte-identical to the executable published in the repository and the script says so
       * the screen resolution is chosen in a drop-down (or -Resolution): 640x480, 1024x768, 1280x1024,
-        1280x720, 1280x800; the sizes with your monitor's aspect ratio are marked "recommended for your
+        1280x720, 1280x800, 3840x1080; the sizes with your monitor's aspect ratio are marked "recommended for your
         screen" and the largest of them is preselected in the window (the command line defaults to
         1024x768, the published exes)
       * for an HD resolution the script also WRITES the interface data the patched exe reads
@@ -925,7 +962,7 @@ W(r'''<#
 
 .PARAMETER Resolution
     Screen resolution to patch for: 640x480 (the stock size: no display fixes), 1024x768 (default,
-    the published exes), 1280x1024, 1280x720 or 1280x800.  The 'resolution' and 'clock' fixes exist
+    the published exes), 1280x1024, 1280x720, 1280x800 or 3840x1080 (32:9).  The 'resolution' and 'clock' fixes exist
     once per size; all sizes share the one INTRF_HD data folder, which must hold the interface set
     built for the chosen size.  The window offers the same choice in a drop-down, marks the sizes
     with your monitor's aspect ratio as "recommended for your screen" and preselects the largest of
