@@ -3370,6 +3370,153 @@ codec is compiled) the window simply froze. Now:
   README, test and shortcut names these files, so a free choice only produced exes in the wrong
   folder. The command line keeps `-Output` for special cases.
 
+#### 10.31 CD music: how the game plays its soundtrack, why it was silent, and the MP3 player that replaced the CD-audio module **(22 Sep 2026, maintainer request "investigate how to add original music from CDs", then "extract the tracks and encode them to mp3 at 192 kbit/s and update patcher to use original tracks in corresponding executables"; fix `music`, `tools/patch_music.py`, both exes; option 2 below was implemented the same day)**
+
+Both game CDs are mixed-mode discs: track 1 is the data track, tracks 2..5 are Red Book audio - the
+soundtrack was never a file in the game folder, so no repository copy carries it. Scanned from the
+raw `.bin` images in `Documents` (2352-byte sectors; a sector is data when it starts with the 12-byte
+sync `00 FF×10 00`, the audio part is raw 16-bit stereo 44.1 kHz little-endian PCM, byte order
+verified by the sample-to-sample roughness of both interpretations; there is no `.cue`, so the track
+boundaries below are the runs of digital silence of 4-6 s between the pieces - the pressing's pregaps):
+
+| Disc | Audio sectors | Track 2 | Track 3 | Track 4 | Track 5 |
+|---|---|---|---|---|---|
+| Dark Colony (`Dark Colony.bin`, 283 901 sectors) | 238 019..283 901 = 10.2 min | 238 170..252 472, 3.18 min | 252 765..258 452, 1.26 min | 258 847..268 631, 2.17 min | 269 090..283 447, 3.19 min |
+| Council Wars (`… Council Wars.bin`, 309 830 sectors) | 251 486..309 830 = 13.0 min | 251 636..262 763, 2.47 min | 263 064..279 374, 3.62 min | 279 676..293 801, 3.14 min | 294 103..309 530, 3.43 min |
+
+**The player in the exe** (`cdaudio` module, Classic `0x004510D0..0x00451820`, CW +0x60 - the only
+user of the `WINMM.dll` import `mciSendCommandA`, IAT `0x00480570`, 34 call sites): a plain MCI
+CD-audio library - `cd_open` `0x004510D0` (`MCI_OPEN` with `MCI_OPEN_TYPE|MCI_OPEN_SHAREABLE`,
+device type string `cdaudio` at `0x00487C1C`), `cd_play_from_here` `0x0045110C` (`MCI_SET` TMSF +
+`MCI_PLAY` with neither `MCI_FROM` nor `MCI_TO` = play to the end of the disc), `cd_close` `0x00451158`,
+`cd_stop` `0x00451188`, `cd_tracks` `0x00451408`, `cd_current_track` `0x00451444`,
+`cd_seek_track` `0x004515B8` (TMSF, `MCI_SEEK` `MCI_TO` track, then `MCI_PLAY` without range),
+`cd_read_toc` `0x0045164C` (track count into `0x0053280C`, capped at 20; MSF starts into `0x005327D0`),
+`cd_mode` `0x004517B0` (`MCI_STATUS_MODE` → 1 open/no disc, 2 not ready, 3 stopped, 4 error, 0 = fine).
+Above it sits `ddex4.c`'s music layer (device id `0x00489744`, "no CD audio" flag `0x00489748`,
+CW `0x0048976C` / `0x00489770`), installed as vtable slots of the display object at `0x00489720`
+(`0x0042FBF0`ff) and copied into the display wrapper (`0x0042C514`ff) as slots **+0xB8 open, +0xBC
+play(track), +0xC0 stop, +0xC4 start, +0xC8 poll, +0xCC track count**:
+
+| Method | Code | Called from | What it does |
+|---|---|---|---|
+| open | `0x0042F9F8` | `main.c` start-up `0x00404E60` (right after the settings are copied) | `cd_open`; on failure flag `0x00489748 = 1`, device `-1` → every other method returns at once |
+| start | `0x0042FA9C` | `proto.c` game-start init `0x0041F09F` (last thing before `ui` is returned) | **seeks to track 2 and plays** - the playlist passed in `eax` (`0x004A46C0`) is overwritten and ignored |
+| poll | `0x0042FAC0` | client frame `0x004320DB`, once per 5000 ms (`0x1388` timer at `0x004EB71C`) | `cd_mode`; when 3 (stopped = disc played to its end) or 4 (error): close, re-open, seek track 2, play - i.e. the whole disc from track 2 loops for the entire battle |
+| stop | `0x0042FA80` | end of battle `0x00401A41`, main-menu button `0x0C` `0x0040502D` | `MCI_STOP` |
+| play(track) | `0x0042FA4C` | nobody (slot copied, never called) | seek + play one track |
+
+So the 1998 build's music is simply "CD from track 2 to the end, repeat", started when a battle
+begins and stopped when it ends; the menus are silent. **The designers meant more:** every entry of
+the campaign scene lists `GAMESTAT/HSCENE.TXT`, `GSCENE.TXT`, `HTSCENE.TXT`, `GTSCENE.TXT` and CW
+`exp/gamestat/hxscene.txt`, `gxscene.txt` ends with a **per-mission playlist line** - `%d` values
+until `-1` (`2 -1`, `2 3 5 -1`, `4 5 3 2 -1`, the training lists `7 1 2 -1`), parsed by `scenario.c`
+`0x00429BC0`ff (`strtol` loop, assert `i < MAX_PLAYLIST_TRACKS` = 10, line 1260) into the bytes
+`0x004A46C0..` with the count at `0x004A46CC` and cleared per mission at `0x004298D2`; the scene
+entry before it is `name / map / two titles / two AVIs / "%d %d %d" / "%d"`. The music code never
+reads the list (the `start`/`poll` methods take it as an argument and discard it), which is why every
+mission sounds the same. The multiplayer `.SCN` files have no playlist (the `.SCN` reader `0x0041BAF0`
+is a different parser, §6 of `DC16_MAP_FILES.md`).
+
+**Volume.** The options screen's music `-`/`+` widgets `0x43`/`0x44` (`0x00432E86`/`0x00432EB3`,
+range 0..10) call display slot **+0xE8** = `set_volume(level, method)` `0x004527F8` with method 0 =
+**aux**: `0x00452870` walks `auxGetNumDevs` for the device whose `AUXCAPS.wTechnology == AUXCAPS_CDAUDIO`
+and calls `auxSetVolume(level·0x1800 per channel)`; the sound widgets `0x2A`/`0x2B` use method 1 =
+the mixer line `MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT` (`0x00452580`, flag `0x0048C180`). Modern
+Windows reports **zero aux devices** (`auxGetNumDevs() == 0` on this PC), so the music slider has
+been a no-op for twenty years even with a CD in the drive.
+
+**Why it is silent on today's PCs.** `mcicda.dll` still ships (32-bit `SysWOW64\mcicda.dll` present on
+this Windows 11), but `MCI_OPEN cdaudio` fails without a CD-ROM drive (MCIERR 266 on this PC) → the
+"no CD audio" flag is set at start-up and every music call returns immediately, with no message.
+Windows' own `Mount-DiskImage` mounts ISO/VHD only, so the mixed-mode `.bin` cannot be presented as a
+disc without a third-party virtual drive - and the `nocd` fix is unrelated: it removed the *file*
+accesses to `<letter>:\dc\`, while MCI picks the first CD-ROM drive on its own.
+
+**Ways to bring the music back** (assessment; the maintainer decides):
+
+1. **Ripped tracks + a `winmm.dll` wrapper in the game folder** (no exe change). `WINMM.dll` is not a
+   KnownDLL, so a `winmm.dll` beside the exes is loaded first. The wrapper must speak the *binary*
+   `mciSendCommandA` interface (the game never uses `mciSendStringA`), implement `MCI_SEEK` + TMSF and
+   let `MCI_PLAY` without `MCI_TO` run through the remaining tracks, answer `MCI_STATUS_MODE` with
+   `MCI_MODE_STOP` at the end (the 5-s poll then restarts from track 2 - the original looping), and
+   survive the game's close/re-open cycle. **The classic `ogg-winmm` fails this** (its `wav-winmm.c`
+   has no `MCI_SEEK`, plays one track per `MCI_PLAY` and never loops - with Dark Colony it would play
+   track 2 forever or nothing). **`Direct-WinMM`** (github.com/Jione/Direct-WinMM, CC0, v2.3.2 of
+   Nov 2025, x86 build 450 KB: `winmm.dll` + `WinmmVol.exe`) handles `mciSendCommandA`, `MCI_SEEK`,
+   TMSF, `MCI_TO`-less play to the last track, `MCI_MODE_STOP`, unconditional open without a drive,
+   and even the aux functions (`auxGetNumDevs` = 1, `auxSetVolume` → its engine volume, so the music
+   slider would work again). Tracks are looked up in the **current directory** as
+   `music\Track%02d.wav|ogg|mp3|flac` (fallback: the sub-folder holding the most `*NN.ext` files).
+   Open point: **both exes share one folder but the discs differ** - the wrapper has no per-exe
+   folder, so either one soundtrack is shipped for both games (CW's 13 min vs Classic's 10; the
+   game only ever plays "everything from track 2") or the tracks of both discs are combined into one
+   `music\` set (eight tracks - the loop plays them all). Unverified in game: the wrapper's
+   `MCI_MODE_STOP` after the last track and its behaviour under the game's close/re-open every 5 s.
+2. **Patch the exes to play files themselves** (no third-party DLL): rewrite the then-dead
+   `cdaudio` module in place (1.9 KB of room, both exes, +0x60) so `open` = `MCI_OPEN` with
+   `MCI_OPEN_ELEMENT` `music\track%02d.mp3` (device `mpegvideo`: `mciqtz32.dll`, `l3codeca.acm` and
+   `mciwave.dll` are all present in `SysWOW64`; verified here that `open … type mpegvideo`, `play`,
+   `status mode` and **`setaudio volume`** work), `poll` advances to the next file on
+   `MCI_MODE_STOP`, and - the real gain - **the scene lists' playlists are finally honoured** (the
+   parsed bytes at `0x004A46C0` are there; multiplayer maps would take a default list; the two games
+   could name different folders, `music\` vs `exp\music\`, through the same `exp/` prefix slot the
+   wave loader uses). The music slider becomes `MCI_DGV_SETAUDIO volume`. More work (a small state
+   machine, pattern-located, a patcher fix with `Data` = the track files) but the whole chain stays in
+   the repo's own tools.
+3. **Virtual CD-ROM drive** with a BIN/CUE image (WinCDEmu, Daemon Tools …): the stock code works
+   unchanged, volume still dead, every player must install a driver and a `.cue` has to be written
+   (the tracks' boundaries above). Not recommended beyond a personal test.
+
+**Implemented (option 2, the same afternoon).** The eight tracks were sliced out of the `.bin`
+images at the sector ranges above (raw PCM, no resampling) and encoded with LAME (`lameenc`, CBR
+192 kbit/s, quality 2) into **`MUSIC/TRACK02.MP3..TRACK05.MP3`** (Dark Colony, 14 MB) and
+**`exp/music/track02.mp3..track05.mp3`** (Council Wars, 18 MB), committed to the game repository.
+`tools/patch_music.py` (verify / plan / apply, `.music.bak`, pattern-located, both exes; patcher fix
+**`music`**, `Data` = the four tracks of the game, no `Requires`, order `... longpath, music, movies/sounds | ozi`)
+rewrites the cdaudio module `0x004510D0..0x00451820` (0x751 bytes, CW +0x60) in place as an MP3
+player on the MCI **`mpegvideo`** device - `mciqtz32.dll` + `quartz.dll` + `mp3dmod.dll`, present in
+`SysWOW64` of every Windows since 98, through the exe's own `mciSendCommandA` import, nothing new
+imported. The seven entry points the `ddex4.c` layer calls keep their addresses, so the layer and
+its callers are untouched:
+
+| Entry (module +) | New meaning |
+|---|---|
+| `cd_open` +0x000 | reads the saved music level (`0x00488DE8` / CW `0x00488E10`, 0..10) x100 into the state, opens `TRACK02` (not playing) - fails (0 = the layer's "no CD audio" flag, silence for good) only when the file is missing |
+| `cd_play_from_here` +0x03C | no-op (`open_track` + `play_dev` already play) |
+| `cd_close` +0x088, `cd_stop` +0x0B8 | `MCI_CLOSE` / `MCI_STOP` of the open element |
+| `cd_tracks` +0x338 | 0 (dead caller) |
+| `cd_seek_track(dev, dl=t)` +0x4E8 | close, open `TRACK0<t>`, `MCI_PLAY` asynchronous to the end; returns t+1 or 0 |
+| `cd_mode` +0x6E0 -> `impl_mode` +0x240 | `MCI_STATUS MODE`: playing -> 0; `MCI_MODE_STOP` (file ended) -> open+play `cur+1`, or `TRACK02` when that file does not exist (= the disc's "everything from track 2, repeat"); no element / MCI error -> 4 (the layer closes and re-opens) |
+| helpers | `close_state` +0x0E0, `open_track` +0x110 (builds the name from the 24-byte template by overwriting its digit - no sprintf), `play_dev` +0x1A0, `setvol_dev` +0x200 (`MCI_SETAUDIO` item `MCI_DGV_SETAUDIO_VOLUME` 0x4002, flags `ITEM|VALUE` 0x01800000, 0..1000); strings `"mpegvideo"` +0x1D0, template `music\track0?.mp3` / `exp\music\track0?.mp3` +0x1DC; the rest of the 0x751 bytes zero |
+
+State = the dead TOC array of the old module (`.bss 0x005327D0`, both exes: +0 device id, +4 track,
++8 volume, +12 the built name). The aux volume walk `0x00452870` (CW `0x004528D0`, 110 bytes, the
+music slider's `set_volume(level, 0)`) becomes 26 bytes: store level x100, `setvol_dev` on the open
+element - **the music slider works again** and the level is re-applied to every track opened. The
+22 + 2 absolute operands of the new code take over HIGHLOW `.reloc` entries of the old code in the
+same pages (page 0x451000 had 41, page 0x452000 3); the 20 left over become type 0. All registers
+but eax are preserved (Watcom register convention; `mciSendCommandA` is stdcall and clobbers
+ecx/edx - the first build stored the track number *after* the call and got garbage, found in game by
+reading the state block: the store comes before the call now). The mode/flag constants and the
+end-of-file behaviour (`MCI_MODE_STOP` 0x20D after the last sample, a second `MCI_PLAY` then does
+nothing - hence close/re-open per track) were verified on this PC through the string interface
+before assembling. The scene-list playlists stay ignored (their numbers - track 1, 7 - do not fit the
+shipped discs). Assembled once with keystone (dev script
+`Dark-Colony-development/scratch/music_asm.py`); the tool ships the bytes with a fixup table and
+needs only the stdlib.
+
+Verified 22 Sep 2026 on the 1280x800 Classic build in the game folder: at the main menu the process
+had loaded `mciqtz32.dll`, `quartz.dll`, `mp3dmod.dll`, `l3codeca.acm` (the start-up open), in the
+demo battle the state block read `dev 1, track 2, volume 500, music\track02.mp3` and the process's
+audio session was active; the patcher (`-All -Resolution 1280x800`) reproduces the tool's output
+byte for byte. Published 1024x768 exes: Classic `5a2e10b7...`, CW `d7b30c1a...` (game-folder 1280x800
+builds `fb0c542d...` / `f555d211...`). Not yet watched: the transition to track 3 after 190 s and a
+Council Wars run; one Classic test run ended (exit 0, no error.log, no crash event) while the patcher
+was rewriting the INTRF_HD set in the same folder, another right after an Esc that probably reached
+the main menu (Esc = quit there) - re-test before blaming the module.
+
+
 ## 11. Risks
 
 | Risk | Assessment |
@@ -3391,6 +3538,10 @@ codec is compiled) the window simply froze. Now:
 | Address | Meaning |
 |---|---|
 | `0x00488DB4` / `0x00488DB8` | **screen width / height globals (`DGROUP`)** |
+| `0x004510D0..0x00451820` (CW +0x60) | **`cdaudio` MCI module** (stock; **rewritten by fix `music`** as the MP3 player, entry points kept): `cd_open` `0x004510D0` (device type `cdaudio` `0x00487C1C`), `cd_play_from_here` `0x0045110C`, `cd_close` `0x00451158`, `cd_stop` `0x00451188`, `cd_tracks` `0x00451408`, `cd_seek_track` `0x004515B8`, `cd_read_toc` `0x0045164C`, `cd_mode` `0x004517B0`; the only user of `mciSendCommandA` (IAT `0x00480570`); §10.31 |
+| `0x0042F9F8` / `0x0042FA9C` / `0x0042FAC0` / `0x0042FA80` / `0x0042FA4C` / `0x0042FA28` (CW +0x60) | `ddex4.c` music layer: open / start (seek track 2 + play, playlist ignored) / poll (restart from track 2 when stopped) / stop / play(track, unused) / track count; device id `0x00489744`, no-CD flag `0x00489748`; display-wrapper slots +0xB8..+0xCC, called from `0x00404E60`, `0x0041F09F`, `0x004320DB`, `0x00401A41`, `0x0040502D`; §10.31 |
+| `0x00429BC0`ff / `0x004A46C0` | `scenario.c` scene-list reader: per-mission playlist `%d … -1` (max 10, assert line 1260) → bytes `0x004A46C0..`, count `0x004A46CC`, cleared at `0x004298D2`; never read by the music code; §10.31 |
+| `0x004527F8` / `0x00452870` / `0x00452580` | `set_volume(level 0..10, method)` (display slot +0xE8, options widgets `0x43`/`0x44` music, `0x2A`/`0x2B` sound): method 0 = aux CD-audio device `auxSetVolume` (no such device on modern Windows; **fix `music` rewrites `0x00452870` as `MCI_SETAUDIO` volume**), method 1 = mixer `SRC_WAVEOUT` line; §10.31 |
 | `0x0040117F`ff | `main.c`; full-screen rect at `0x004010E5` |
 | `0x00405F88` (CW `0x00405F68`) | `safefunc.c` start-up: reads `HBNFUFL.A01`/`.A02`, builds the CD path `%c:\dc\` (`0x00482654`) into `0x004A48B0`, `full` marker → `0x00488DF5`, calls `cd_probe`; **patched: `jmp` from `0x00405FB3` to the `full` check, probe call NOPped** (`cddrive`, §10.19) |
 | `0x00405EAC` (CW `0x00405E8C`) | `cd_probe`: `fopen <CD>anim.dat` + write test `<CD>a<rand>` → flag `0x004A49B8`; re-run by `load_interface` (`0x00423223`) and in game (`0x0041138D`); **patched to `ret`** (`cddrive`, §10.19) |

@@ -154,7 +154,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
-           'longpath': 'patch_longpath.py',
+           'longpath': 'patch_longpath.py', 'music': 'patch_music.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -162,6 +162,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath',
+           'music': 'music',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
@@ -300,6 +301,24 @@ def blocks_longpath(g):
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 4, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand
     return out
+
+def blocks_music(g):
+    t = plan(g, 'music'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ (\d+) bytes\s*$', t, re.M):
+        out.append((int(m.group(2), 16), int(m.group(3)), m.group(1).strip()))
+    assert [n for _, n, _ in out] == [0x751, 0x6E], (g, out)             # the rewritten cdaudio module + the aux volume walk
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 2 + 44, (g, len(out))                              # 24 re-pointed + 20 neutralised entries
+    return out
+
+def music_data(g, mode=None):
+    """The MP3 tracks of the `music` fix: Dark Colony's four under MUSIC\\, Council Wars' four under
+    exp\\music\\ (both games share one folder and the two discs differ)."""
+    files = _tree(g, 'MUSIC', pattern=r'^track0[2-9]\.mp3$') if g == 'classic' else _tree(g, 'exp', 'music', pattern=r'^track0[2-9]\.mp3$')
+    assert len(files) == 4, (g, files)
+    for f in files:
+        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), f
+    return files
 
 def blocks_pool(g):
     m = re.search(r'site file 0x([0-9a-f]+)', plan(g, 'pool'))
@@ -575,6 +594,30 @@ file that was tried.  Register-relative operands and a call through the import t
 nothing moves, no relocation entry changes; the same four edits at +0x60 in Council Wars.
 Verified 22 Sep 2026: from a 161-character game folder path the unfixed Council Wars exe fails
 at 5 s, the fixed one plays on with an empty error.log.'''),
+ dict(id='music', name='Original CD soundtrack from MP3 files (MUSIC\\TRACK02-05.MP3 / exp\\music\\track02-05.mp3)', date='22 Sep 2026',
+      tool='tools/patch_music.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.31', blocks=blocks_music, data=music_data,
+      desc='''The soundtrack of both games was never a file: the CDs are mixed-mode discs with the music as
+audio tracks 2-5 after the data track, and the game plays them through Windows' CD-audio
+interface (MCI "cdaudio") - at the start of every battle it seeks to track 2 and plays the disc to
+its end, checks every five seconds whether the disc has stopped and then starts over at track 2,
+and stops the disc when the battle ends.  Without a CD-ROM drive that interface fails at start-up
+and the game is silent for good; the music slider of the options screen sets a "CD line" volume
+that modern sound drivers no longer have.
+
+This fix rewrites the CD-audio routines in place (the seven entry points the music code calls
+keep their addresses) as an MP3 player on Windows' own MCI "mpegvideo" device (mciqtz32.dll,
+part of every Windows since 98; the exe imports nothing new): at battle start it opens and plays
+MUSIC\\TRACK02.MP3, the five-second check plays the next file when one has ended and TRACK02
+again after the last one - the original "whole disc, repeat" - and the music slider now sets the
+volume of the playing file (the saved level is applied to every track).  Dark Colony reads
+MUSIC\\TRACK0N.MP3, Council Wars exp\\music\\track0N.mp3, because both exes share one folder and
+the two discs have different music.  Everything inside the two rewritten routines; the
+relocation entries of the old code's absolute operands are re-pointed at the new ones and the
+rest become padding; nothing moves.
+
+REQUIRES the eight tracks from the repository (encoded from the CD images at 192 kbit/s, 32 MB):
+MUSIC\\TRACK02.MP3 .. TRACK05.MP3 for Dark Colony, exp\\music\\track02.mp3 .. track05.mp3 for
+Council Wars.  Without a TRACK02 file the game simply stays silent, as it does today.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -668,10 +711,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'music', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'music', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),
