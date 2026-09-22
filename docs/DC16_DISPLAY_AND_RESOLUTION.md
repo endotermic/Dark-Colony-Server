@@ -3271,6 +3271,62 @@ the intro movie player has its own wait loop (`0x0040903E`, `PeekMessage(WM_KEYD
 and was not tested; the window procedure's own `SC_SCREENSAVE` path (a *sent* one: logs "TRIED TO
 ACTIVATE SCREEN SAVER" and exits) is unchanged; the busy loop while minimised is unchanged.
 
+#### 10.29 Sound files fail from a deep folder: the wave loader's `OpenFile` and its 128-character path **(22 Sep 2026, found while running a patched build from a 161-character folder path; fix `longpath`, `tools/patch_longpath.py`, both exes)**
+
+**Symptom.** Run either patched exe from a game folder whose path is long (the Claude scratchpad,
+`...\scratchpad\lp\game\DC - Council wars`, 161 characters; a repository ZIP extracted under
+`Downloads` and moved one or two folders deeper gets there too) and about five seconds after start,
+during the intro movie, the box **"FILE NOT FOUND / A sound file is missing - see error.log"**
+appears and the game exits (the `nocd` wave-loader exit, §10.19). `error.log` holds one line
+`unable to open file ` with an **empty name**. The same files under a short path (`subst Q:`) run
+without a hitch, and every other loader had already opened dozens of files from the long folder
+(display mode set, palette, the intro AVI playing).
+
+**Cause.** The wave loader (`0x00452A50`, CW `0x00452AB0`: `sound2.dat` banks at start-up, briefings,
+ambience, `beat.wav`) is the **only** code in the game that opens files through the Windows 3.1-era
+**`OpenFile(name, &OFSTRUCT, OF_READ)`** (KERNEL32 IAT slot `0x004804C8`; four call sites
+`0x00452AC4`/`0x00452ADD`/`0x00452B4D`/`0x00452BBD`, all in this function; the thunk `0x0047EEBE`
+is unused). `OpenFile` writes the file's full path into `OFSTRUCT.szPathName[OFS_MAXPATHNAME]`,
+**128 bytes**, and returns `HFILE_ERROR` (-1) when the full path does not fit - so every WAV fails
+once `<game folder>\sound\xxxxxxxx.wav` exceeds about 128 characters. Everything else goes through
+the Watcom C runtime (`fopen` → `CreateFileA`), which has the normal `MAX_PATH` limit. The loader's
+frame: `sub esp,890h; sub ebp,82h`; `[ebp-80Eh]` = 1024-byte buffer 1 = prefix (`0x487DC0`, empty in
+Classic since fix `sounds`, `exp/` in CW) + name, `[ebp-40Eh]` = buffer 2 for the CD path attempts,
+`[ebp-0Eh]` = the 136-byte OFSTRUCT, `[ebp+7Ah]` = bytes-read dword. Sequence: `OpenFile(buffer 1)`,
+on failure `OpenFile(name)`, then (stock) two CD attempts into buffer 2, then the error exit
+`fprintf(error.log, "unable to open file %s\n", buffer 2)` + display shutdown + `Sleep(2000)` +
+`MessageBoxA` + `exit`. Since `nocd` turned the `jne` after the second open into a `jmp` past the
+CD attempts (`0x00452AE9`), buffer 2 is never filled - hence the empty name. On success the handle
+goes to `_llseek(h,0,FILE_END)` / `_llseek(h,0,0)` (`0x00480544`), `ReadFile` (`0x004804D4`) and
+`_lclose` (`0x00480540`), all of which take a plain Win32 handle.
+
+**Fix (`tools/patch_longpath.py`, 4 edits = 57 changed bytes per exe, nothing moves, no `.reloc`
+change, register-relative operands and a call through the linker's import thunk only; Council
+Wars = Classic + 0x60, pattern-located):**
+
+| # | Classic VA (file) | CW VA | bytes | edit |
+|---|---|---|---|---|
+| 1 | `0x452AB7` (`0x51EB7`) | `0x452B17` | 20 | `push 0; lea eax,[ebp-0Eh]; push eax; lea eax,[ebp-80Eh]; push eax; call cs:[OpenFile]` → `lea eax,[ebp-80Eh]; call open_read; 9×nop` |
+| 2 | `0x452AD6` (`0x51ED6`) | `0x452B36` | 14 | `push 0; lea eax,[ebp-0Eh]; push eax; push ebx; call cs:[OpenFile]` → `mov eax,ebx; call open_read; 7×nop` |
+| 3 | `0x452AEF` (`0x51EEF`) | `0x452B4F` | 22 | **`open_read`** over the first CD attempt (dead since `nocd`; nothing else targets it): `push 0` (template), `push 0` (flags), `push 3` (`OPEN_EXISTING`), `push 0` (security), `push 1` (`FILE_SHARE_READ`), `push 80000000h` (`GENERIC_READ`), `push eax` (name), `call` CreateFileA thunk (`0x0047EF3C` / CW `0x0047EF9C`, IAT slot `0x004803F8`), `ret` |
+| 4 | `0x452BCD` (`0x51FCD`) | `0x452C2D` | 4 | error exit `lea eax,[ebp-40Eh]` → `lea eax,[ebp-80Eh]`: error.log and the box name the file that was tried (`prefix+name`) |
+
+`CreateFileA` returns `INVALID_HANDLE_VALUE` = -1 on failure, the value the loader's two `cmp
+eax,-1` tests already expect, so the control flow is unchanged. The OFSTRUCT is no longer written
+and nothing reads it. `OpenFile` also searched the exe folder, the current folder, the Windows
+folders and `PATH` for a bare name; the game's WAV names always carry a folder or sit in the game
+root, which is the current folder, so `CreateFileA` finds the same files. The tool plans and
+verifies on a stock exe too (the generator takes every plan on the untouched original) but
+**refuses `apply` without `nocd`**: with the stock `jne` the second open's failure would fall into
+the stub and its `ret` would pop garbage. Patcher fix `longpath` (`Requires nocd`), applied after
+`restore` and before `movies`/`sounds`/`ozi`.
+
+**Verified 22 Sep 2026** with a copy of the game folder at the 161-character path: the unfixed CW
+1280x720 build shows the box at 5.1 s (`error.log`: `unable to open file `), the fixed one plays
+on (14 s sampled, `error.log` empty); both builds re-verified byte-exact through the regenerated
+patcher (published 1024x768 exes Classic `71b570fa…`, CW `d4ca8555…`; old published + tool =
+the same bytes). Not fixed and not affected: the Watcom runtime's own `MAX_PATH` (260) limit.
+
 ## 11. Risks
 
 | Risk | Assessment |

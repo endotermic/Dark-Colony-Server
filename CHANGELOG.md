@@ -6,6 +6,16 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Sound files load from any folder depth** (22 Sep 2026, found while running a patched build from a
+  161-character folder path; plan §16 entry of 22 Sep + F58, `DC16_DISPLAY_AND_RESOLUTION.md` §10.29):
+  the wave loader was the one place in the game that opened files with the Windows 3.1-era `OpenFile`,
+  whose `OFSTRUCT` path field holds 128 characters, so a deep install (a repository ZIP extracted under
+  `Downloads` and moved a folder or two deeper) died 5 s after start with "FILE NOT FOUND / A sound
+  file is missing" and an empty file name in `error.log`. New exe fix **`longpath`**
+  (`tools/patch_longpath.py`, both games, requires `nocd`): the two live opens call a 22-byte
+  `CreateFileA` stub written over the CD attempt that `nocd` made dead, and the error exit names the
+  file it tried; 4 edits, 57 bytes per exe, nothing moves. Both repository exes carry it and the
+  patcher was regenerated (published 1024x768 exes Classic `71b570fa…`, Council Wars `d4ca8555…`).
 - **Window restore after minimising fixed: Alt+Tab and the taskbar bring the game back** (21 Sep
   2026, maintainer report "window restore after minimization is not working"; plan §16 entry of
   21 Sep, F56, `docs/DC16_DISPLAY_AND_RESOLUTION.md` §10.28). The game has no message loop: its

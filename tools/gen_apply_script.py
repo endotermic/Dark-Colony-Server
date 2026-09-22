@@ -154,13 +154,15 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
+           'longpath': 'patch_longpath.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath',
+           'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
 PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
 _plans = {}
@@ -288,6 +290,15 @@ def blocks_restore(g):
         assert len(old) == len(new) == int(m.group(3)) and len(old) in (107, 6)
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 2, (g, len(out))                                   # the rewritten pump of frame_end + present()'s jne to the idle stub
+    return out
+
+def blocks_longpath(g):
+    t = plan(g, 'longpath'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (20, 14, 22, 4)
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 4, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand
     return out
 
 def blocks_pool(g):
@@ -543,6 +554,27 @@ tick - then back to the routine's exit.  Game ticks are clock-driven and keep ru
 minimised (a multiplayer client stays in the game), only the idle spin is gone.  The four calls go
 through the linker's import thunks; nothing moves, no relocation entry changes.  Verified in game
 21 Sep 2026 on both exes (Alt+Tab, taskbar button, Start menu, minimise from the taskbar).'''),
+ dict(id='longpath', name='Sound files load from any folder depth: the wave loader no longer uses the 128-character OpenFile', date='22 Sep 2026',
+      tool='tools/patch_longpath.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.29', blocks=blocks_longpath,
+      requires=['nocd'],
+      desc='''Installed in a deep folder (about 128 characters of path and more, e.g. a repository ZIP
+extracted under Downloads and then moved into a sub-folder), the game shows "FILE NOT FOUND /
+A sound file is missing - see error.log" about five seconds after start and exits; error.log
+holds the line "unable to open file" with no name after it.  The same files run fine from a
+short path.  Cause: the routine that loads every WAV (sound banks, briefings, ambience) is the
+only code in the game that opens files through the Windows 3.1-era OpenFile function, which
+writes the full path into a 128-character field and fails outright when it does not fit.  All
+other loaders use the C runtime (CreateFileA underneath) and have no such limit, so the rest
+of the game runs and only the first sound kills it.  The empty name is a leftover of the
+"No CD" fix: the error message printed the buffer of the skipped CD attempt.  The fix replaces
+the two live OpenFile calls with calls to a 22-byte routine written over the first CD attempt
+(dead code since the "No CD" fix, which is therefore required): CreateFileA(name, GENERIC_READ,
+FILE_SHARE_READ, OPEN_EXISTING) - it returns -1 on failure exactly like OpenFile, and its
+handle is what the loader's seek, read and close calls take.  The error message now names the
+file that was tried.  Register-relative operands and a call through the import thunk only;
+nothing moves, no relocation entry changes; the same four edits at +0x60 in Council Wars.
+Verified 22 Sep 2026: from a 161-character game folder path the unfixed Council Wars exe fails
+at 5 s, the fixed one plays on with an empty error.log.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -636,10 +668,10 @@ One byte in the DIALOG template's style dword.'''),
 BUILDS = [
  dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'movies', 'sounds']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'movies', 'sounds']),
  dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'ozi']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'restore', 'longpath', 'ozi']),
  dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
       steps=['blocksets', 'teams', 'healer', 'troopsframe']),
