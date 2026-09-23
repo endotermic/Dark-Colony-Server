@@ -81,9 +81,11 @@ ANCHOR_PREFIX = bytes.fromhex('4f016e01')
 # tools must agree. Council Wars used its own numbers until 23 Sep 2026 - cluster centre 301
 # (rows 159..443) and credits from y = 230, both belonging to its four-row menu. Its script is
 # Classic's 2x4 grid now, lowered by 16 px to y=330 because the *unpatched* exe cannot move its
-# credits box (immediate 230, box 230..329) off the top button row (doc 10.35): cluster centre
-# 296 (rows 159..433), and the box goes 14 px above the row - the stock Classic gap - so the
-# stock-equivalent y is 330 - 100 - 14 = 216, which the fixup writes over the 230.
+# credits box (immediate 230, box 230..329) off the top button row (doc 10.35), so the cluster
+# centre is 296 (rows 159..433). The PATCHED menu has a fifth row, won above the grid
+# (build_ozi_overlay.menu_layout: rows 304..408 at the stock size), and the box moves up to clear
+# it: stock-equivalent y = 304 - 100 - 8 = 196, which the fixup writes over the 230. At 640x480,
+# where this fix does not run, patch_ozi_menu.py writes the same 196 with the OZI mode.
 CREDITS_W = 280
 LOGO_CLEARANCE = 20
 
@@ -105,10 +107,10 @@ BUILDS = {
             0x5071: dict(off=0x5051),
             0x5060: dict(off=0x5040),
             # main.c bintro: the expansion has its own exp/intrface/credits.txt and its TTY box
-            # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 14 px above
-            # the lowered grid's first row (comment above)
+            # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 8 px above
+            # the patched menu's five-row block (comment above)
             0x42A0: dict(value=lambda g: (g.w - CREDITS_W) // 2),
-            0x4299: dict(expected='bbe6000000', value=credits_y(216, 296)),
+            0x4299: dict(expected='bbe6000000', value=credits_y(196, 296)),
         }),
 }
 

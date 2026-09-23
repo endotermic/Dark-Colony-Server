@@ -1817,14 +1817,25 @@ function Edit-DatList([string] $Text) {
     return ($out -join "`n")
 }
 
-# build_ozi_overlay.menu_rows (23 Sep 2026): the menu script carries Classic's 2x4 button grid at every
-# size (16 px lower than Classic's, doc 10.35), so the OZI mode is two label renames - 8 PLAY INTRO ->
-# OZI MISSIONS (bottom left, button 16) and 5 SINGLE PLAYER WAR -> OZI LOAD (middle right, button 4).
-# Until then Council Wars' script had buttons 1, 3, 4, 5 commented out and four rows in one column, and
-# this function re-enabled button 4, moved QUIT down and wrote a five-pair banim (with a two-column
-# special case at 640x480, where five rows did not fit between the credits box and the bottom artwork);
-# the missing widgets crashed the untouched exe when the CD logic greyed them (doc 10.35).
+# build_ozi_overlay.menu_layout (23 Sep 2026, maintainer's order): the patched Council Wars menu has
+# five rows, the second column only on rows 1, 3 and 5.  The numbers are the exe's button ids, which
+# pick the handler (patch_ozi_menu.py rewires 16 and 4 to the pack), so only positions and labels move:
+#
+#     ACADEMY       (1)   MULTI PLAYER WAR (3)
+#     COUNCIL WARS  (0)
+#     LOAD CW GAME  (2)   ENCYCLOPEDIA     (5)
+#     OZI MISSIONS (16)
+#     LOAD OZI GAME (4)   QUIT            (12)
+#
+# The block is anchored on the BOTTOM row of the grid in the script - the one row that must not move,
+# since the 640x480 backdrop's artwork starts 3 px below it - so applying this twice changes nothing.
+# The fifth row is won at the top, where the code-positioned credits box moves up by one row and a bit
+# (patch_resolution's credits_y(196, 296) at HD sizes, patch_ozi_menu's 640x480 site at the stock size).
+# The untouched exe keeps Classic's four-row grid and labels in exp\intrface\bintroe (doc 10.35).
 function Edit-OziMenu([string] $Text) {
+    $cols = @(@(1, 0, 2, 16, 4), @(3, $null, 5, $null, 12))
+    $gadgetOf = @{ 0 = 6; 1 = 7; 2 = 8; 3 = 9; 4 = 10; 5 = 11; 12 = 13; 16 = 17 }
+    $labels = @{ 1 = 'COUNCIL WARS'; 2 = 'ACADEMY'; 3 = 'LOAD CW GAME'; 5 = 'LOAD OZI GAME'; 8 = 'OZI MISSIONS' }
     $xy = @{}
     foreach ($m in ([regex] '(?m)^\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s').Matches($Text)) { $xy[[int]$m.Groups[1].Value] = @([int]$m.Groups[2].Value, [int]$m.Groups[3].Value) }
     $gadgets = @{}
@@ -1835,12 +1846,42 @@ function Edit-OziMenu([string] $Text) {
     $b = ([regex] '(?m)^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s').Match($Text)
     if (-not $b.Success -or $b.Groups[1].Value -ne '8' -or $b.Groups[2].Value -ne '8') { $missing += 'banim 18 with 8 pairs' }
     if ($missing.Count) { throw ("bintroe: not Classic's 2x4 button grid (missing " + ($missing -join ', ') + ')') }
+    $xs = @($xy.Values | ForEach-Object { $_[0] } | Sort-Object -Unique)
+    $ys = @($xy.Values | ForEach-Object { $_[1] } | Sort-Object -Unique)
+    if ($xs.Count -ne 2 -or $ys.Count -lt 4) { throw ('bintroe: expected two button columns and at least four rows, found {0} x {1}' -f $xs.Count, $ys.Count) }
+    $pitch = [int]::MaxValue
+    for ($i = 1; $i -lt $ys.Count; $i++) { if ($ys[$i] - $ys[$i - 1] -lt $pitch) { $pitch = $ys[$i] - $ys[$i - 1] } }
+    $bottom = $ys[$ys.Count - 1]
+    $move = @{}
+    for ($c = 0; $c -lt $cols.Count; $c++) {
+        for ($k = 0; $k -lt $cols[$c].Count; $k++) {
+            $id = $cols[$c][$k]
+            if ($null -ne $id) {
+                $pos = @($xs[$c], ($bottom - ($cols[$c].Count - 1 - $k) * $pitch))
+                $move[[int]$id] = $pos
+                $move[[int]$gadgetOf[[int]$id]] = $pos        # the gadget follows its button
+            }
+        }
+    }
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($raw in $Text.Split("`n")) {
         $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
         $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
-        if ([regex]::IsMatch($line, '^\s*textmsg\s+5\s+.*$')) { $line = 'textmsg 5       OZI LOAD' }
-        elseif ([regex]::IsMatch($line, '^\s*textmsg\s+8\s+.*$')) { $line = 'textmsg 8       OZI MISSIONS' }
+        $m = [regex]::Match($line, '^\s*(pushb|gadget)\s+(\d+)\s')
+        $t = [regex]::Match($line, '^\s*textmsg\s+(\d+)\s')
+        if ($m.Success -and $move.ContainsKey([int]$m.Groups[2].Value)) {   # button and gadget ids do not overlap
+            $pos = $move[[int]$m.Groups[2].Value]
+            $toks = @($TOKENS.Matches($line) | ForEach-Object { $_.Value })
+            $n = 0
+            for ($i = 0; $i -lt $toks.Count; $i++) {
+                if ($toks[$i].Trim().Length -eq 0) { continue }
+                $n++
+                if ($n -eq 4) { $toks[$i] = [string]$pos[0] } elseif ($n -eq 5) { $toks[$i] = [string]$pos[1]; break }
+            }
+            $line = -join $toks
+        } elseif ($t.Success -and $labels.ContainsKey([int]$t.Groups[1].Value)) {
+            $line = 'textmsg {0}       {1}' -f [int]$t.Groups[1].Value, $labels[[int]$t.Groups[1].Value]
+        }
         $out.Add($line + $cr)
     }
     return ($out -join "`n")

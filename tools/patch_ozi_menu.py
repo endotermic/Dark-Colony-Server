@@ -256,6 +256,16 @@ STOCK_MODE_SITES = [
     ('main menu script "intrface/bintro" -> "intrface/bintoz" (640x480: exp/intrface/bintoze = stock menu + OZI rows, written by the patcher)',
      0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
 ]
+# 640x480 only (23 Sep 2026): the OZI menu has five rows (build_ozi_overlay.menu_layout - the pack's
+# two entries below the Council Wars ones), won above the four-row grid, and the code-positioned
+# credits box has to move up to make room: 8 px above the first row, i.e. y = 304 - 100 - 8 = 196
+# instead of 230 (main.c bintro `mov ebx,imm32` at 0x00404E99; x = 178 stays).  At HD sizes the same
+# value comes from patch_resolution.py's stage-2 fixup (credits_y(196, 296)); at the stock size that
+# fix does not run at all, so the OZI mode writes it here.
+STOCK_MODE_CODE_SITES = [
+    ('credits box y 230 -> 196 (640x480: room for the five-row OZI menu)',
+     0x404E99, [bytes.fromhex('bbe6000000')], bytes.fromhex('bbc4000000')),
+]
 
 
 def resolve(data, stock_mode=False):
@@ -266,7 +276,7 @@ def resolve(data, stock_mode=False):
             raise SystemExit('not Council Wars DCEXP16.EXE: slot %#x holds %r, expected %r'
                              % (va, bytes(data[off:off + 8]), s))
     out, problems = [], []
-    for name, va, olds, new in sites:
+    for name, va, olds, new in sites + (STOCK_MODE_CODE_SITES if stock_mode else []):
         off = va - AUTO_VA_TO_FILE
         have = bytes(data[off:off + len(new)])
         if have == new:
