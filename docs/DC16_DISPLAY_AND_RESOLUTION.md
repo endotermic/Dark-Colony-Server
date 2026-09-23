@@ -3935,7 +3935,13 @@ script's own button height, which sets ACADEMY, the Council Wars pair and the pa
 keeps the Python tool and the patcher byte-identical.) It is **five** rows, so
 `build_ozi_overlay.menu_layout` is a layout step again, not two renames: the ids stay with their
 handlers (the exe patch rewires 16 and 4, §10.13), only positions and labels move, each gadget
-follows its button, and the `banim` pairs are untouched. The block is anchored on the **bottom** row
+follows its button, and the `banim` pairs are untouched. **The one-shot plate animation moves with
+the order too:** the stock script starts `gadget 6` - the plate of button 0, its own first row - as
+`anim_oneoff` and every other plate as `anim_stopped`, so the first reordering left the animation
+firing on row 2 (COUNCIL WARS) while row 1 sat still. The layout step now writes that token itself,
+`anim_oneoff` for the plate of the first row in the left column and `anim_stopped` for the rest, so
+the animation marks the top row whatever button stands there (a menu-design audit of 23 Sep 2026
+found it; the untouched exe's script is correct as it is, because there button 0 *is* the first row). The block is anchored on the **bottom** row
 of the grid it is given — the row the 640×480 artwork sits 3 px below — so the fifth row and the two
 gaps are won at the top, and applying the step twice changes nothing (the pitch is the smallest row
 distance in the script, the bottom row `max(y)`, both identical before and after).
