@@ -3838,6 +3838,8 @@ not in any CD test; `nocd` keeps it only because the played build has it.
 
 #### 10.35 The Council Wars original's "hang" at the main menu: six buttons greyed, three of them not in the script **(23 Sep 2026, maintainer report "engexp16.exe is hanging when entering main menu … maybe by moving updated version of markup file to another place?", then "add missing widgets which are the cause of the problem" and "do the same widgets layout as in dc16.exe where ozi missions replaces intro and ozi load replaces single player war", then "for unpatched engexp16.exe put credits a bit higher and buttons a bit lower so they don't overlap each other"; mechanism re-derived from the stock bytes, fixed in the data — `exp/intrface/bintroe` is now Classic's script; both generators and the patcher rewritten and cross-checked; game test pending)**
 
+**Partly superseded the same evening by §10.36**, which adds the DARK COLONY and LOAD DC GAME buttons: the patched menu is seven rows, not five, the row grouping gains a gap after row 5, the second column is MULTI PLAYER WAR / ENCYCLOPEDIA on rows 1 and 2 with QUIT on row 7, and the credits box is removed from the patched build at every resolution rather than shortened, so the y/height values quoted below now describe only what the fix `resolution` writes before `ozi` overwrites it. The stock `exp/intrface/bintroe` that this section is about - Classic's grid 16 px lower, for the untouched exe - is unchanged.
+
 **Which exe.** The report names `engexp16.exe`; the repository has two Council Wars builds, the
 untouched `ENGEXP16.EXE` and the patched `engexp16new.exe`. The patched one was ruled out first: the
 1280×800 build in the game folder (SHA-256 `f8d82877…`) carries all thirteen fixes, its
@@ -3961,6 +3963,196 @@ tolerance for this file (it is Classic's script with the eight button rows 16 px
 **The rig, for the next time.** `subst V:` on the game folder (never a long path, §10.29); **SPACE** aborts the intro movie - its wait loop at `0x00409080` drains `WM_KEYDOWN` with `PeekMessageA(0x100, 0x100, PM_REMOVE)`, so any key does - and **never ESC**, which the menu itself takes as QUIT. Captures come from a **DPI-aware** process: the exclusive-mode mode switch makes the physical desktop 1280×800, so a screen-DC BitBlt of the top-left 1280×800 is the game's surface 1:1. Input must come from a **DPI-unaware** one, because the game is unaware too: on this 150 % desktop a DPI-aware `SetCursorPos` lands at exactly 1/1.5 of the intended point in the game's own space (the first click aimed at (736, 573) put the game's crosshair at (490, 375) and hit nothing). That is the opposite of the map-editor rule of §"Map editor notes", where windowed output has to be captured with `PrintWindow(PW_RENDERFULLCONTENT)`.
 
 **Still open.** The untouched `ENGEXP16.EXE` without a disc (the assert this section started from - it should now reach a mostly grey menu); MULTI PLAYER WAR from the Council Wars build, which has never been played over the network; and the 640×480 and other HD modes of this menu, which were verified on the generated scripts only.
+
+
+#### 10.36 DARK COLONY and LOAD DC GAME: the original campaign from the Council Wars menu **(23 Sep 2026, maintainer instruction "it's time to add classic missions to engexp16 by adding paired buttons DARK COLONY + LOAD DC GAME between ACADEMY and COUNCIL WARS in main menu. menu grows in height so in 640x480 resolution we'll have to remove credentials", right column "MULTI 1, ENCYCLOPEDIA 2, QUIT 7, because it looks ugly when encyclopedia is somewhere in the middle"; one crash found and fixed by the maintainer's first game test, confirmed in game the same day)**
+
+**What was already there.** `DC16_SINGLE_EXE_MERGE.md` (11 Sep 2026) established that the expansion
+build *is* `dc16.exe`: the Classic campaign, the training missions, the encyclopedia and the network
+code are all compiled in, and the two builds differ only in the `exp/` overlay helper, four
+artifact-unlock immediates and the CD strings. Its §5.1 read the scene-list chooser
+(`0x00402FED`, repeated for the load path at `0x00403C9D`):
+
+```
+if (gs+0x14F0 != 0)   name = race ? "gamestat/gtscene" : "gamestat/htscene"   // training
+else                  name = race ? "gamestat/gscene"  : "gamestat/hscene"    // Dark Colony
+if (gs+0x14F4 != 0)   name = race ? "gamestat/gxscene" : "gamestat/hxscene"   // Council Wars
+```
+
+so a Classic campaign is `gs+0x14F4 = 0`, `gs+0x14F0 = 0` before `call 0x00401C08` - and
+`gs+0x14F4` is **already** 0 for every button, because the menu writes it at `0x00405015..0x00405021`
+right after it tears the interface down and before it dispatches on the id. Since 15 Sep 2026 the
+one game folder is the complete Classic data set as well, so §5.5's blocking list (the briefings, the
+encyclopedia) is empty. What was missing was two buttons and a mode.
+
+**A fourth prefix mode.** §10.13's mechanism is four writable 8-byte DGROUP slots - the overlay
+prefix `0x004826D0`, the wave-loader's copy `0x00487DC8` and the save folder at `0x00482344`
+(LOAD GAME screen) and `0x00485E5C` (in-game dialog):
+
+| mode | prefix | wave prefix | save folder |
+|---|---|---|---|
+| Council Wars | `exp/` | `exp/` | `esave` |
+| OZI missions | `ozi_ns/` | `ozi_ns/` | `ozisave` |
+| **Dark Colony** | **`dc/`** | **`dc/`** | **`save`** |
+
+`dc/` deliberately matches almost nothing: the overlay helper `0x004063E4` tries `dc/<name>`, fails,
+and retries the bare name in the game root, which is Classic's own data - the 106-type
+`GAMESTAT/GAMESTAT.TXT` instead of the expansion's 118 rows, `MISSION/` instead of `exp/mission/`
+(the wave prefix is the reason that matters, cf. §10.21), `SCENARIO/HUMAN` and `ALIEN`,
+`INTRF_HD/HSCENE.TXT` and `GSCENE.TXT`, `INTRFACE/CREDITS.TXT`, the Classic story texts. `save` is
+literally the folder `dc16new.exe` uses: both Classic builds hold `save` in the same two slots
+(`0x00482344`, `0x00485E54` - the Council Wars second slot is 8 bytes higher), so a save written by
+either exe is listed by the other. The one file in the overlay is **`dc/intrf_hd/bintroe`**, a copy
+of the patched menu script: the mode is sticky, so after a Classic campaign the menu is reloaded
+through `dc/`, and the game root holds *Classic's* menu, which has neither the new ids nor the
+Council Wars labels. At 640x480 the patcher writes `dc/intrface/bintoze` beside it (§10.27).
+
+**Two new button ids for one byte.** The menu accepts only the ids its handler knows, filtered
+before the dispatch chain:
+
+```
+00404F97: mov  edx,[ebp-0Ch]
+00404F9A: test edx,edx
+00404F9C: jl   00404FA3
+00404F9E: cmp  edx,5            ; file 0x439E - the byte this fix raises to 7
+00404FA1: jle  00404FF1         ; accept 0..5
+00404FA3: mov  ebx,[ebp-0Ch]
+00404FA6: cmp  ebx,0Ch          ; QUIT
+00404FA9: je   00404FF1
+00404FAB: cmp  ebx,10h          ; PLAY INTRO / OZI MISSIONS
+00404FAE: je   00404FF1
+```
+
+Anything else is ignored, and an accepted id with no branch would fall through to `0x0040513D` and
+leave the menu function, so the filter has to be widened by exactly as much as the chain. `cmp edx,5`
+-> `cmp edx,7` admits **6** and **7**, the first two free ids; in the stock script those numbers
+belong to the `LARGEBUTTON` gadgets of buttons 0 and 1, which the menu generators renumber to 19 and
+20 (the object array holds 300 entries, `MAX_WIN_OBJECTS`, and ids are sparse - `MAINE` uses 199).
+The handlers go where the old PLAY INTRO body was: `patch_ozi_menu.py` has rewritten that 96-byte
+block since 10 Sep 2026 and used 37 bytes of it, so 59 NOPs were free. 52 are used now:
+
+```
+004050DB: 75 25        jne 00405102          ; end of the id chain, was `jne 0040513D`
+00405102: 83 FF 06     cmp edi,6             ; DARK COLONY
+00405105: 75 16        jne 0040511D
+00405107: C7 80 F0 14 00 00 00 00 00 00      ; mov dword ptr [eax+14F0h],0   (campaign, not training)
+00405111: 89 C2        mov edx,eax           ; game state
+00405113: 8B 45 FC     mov eax,[ebp-4]       ; screen
+00405116: E8 ..        call 0047F390         ; tramp_dc_campaign = stub_dc_set ; jmp 00401C08
+0040511B: EB 20        jmp 0040513D
+0040511D: 83 FF 07     cmp edi,7             ; LOAD DC GAME
+00405120: 75 14        jne 00405136          ; = the NOP pad, which falls through to 0040513D
+00405122: C7 80 F0 14 00 00 00 00 00 00
+0040512C: 89 C2        mov edx,eax
+0040512E: 8B 45 FC     mov eax,[ebp-4]
+00405131: E8 ..        call 0047F3A0         ; tramp_dc_load = stub_dc_set ; jmp 00403AA4
+```
+
+`gs+0x14F0` has to be written because it survives a training session (TRAINING sets it to 3);
+`gs+0x14F4` does not, see above. `stub_dc_set` is 73 bytes at `0x0047F340` in the same shape as
+`stub_pack` / `stub_cw_set`, the two trampolines 10 bytes each at `0x0047F390` / `0x0047F3A0`; the
+camera stub of §10.22 ends at `0x0047F331` and the section at `0x0047F400`, so 86 bytes of the tail
+are still free. The four `mov edi,imm32` slot addresses add four HIGHLOW entries to the `.reloc`
+insert of page `0x7F000` (8 -> 12 entries, 16 -> 24 bytes; 28 of the section's 52 slack bytes left).
+Load buttons stay deterministic, as they have been since 10 Sep: LOAD CW GAME lists `esave`, LOAD
+OZI GAME `ozisave`, LOAD DC GAME `save`. Whether a save restores the campaign flags is not verified
+by code reading - nothing outside the menu writes `gs+0x14F4` - but LOAD CW GAME has depended on
+exactly that since 10 Sep, so the record must come back from the file.
+
+**The menu grows to seven rows, and the credits box goes.** The maintainer's order, with the
+grouping rule of §10.35 extended to a gap after rows 1, 3 and 5:
+
+```
+ACADEMY       (1)   MULTI PLAYER WAR (3)
+DARK COLONY   (6)   ENCYCLOPEDIA     (5)
+LOAD DC GAME  (7)
+COUNCIL WARS  (0)
+LOAD CW GAME  (2)
+OZI MISSIONS (16)
+LOAD OZI GAME (4)   QUIT            (12)
+```
+
+Seven rows at pitch 26 with three 12 px gaps and a 25 px button is **217 rows**, and the block is
+anchored on the bottom row as before, so it grows upwards into the credits box. There is no
+resolution where the box survives: at 640x480 the backdrop's black band between the planet's
+crescent and the bottom artwork is 218..434, exactly 217 rows (measured on `exp/intrface/intrg.gif`
+over the button columns), and at the HD sizes the whole cluster - logo, title, credits, buttons - is
+the same layout scaled by `credits_y`, so the box would have to shrink to about a line and a half
+there too. It is removed instead: the create call is 45 bytes of eight pushes and
+`call 0x004284A8`, which is `ret 20h`, so dropping the block balances the stack, and nothing after it
+reads `eax`/`ebx`/`ecx`/`edx` (the next call takes its two arguments in `eax` and `edx`). The two
+absolute operands it carried (`intrface/mfonto5`, `intrface/credits.txt`) become type 0 `.reloc`
+padding. This supersedes both sets of credits immediates: `patch_resolution.py`'s Council Wars
+fixups and the 640x480 pair `patch_ozi_menu.py` wrote on 21 Sep are simply overwritten, since `ozi`
+runs last; a build with `resolution` but without `ozi` keeps its credits box, and the untouched exe
+is a different file and keeps everything.
+
+At 640x480 the 12 px gap becomes **11**: the block would otherwise start at row 216, two rows into
+the crescent's tail. Both generators shrink the gap by a pixel at a time while the first row is
+above the measured limit 218, which is a no-op at every other size, and the rows come out at
+219/256/282/319/345/382/408 with the bottom row and the 3 px above the artwork unchanged. The HD
+rows are 414..606 (1024x768), 384..576 (1280x720), 433..625 (1280x800), 571..763 (1280x1024) and
+606..798 (3840x1080), all inside the backdrops' black bands (measured per size over the button
+columns: 195..722, 188..674, 201..754, 242..978, 253..1034) and 24 px below the `DCUT` title.
+
+**The crash the first game test found, and why it was mine.** Maintainer, after the first build:
+"for DARK COLONY missions: race overview is empty and clicking button hangs the game". The Windows
+Application log had Event 1000 for `engexp16new.exe`, `0xC0000005`, **fault offset `0x0004DE14`** =
+VA `0x0044DE14`, which is `mov dword ptr [ebx+eax*4],0` in a three-instruction "clear a list" helper
+reached from the interface-level pop `0x00425EAC`. The cause is the credits removal, not the data:
+the text-window module allows exactly **one** instance - its create at `0x004284A8` increments the
+count at `0x004D61C0` and asserts when it reaches 2 - so every screen that makes a TTY frees it
+again, and `main.c bintro` does that on every menu click with
+
+```
+00405008: BA 01 00 00 00   mov edx,1        ; one TTY to free
+0040500D: 8B 45 FC         mov eax,[ebp-4]
+00405010: E8 ..            call 00429684    ; loop: [004D61C0]-- ; free
+```
+
+With the create gone the count went to **-1**, `0x004D61C0` stayed negative, the next screen's TTY -
+the race overview's text - was created at index -1, that screen came up empty and the corrupted
+neighbourhood took the level teardown down. The fix is one immediate: `mov edx,1` -> `mov edx,0`
+at `0x00405008`, so the pair balances at zero. The per-frame walk `0x00427BB7` iterates
+`0 .. [0x004D61C0]` and is a no-op at 0; all ten callers of `0x00429684` pass the number of TTYs
+their own screen created, and this is the only one that changes. Lesson for the next screen element
+that gets deleted: in this engine a widget is not just drawn, it is counted, and the counter lives
+in a global that the *next* screen indexes.
+
+**What the tools do.** `patch_ozi_menu.py` (fix `ozi`, Council Wars only) now makes 8 code edits
+beyond the OZI ones - the id filter, the chain end, the two handlers inside the 96-byte block,
+`stub_dc_set`, the two trampolines, the 45 NOPs and the destroy count - plus 4 `.reloc` entries; the
+credits site is matched with wildcards on the three immediates so the tool accepts an exe patched
+for any resolution, and an exe with the 21 Sep form upgrades in place (`v2` -> `v3`).
+`build_ozi_overlay.py`'s `menu_layout` / `menu_script` and the patcher's `Edit-OziMenu` place ten
+buttons instead of eight, renumber the two gadgets, clone the new `pushb` / `gadget` / `textmsg`
+lines from the script's own `pushb 16` / `gadget 17` / `textmsg 8` so they keep its field layout,
+and rewrite `banim` with ten pairs. Both accept either the stock 2x4 grid or their own output, so
+they stay idempotent, and both refuse anything else by name. `Write-InterfaceSet` and
+`Write-StockOziMenu` write the `dc/` copies; `ozi_data` lists `dc/intrf_hd/bintroe` so the patcher
+refuses to build a menu whose Dark Colony mode has no script.
+
+**Checks made.** Python and PowerShell produce byte-identical menu scripts at 640x480, 1024x768,
+1280x720, 1280x800 and 1280x1024 (the four `hd_sets/` fixtures plus the stock script); applying
+either twice changes nothing; `build_ozi_overlay.py` reports `0 edits` against the patcher's output
+and the three copies (`exp/intrf_hd`, `ozi_ns/intrf_hd`, `dc/intrf_hd`) are identical. The patcher
+rebuilds the tool chain's exe byte for byte at 1024x768 (`a19972fb…`) and 640x480
+(`17e7a38120…`), and Classic is untouched (`a71d038b…`, every mode's reference hash unchanged).
+`dcexp16.asm` regenerated from the new published exe.
+
+**Confirmed in game (23 Sep 2026, maintainer, after the destroy-count fix): "dark colony missions
+work now".** DARK COLONY reaches the race overview and plays the original campaign out of the
+Council Wars build.
+
+**Still open.** A save round-trip through LOAD DC GAME (nothing outside the menu writes
+`gs+0x14F4`, so the campaign record has to come back from the save file - as LOAD CW GAME has
+assumed since 10 Sep), and a check that COUNCIL WARS / OZI MISSIONS still behave after a Classic
+campaign has made the mode sticky. The artifact-unlock schedule is still the expansion's in a
+Classic campaign (`DC16_SINGLE_EXE_MERGE.md` §5.3: four `cmp byte ptr [eax],imm8` at `0x00403FC7`,
+`0x00403FE8`, `0x004040B3`, `0x004040D4`, Classic 5/0Eh/4/0Eh against Council Wars 0Eh/7/0Eh/7);
+making them mode-aware needs a detour per site, about 100 bytes, and the tail has 86 left. Routing
+MULTI PLAYER WAR through the same stub would make the expansion client's tables identical to a
+Classic client's for the relay's checksums (§4.2 of the merge document), 10 more bytes, untested.
 
 
 ## 11. Risks

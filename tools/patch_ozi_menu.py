@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add an "OZI MISSIONS" mode to Council Wars' DCEXP16.EXE (ozi_ns mission pack, 2010).
+"""Add the "OZI MISSIONS" and "DARK COLONY" campaign modes to Council Wars' DCEXP16.EXE.
 
 Council Wars reads every data file through one overlay helper (0x4063E4): it first tries the
 name with the prefix stored at 0x4826D0 ("exp/") and falls back to the bare name in the game
@@ -10,6 +10,7 @@ mode is nothing more than the content of those four slots:
 
     Council Wars  exp/      exp/      esave     esave
     OZI missions  ozi_ns/   ozi_ns/   ozisave   ozisave
+    Dark Colony   dc/       dc/       save      save
 
 Balance tables, unit list, sound assignments, scene lists, missions, terrains and story texts
 are (re)loaded per game, so switching the slots in the main menu is enough for them.  Only the
@@ -17,8 +18,16 @@ animation list, the FIN/SPR banks and the 200-entry sound table are loaded once 
 (0x405264 -> 0x4051CC -> 0x42565C), which is why the pack's new units live in exp/ instead of
 the overlay (see tools/build_ozi_overlay.py).
 
-Five code edits, all in the main-menu function 0x404DC8 (doc DC16_DISPLAY_AND_RESOLUTION.md
-section 10.13); the menu script rows come from tools/build_ozi_overlay.py:
+The Dark Colony mode (23 Sep 2026, doc section 10.36) is the same mechanism with a prefix that
+matches nothing the game ships - `dc/` holds only the patched menu script, so every other open
+falls through to the Classic data in the game root: the 106-type `GAMESTAT/GAMESTAT.TXT`, the
+Classic briefings in `MISSION/`, `SCENARIO/HUMAN|ALIEN`, `INTRF_HD/HSCENE|GSCENE.TXT` and the
+`SAVE/` folder the Classic exe itself uses (same two slot values, checked).  The campaign is
+selected by the flags the scene-list chooser 0x402FED reads: `gs+0x14F4 = 0` (already zeroed for
+every button at 0x405018) and `gs+0x14F0 = 0` (not training).
+
+Code edits, all in the main-menu function 0x404DC8 (doc DC16_DISPLAY_AND_RESOLUTION.md
+sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overlay.py:
 
 1. The PLAY INTRO handler (button id 0x10, 0x4050DD..0x40513C, 96 bytes) becomes the
    OZI MISSIONS handler: it sets the two campaign flags exactly like NEW CAMPAIGN does
@@ -42,6 +51,31 @@ section 10.13); the menu script rows come from tools/build_ozi_overlay.py:
    0x7F000 (the table grows by 16 bytes into its 52 bytes of slack and the base-relocation
    directory size follows); the two operands that vanish with the old PLAY INTRO handler
    (0x4050DE -> .bss, 0x405103 -> DGROUP) become IMAGE_REL_BASED_ABSOLUTE padding.
+
+6. The two new buttons are ids 6 and 7, the first free ids the menu's own filter accepts once
+   `cmp edx,5` at 0x404F9E becomes `cmp edx,7` (0..7, 0Ch, 10h; anything else is ignored and
+   would fall out of the menu loop).  Ids 6 and 7 were the LARGEBUTTON gadgets of buttons 0 and
+   1, which build_ozi_overlay.py renumbers to 19 and 20.  The two handlers live in the 59 NOP
+   bytes the old PLAY INTRO handler left behind (0x405102..0x40513C, 52 used): DARK COLONY sets
+   `gs+0x14F0 = 0` and enters the campaign runner through `tramp_dc_campaign`, LOAD DC GAME does
+   the same through `tramp_dc_load`, which always lists `save`.  `jne 0x40513D` at 0x4050DB (the
+   end of the id chain) is retargeted at 0x405102.
+7. The scrolling credits box is removed: the seven-row menu is 217 rows tall and the black band
+   of the 640x480 backdrop between the crescent and the artwork is exactly 217 rows (218..434,
+   measured), so nothing is left for it, and at the HD sizes the block occupies the same place
+   relative to the title.  main.c bintro's TTY create call (0x404E80..0x404EAC, eight pushes and
+   `call 0x4284A8`, which is `ret 20h` so the stack balances) becomes 45 NOPs; the two absolute
+   operands it carried (`intrface/mfonto5`, `intrface/credits.txt`) become ABSOLUTE .reloc
+   padding.  This supersedes the credits y/height sites of the 21 Sep version of this patch and
+   the values patch_resolution.py writes for the Council Wars build, which are simply overwritten
+   (the fix runs last); an exe with `resolution` but without `ozi` keeps its credits box.
+   The DESTROY call has to go with it (edit 8, found by the first game test): every menu click
+   runs `mov edx,1; call 0x429684` at 0x405008, which frees that one TTY and decrements the
+   global TTY count 0x4D61C0.  Without the create the count goes to -1, the next screen's TTY -
+   the race overview's text - is built at index -1, so that screen comes up empty and the
+   corrupted neighbourhood takes the level teardown down with an access violation at 0x44DE14.
+   The count becomes 0.  (The TTY module allows exactly one instance: its create asserts when
+   the count reaches 2, which is why the menu frees its own before leaving.)
 
 Version 1 of this patch (10 Sep 2026, before OZI LOAD) had `stub_cw` tail-jump into 0x401C08
 itself and left LOAD GAME direct; the tool recognises a v1 exe and upgrades it in place.
@@ -75,11 +109,29 @@ STUB_CW = 0x47F290
 TRAMP_CW_CAMPAIGN = 0x47F2E0
 TRAMP_CW_LOAD = 0x47F2F0
 TRAMP_PACK_LOAD = 0x47F300
+# Dark Colony mode (23 Sep 2026).  The AUTO zero tail runs to the section end 0x47F400 and the
+# camera stub of patch_camera.py ends at 0x47F331, so these three sit above it (86 bytes left).
+STUB_DC = 0x47F340
+TRAMP_DC_CAMPAIGN = 0x47F390
+TRAMP_DC_LOAD = 0x47F3A0
+DC_BUTTON = 6                   # "DARK COLONY"   (id 6 was the LARGEBUTTON gadget of button 0)
+DC_LOAD_BUTTON = 7              # "LOAD DC GAME"  (id 7 was the LARGEBUTTON gadget of button 1)
+ID_FILTER_IMM = 0x404F9E        # `cmp edx,5` in the menu's accepted-id filter: 5 -> 7
+ID_CHAIN_END = 0x4050DB         # `jne 0040513D` after the last `cmp edi,10h`: -> DISPATCH
+DISPATCH = 0x405102             # the 59 NOP bytes the old PLAY INTRO handler left behind
+DISPATCH_END = 0x40513D         # the between-mission loop every campaign button jumps to
+CAMPAIGN_FLAG = 0x14F0          # gs+0x14F0 = 0: campaign, not training (gs+0x14F4 is 0 already)
+CREDITS_CALL = 0x404E80         # main.c bintro's credits TTY create: 8 pushes + call 0x4284A8
+CREDITS_END = 0x404EAD
+CREDITS_FREE = 0x405008         # `mov edx,1` of the matching destroy call (0x429684) -> 0
 SLOTS = (0x4826D0, 0x487DC8, 0x482344, 0x485E5C)
 CW_STRINGS = (b'exp/\0\0\0\0', b'exp/\0\0\0\0', b'esave\0\0\0', b'esave\0\0\0')
 PACK_STRINGS = (b'ozi_ns/\0', b'ozi_ns/\0', b'ozisave\0', b'ozisave\0')
+DC_STRINGS = (b'dc/\0\0\0\0\0', b'dc/\0\0\0\0\0', b'save\0\0\0\0', b'save\0\0\0\0')
 RELOC_PAGE_HANDLER = 0x5000     # page of the old handler: operands at 0x0DE and 0x103 vanish
-RELOC_PAGE_TAIL = 0x7F000       # page of the stubs: eight new operands
+RELOC_PAGE_TAIL = 0x7F000       # page of the stubs: eight new operands, four for stub_dc_set
+RELOC_PAGE_CREDITS = 0x4000     # page of the credits call: its two string operands vanish
+CREDITS_RELOC = (0xE8B, 0xE90)  # `push intrface/mfonto5`, `push intrface/credits.txt`
 
 STOCK_HANDLER = bytes.fromhex(
     'be f2 46 4a 00 8d bd f0 fe ff ff 57 8a 06 88 07 3c 00 74 10 8a 46 01 83 c6 02 88 47 01'
@@ -116,6 +168,64 @@ def tramp(va, stub, target):
     return call(va, stub) + jmp(va + 5, target)
 
 
+class Masked:
+    """An accepted old form with wildcard bytes (mask byte 0 = don't care)."""
+
+    def __init__(self, template, mask):
+        assert len(template) == len(mask)
+        self.template, self.mask = template, mask
+
+    def __len__(self):
+        return len(self.template)
+
+    def matches(self, have):
+        return len(have) == len(self.mask) and all(
+            m == 0 or h == t for h, t, m in zip(have, self.template, self.mask))
+
+    def hex(self, sep=''):
+        return sep.join('??' if m == 0 else '%02x' % t for t, m in zip(self.template, self.mask))
+
+
+# main.c bintro's credits TTY create (0x404E80..0x404EAC, doc 10.36): eight pushes, the 280-pixel
+# width in ecx, the y in ebx, the height and the x, then `call 0x4284A8`, which is `ret 20h`, so
+# dropping the whole block balances the stack and nothing downstream reads eax/ebx/ecx/edx.  The y,
+# the height and the x are written per resolution by patch_resolution.py (and by the 21 Sep version
+# of this patch at 640x480), so they are wildcards here.
+CREDITS_TEMPLATE = bytes.fromhex(
+    '6a 00 6a 00 6a 00 6a 05 6a 02 68 84 21 48 00 68 6c 24 48 00'   # push 0,0,0,5,2, font, credits.txt
+    'b9 18 01 00 00'                                                # mov ecx,118h   (width 280)
+    'bb 00 00 00 00'                                                # mov ebx,<y>
+    '6a 00'                                                         # push <height>
+    'ba 00 00 00 00'                                                # mov edx,<x>
+    '8b 45 fc'                                                      # mov eax,[ebp-4]
+    'e8 fb 35 02 00')                                               # call 004284A8
+CREDITS_MASK = (b'\xff' * 25 + b'\xff' + b'\0' * 4 + b'\xff' + b'\0'
+                + b'\xff' + b'\0' * 4 + b'\xff' * 8)
+CREDITS_LEN = len(CREDITS_TEMPLATE)
+
+
+def dispatch_block():
+    """The two Dark Colony handlers, in the NOP tail of the menu's id chain (doc 10.36).
+
+    Entered from the retargeted `jne` at the end of the chain with eax = the game state, edi = the
+    button id and [ebp-4] = the screen.  `gs+0x14F4` (Council Wars scene lists) is already 0: the
+    menu writes it at 0x405018 before it dispatches, for every button."""
+    d = bytearray()
+    for button, target, last in ((DC_BUTTON, TRAMP_DC_CAMPAIGN, False),
+                                 (DC_LOAD_BUTTON, TRAMP_DC_LOAD, True)):
+        d += b'\x83\xFF' + bytes([button])                  # cmp edi,<id>
+        hole = len(d) + 1
+        d += b'\x75\x00'                                    # jne <next handler / end>
+        d += bytes.fromhex('C7 80') + struct.pack('<II', CAMPAIGN_FLAG, 0)   # mov [eax+14F0h],0
+        d += b'\x89\xC2'                                    # mov edx,eax     (game state)
+        d += b'\x8B\x45\xFC'                                # mov eax,[ebp-4] (screen)
+        d += b'\xE8' + rel32(DISPATCH + len(d) + 5, target)  # call tramp_dc_*
+        if not last:                                         # the last one falls through the pad
+            d += b'\xEB' + bytes([DISPATCH_END - (DISPATCH + len(d) + 2)])
+        d[hole] = len(d) - (hole + 1)
+    return bytes(d)
+
+
 def build():
     """Return ([(name, va, [accepted old bytes...], new)], {page: [(offset, new_u16)]}).
 
@@ -141,10 +251,18 @@ def build():
     disp = HANDLER_EXIT - (HANDLER + len(h) + 2)
     assert 0 < disp < 0x80
     h += b'\xEB' + bytes([disp])                            # jmp 0040513D
+    handler_v2 = bytes(h) + b'\x90' * (HANDLER_LEN - len(h))    # v2: the rest was NOP padding
+    assert DISPATCH == HANDLER + len(h)
+    h += dispatch_block()                                   # v3: the two Dark Colony handlers
     h += b'\x90' * (HANDLER_LEN - len(h))
     assert len(h) == HANDLER_LEN == len(STOCK_HANDLER)
 
-    sites = [('OZI MISSIONS handler (was PLAY INTRO)', HANDLER, [STOCK_HANDLER], bytes(h)),
+    body, ops = slot_writer(DC_STRINGS)
+    stub_dc = b'\x50\x57' + body + b'\x5F\x58\xC3'              # push eax/edi ... pop/pop/ret
+    dc_ops = [2 + o for o in ops]
+
+    sites = [('OZI MISSIONS + DARK COLONY handlers (was PLAY INTRO)', HANDLER,
+              [STOCK_HANDLER, handler_v2], bytes(h)),
              ('stub_pack (pack strings into the 4 slots)', STUB_PACK, [bytes(len(stub_pack))], stub_pack),
              ('stub_cw_set (Council Wars strings)', STUB_CW, [bytes(len(stub_cw)), stub_cw_v1], stub_cw),
              ('tramp_cw_campaign (stub_cw_set; jmp 401C08)', TRAMP_CW_CAMPAIGN, [bytes(10)],
@@ -160,10 +278,26 @@ def build():
                   [call(LOAD_GAME_CALL, LOAD_GAME)], call(LOAD_GAME_CALL, TRAMP_CW_LOAD)))
     sites.append(('OZI LOAD (was SINGLE PLAYER WAR) call -> tramp_pack_load', SINGLE_WAR_CALL,
                   [call(SINGLE_WAR_CALL, SINGLE_WAR)], call(SINGLE_WAR_CALL, TRAMP_PACK_LOAD)))
+    sites.append(('stub_dc_set (Dark Colony strings)', STUB_DC, [bytes(len(stub_dc))], stub_dc))
+    sites.append(('tramp_dc_campaign (stub_dc_set; jmp 401C08)', TRAMP_DC_CAMPAIGN, [bytes(10)],
+                  tramp(TRAMP_DC_CAMPAIGN, STUB_DC, CAMPAIGN_RUNNER)))
+    sites.append(('tramp_dc_load (stub_dc_set; jmp 403AA4)', TRAMP_DC_LOAD, [bytes(10)],
+                  tramp(TRAMP_DC_LOAD, STUB_DC, LOAD_GAME)))
+    sites.append(('menu id filter: accept the button ids 6 and 7 (cmp edx,5 -> 7)', ID_FILTER_IMM,
+                  [bytes.fromhex('83 FA 05')], bytes.fromhex('83 FA 07')))
+    sites.append(('end of the id chain: jne 0040513D -> the Dark Colony handlers', ID_CHAIN_END,
+                  [b'\x75' + bytes([DISPATCH_END - (ID_CHAIN_END + 2)])],
+                  b'\x75' + bytes([DISPATCH - (ID_CHAIN_END + 2)])))
+    sites.append(('credits TTY create -> %d NOPs (the seven-row menu needs the rows)' % CREDITS_LEN,
+                  CREDITS_CALL, [Masked(CREDITS_TEMPLATE, CREDITS_MASK)], b'\x90' * CREDITS_LEN))
+    sites.append(('credits TTY destroy count 1 -> 0 (nothing was created)', CREDITS_FREE,
+                  [bytes.fromhex('ba 01 00 00 00')], bytes.fromhex('ba 00 00 00 00')))
     relocs = {
         RELOC_PAGE_HANDLER: [(0x0DE, 0), (0x103, 0)],
+        RELOC_PAGE_CREDITS: [(o, 0) for o in CREDITS_RELOC],
         RELOC_PAGE_TAIL: [((STUB_PACK + o) & 0xFFF, 3) for o in pack_ops]
-                       + [((STUB_CW + o) & 0xFFF, 3) for o in cw_ops],
+                       + [((STUB_CW + o) & 0xFFF, 3) for o in cw_ops]
+                       + [((STUB_DC + o) & 0xFFF, 3) for o in dc_ops],
     }
     return sites, relocs
 
@@ -256,26 +390,6 @@ STOCK_MODE_SITES = [
     ('main menu script "intrface/bintro" -> "intrface/bintoz" (640x480: exp/intrface/bintoze = stock menu + OZI rows, written by the patcher)',
      0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
 ]
-# 640x480 only (23 Sep 2026): the OZI menu has five rows (build_ozi_overlay.menu_layout - the pack's
-# two entries below the Council Wars ones) with a gap of a quarter button height after rows 1 and 3,
-# with half-button-height gaps after rows 1 and 3, and the block is anchored on the bottom row, so it
-# grows upwards into the credits box: rows 278..432, i.e. the box has to end by 277.  This mode gets
-# its own pair of values, not the HD ones, because the *stock* 640x480 backdrop draws the planet's
-# crescent across rows 198..218 (measured; the painted HD backdrops are black there): y = 219, the
-# first black row, and height 52, which ends at 270 - 7 px above the first button.  Both are
-# immediates of main.c bintro's TTY create call (x = 178 and the width 280 stay).  At HD sizes the
-# equivalent values (y 203, height 68) come from patch_resolution.py instead; at the stock size that
-# fix does not run at all.  The earlier forms of this patch (y 196 / 204, height 80) are accepted as
-# input, so an older patched exe upgrades in place.
-STOCK_MODE_CODE_SITES = [
-    ('credits box y 230 -> 219 (640x480: clear of the crescent, above the five-row OZI menu)',
-     0x404E99, [bytes.fromhex('bbe6000000'), bytes.fromhex('bbc4000000'), bytes.fromhex('bbcc000000')],
-     bytes.fromhex('bbdb000000')),
-    ('credits box height 100 -> 52 (640x480: room for the five-row OZI menu)',
-     0x404E9E, [bytes.fromhex('6a64'), bytes.fromhex('6a50')], bytes.fromhex('6a34')),
-]
-
-
 def resolve(data, stock_mode=False):
     sites, relocs = build()
     for va, s in zip(SLOTS, CW_STRINGS):
@@ -284,15 +398,19 @@ def resolve(data, stock_mode=False):
             raise SystemExit('not Council Wars DCEXP16.EXE: slot %#x holds %r, expected %r'
                              % (va, bytes(data[off:off + 8]), s))
     out, problems = [], []
-    for name, va, olds, new in sites + (STOCK_MODE_CODE_SITES if stock_mode else []):
+    for name, va, olds, new in sites:
         off = va - AUTO_VA_TO_FILE
         have = bytes(data[off:off + len(new)])
         if have == new:
             out.append((name, off, va, new, new, 'done'))
-        elif have in olds:
-            out.append((name, off, va, have, new, 'stock' if have == olds[0] else 'v1'))
+            continue
+        hit = next((i for i, o in enumerate(olds)
+                    if (o.matches(have) if isinstance(o, Masked) else have == o)), None)
+        if hit is None:
+            problems.append('%s @ file %#x: expected %s, found %s'
+                            % (name, off, olds[0].hex(), have.hex()))
         else:
-            problems.append('%s @ file %#x: expected %s, found %s' % (name, off, olds[0].hex(), have.hex()))
+            out.append((name, off, va, have, new, 'stock' if hit == 0 else 'v1'))
     for name, va, olds, new in DGROUP_SITES + (STOCK_MODE_SITES if stock_mode else []):
         off = va - DGROUP_VA_TO_FILE
         have = bytes(data[off:off + len(new)])
@@ -310,10 +428,10 @@ def resolve(data, stock_mode=False):
 def state(edits):
     kinds = {k for *_, k in edits}
     if kinds == {'done'}:
-        return 'patched (v2)'
+        return 'patched (v3)'
     if kinds == {'stock'}:
         return 'stock'
-    return 'v1 or partial (apply upgrades to v2)'
+    return 'earlier version or partial (apply upgrades to v3)'
 
 
 def main(argv=None):
@@ -341,7 +459,7 @@ def main(argv=None):
             '%03X->%s' % (off, 'ABS' if typ == 0 else 'HIGHLOW') for off, typ in redits)))
     if a.command == 'plan':
         return 0
-    if state(edits) == 'patched (v2)' and rstate == 'patched':
+    if state(edits) == 'patched (v3)' and rstate == 'patched':
         print('nothing to do')
         return 0
 

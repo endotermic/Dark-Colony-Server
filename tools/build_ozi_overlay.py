@@ -20,7 +20,10 @@ layer).  Output is two things inside the Council Wars folder:
        split_hd_data.py and menu_rows() below).
    The sound table `sound2.dat` is left alone: it is a full 200-entry array and the pack's four
    replacements would overwrite gun sounds Council Wars uses.
-2. The overlay `ozi_ns/` (seven characters: it has to fit the 8-byte prefix slot in the exe) with
+2. `dc/intrf_hd/bintroe`, the one file of the DARK COLONY mode's overlay: that mode's prefix
+   matches nothing else the game ships, so a Classic campaign started from the Council Wars menu
+   reads the Classic data in the game root - but the menu itself has to stay the patched one.
+3. The overlay `ozi_ns/` (seven characters: it has to fit the 8-byte prefix slot in the exe) with
    everything the pack loads per game: 22 missions, balance tables, unit list, sound assignments,
    ambience, terrains (incl. the pack's gatlan / gjungle / special), story and credits texts.  The
    two scene lists are renamed `.kor` -> `.txt` (the Polish edition's extension; our exe appends
@@ -110,24 +113,43 @@ LIVE_GADGET = re.compile(rb'^\s*gadget\s+(\d+)\s', re.M)
 BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 
 # The patched Council Wars menu (maintainer, 23 Sep 2026), by exe button id; see menu_layout().
-# `None` = an empty place in the second column.
-OZI_COLUMNS = ((1, 0, 2, 16, 4), (3, None, 5, None, 12))
-# ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after row 1 and
-# after row 3, which separates ACADEMY, the two Council Wars entries and the two pack entries, and
-# the same half-height gap between the two columns (1 px in the stock grid), after which the block
-# is re-centred on the screen. It grows upwards by the two row gaps (it is anchored on the bottom
-# row), into the space the shortened credits box leaves (patch_resolution / patch_ozi_menu).
-OZI_GAP_AFTER = (1, 3)              # 1-based row numbers
+# `None` = an empty place in the second column.  Ids 6 and 7 are the two Dark Colony buttons the
+# same day's evening added (patch_ozi_menu.py gives them handlers and widens the menu's id filter);
+# they were the LARGEBUTTON gadgets of buttons 0 and 1, which move to 19 and 20 here.
+OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (3, 5, None, None, None, None, 12))
+# ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after rows 1, 3
+# and 5, which separates ACADEMY, the two Dark Colony entries, the two Council Wars entries and the
+# two pack entries, and the same half-height gap between the two columns (1 px in the stock grid),
+# after which the block is re-centred on the screen.  It is anchored on the bottom row and grows
+# upwards, into the space the credits box leaves - patch_ozi_menu.py removes that box, because the
+# seven-row block is 217 rows tall and the black band of the 640x480 backdrop is exactly 217 rows.
+OZI_GAP_AFTER = (1, 3, 5)           # 1-based row numbers
 OZI_GAP_OF_HEIGHT = 0.5             # of a button's height, between rows
 OZI_COL_GAP_OF_HEIGHT = 0.5         # of a button's height, between the columns
-OZI_GADGET = {0: 6, 1: 7, 2: 8, 3: 9, 4: 10, 5: 11, 12: 13, 16: 17}   # pushb -> its LARGEBUTTON
+STOCK_BUTTONS = (0, 1, 2, 3, 4, 5, 12, 16)      # the stock script's `pushb` ids
+STOCK_GADGETS = (8, 9, 10, 11, 13, 17)          # ... and the gadgets that keep their id
+OZI_NEW_BUTTONS = (6, 7)                        # the two Dark Colony buttons
+OZI_RENUM = {6: 19, 7: 20}                      # gadgets of buttons 0 and 1 -> free ids
+OZI_GADGET = {0: 19, 1: 20, 2: 8, 3: 9, 4: 10, 5: 11,
+              6: 21, 7: 22, 12: 13, 16: 17}     # pushb -> its LARGEBUTTON
+OZI_LABEL_OF = {6: 9, 7: 10}                    # the new buttons -> their `textmsg` number
+OZI_TEMPLATE = {'pushb': 16, 'gadget': 17, 'textmsg': 8}   # lines the new ones are cloned after
+OZI_BANIM = 18                                  # the `banim` object id (unchanged)
+OZI_BANIM_ORDER = (0, 1, 2, 3, 4, 5, 16, 12) + OZI_NEW_BUTTONS   # the stock pair order + the new pair
 OZI_LABELS = {                                  # `textmsg` number (button id) -> new text
     1: b'COUNCIL WARS',                         # button 0, was NEW CAMPAIGN
     2: b'ACADEMY',                              # button 1, was TRAINING
     3: b'LOAD CW GAME',                         # button 2, was LOAD GAME
     5: b'LOAD OZI GAME',                        # button 4, was SINGLE PLAYER WAR / OZI LOAD
     8: b'OZI MISSIONS',                         # button 16, was PLAY INTRO
+    9: b'DARK COLONY',                          # button 6, new
+    10: b'LOAD DC GAME',                        # button 7, new
 }
+# 640x480: the first row of the backdrop below the planet's crescent (measured on the button
+# columns of exp/intrface/intrg.gif, which is black from here to the artwork at row 435).  The
+# painted HD backdrops are black from far above the block, so only this size constrains it.
+STOCK_TOP_LIMIT = 218
+DC_OVERLAY = 'dc'                   # Dark Colony mode's prefix: only the menu script lives here
 
 
 def screen_geometry(menu_data):
@@ -233,46 +255,73 @@ def base_set(game, pack, plan):
         raise SystemExit('missing exp/%s/bintroe (run split_hd_data.py first)' % HD_DIR)
     data = open(menu, 'rb').read()
     new, place = menu_script(data)
-    if new != data:
-        plan.write(menu, new, 'OZI menu: five rows at x=%d / %d, y=%s; labels %s'
-                   % (place[1][0], place[3][0],
-                      '/'.join(str(place[i][1]) for i in OZI_COLUMNS[0]),
-                      ', '.join(t.decode() for t in OZI_LABELS.values())))
-    if LABEL_NEW not in new or b'LOAD OZI GAME' not in new:
+    plan.write(menu, new, 'patched menu: %d rows at x=%d / %d, y=%s; labels %s'
+               % (len(OZI_COLUMNS[0]), place[1][0], place[3][0],
+                  '/'.join(str(place[i][1]) for i in OZI_COLUMNS[0]),
+                  ', '.join(t.decode() for t in OZI_LABELS.values())))
+    if LABEL_NEW not in new or b'LOAD OZI GAME' not in new or b'DARK COLONY' not in new:
         plan.notes.append('WARNING exp/%s/bintroe: menu rows not recognised, edit by hand' % HD_DIR)
+    # The Dark Colony mode reads every file through its own prefix `dc/` (patch_ozi_menu.py) and
+    # falls back to the game root, which holds Classic's own data - including Classic's own menu
+    # script.  So the overlay carries this one file, the patched menu, and nothing else.
+    plan.write(os.path.join(game, DC_OVERLAY, HD_DIR, 'bintroe'), new,
+               'Dark Colony mode: the patched menu (the only file in %s/)' % DC_OVERLAY)
+
+
+def set_tokens(line, changes):
+    """Replace whitespace-separated tokens of a script line by 1-based number, keeping its spacing."""
+    toks, n = re.findall(rb'\S+|[ \t]+', line), 0
+    for i, tok in enumerate(toks):
+        if tok.isspace():
+            continue
+        n += 1
+        if n in changes:
+            toks[i] = changes[n]
+    return b''.join(toks)
+
+
+def textmsg_line(n, text):
+    """A `textmsg` line in the script's own column layout (the text starts at column 16)."""
+    num = b'%d' % n
+    return b'textmsg ' + num + b' ' * (8 - len(num)) + text
 
 
 def menu_layout(data):
-    """Where the OZI mode's five menu rows go, derived from the script's own button grid.
+    """Where the OZI mode's seven menu rows go, derived from the script's own button grid.
 
     The stock script (`exp/intrface/bintroe`, Classic's 2x4 grid since 23 Sep 2026, doc 10.35)
     is what the *untouched* exe reads; the patched builds read a copy of it in which this
-    function arranges the eight buttons in the order the maintainer asked for - the pack's two
-    entries next to the Council Wars ones, the campaign entries renamed after the two campaigns
-    and the rest of the second column left empty:
+    function arranges the ten buttons in the order the maintainer asked for - the Dark Colony,
+    Council Wars and pack campaigns one under the other, each with its load button, and the
+    three screens that are not a campaign in the second column:
 
         ACADEMY       (1)   MULTI PLAYER WAR (3)
+        DARK COLONY   (6)   ENCYCLOPEDIA     (5)
+        LOAD DC GAME  (7)
         COUNCIL WARS  (0)
-        LOAD CW GAME  (2)   ENCYCLOPEDIA     (5)
+        LOAD CW GAME  (2)
         OZI MISSIONS (16)
         LOAD OZI GAME (4)   QUIT            (12)
 
     Ids are the exe's button numbers, which decide the handler (patch_ozi_menu.py rewires 16 and
-    4 to the pack), so only the positions and the labels move.  The layout is anchored on the
-    **bottom** row of the grid it is given, which is the one position that must not move (the
-    640x480 backdrop's artwork starts 3 px below it, doc 10.27) - and because that row is the
-    same before and after, applying this twice changes nothing.  The fifth row is won at the top,
-    where the code-positioned credits box makes room: 8 px above the new first row in every
-    patched build (patch_resolution.credits_y(196, 296) at HD sizes, patch_ozi_menu's 640x480
-    site at the stock size).
+    4 to the pack and adds 6 and 7 for Dark Colony), so only the positions and the labels move.
+    The layout is anchored on the **bottom** row of the grid it is given, which is the one
+    position that must not move (the 640x480 backdrop's artwork starts 3 px below it, doc 10.27)
+    - and because that row is the same before and after, applying this twice changes nothing.
+    The rows above it are won from the credits box, which patch_ozi_menu.py removes; at 640x480
+    the group gap shrinks by a pixel so that the first row still clears the crescent.
 
     Returns ({id: (x, y)}, pitch)."""
     xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in LIVE_PUSHB.finditer(data)}
     gadgets = {int(m.group(1)) for m in LIVE_GADGET.finditer(data)}
-    missing = [str(n) for n in sorted(OZI_GADGET) if n not in xy]
-    missing += ['gadget %d' % n for n in sorted(OZI_GADGET.values()) if n not in gadgets]
+    missing = [str(n) for n in STOCK_BUTTONS if n not in xy]
+    missing += ['gadget %d' % n for n in STOCK_GADGETS if n not in gadgets]
+    if not (set(OZI_RENUM) <= gadgets or set(OZI_RENUM.values()) <= gadgets):
+        # the stock grid has them as 6 and 7, this function's own output as 19 and 20
+        missing += ['gadget %d/%d' % (a, b) for a, b in sorted(OZI_RENUM.items())]
     m = BANIM_PAIRS.search(data)
-    if missing or not m or m.group(1) != b'8' or m.group(2) != b'8':
+    pairs = (len(STOCK_BUTTONS), len(STOCK_BUTTONS) + len(OZI_NEW_BUTTONS))
+    if missing or not m or m.group(1) != m.group(2) or int(m.group(1)) not in pairs:
         raise SystemExit('exp/%s/bintroe: not Classic\'s 2x4 button grid (missing %s, banim %s) - '
                          'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'
                          % (HD_DIR, ', '.join(missing) or 'nothing',
@@ -286,13 +335,17 @@ def menu_layout(data):
     sizes = {(int(m.group(1)), int(m.group(2))) for m in
              re.finditer(rb'(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)\s', data)}
     bw, bh = min(w for w, _ in sizes), min(h for _, h in sizes)
+    rows = len(OZI_COLUMNS[0])
+    w, h = screen_geometry(data)
+    top_limit = STOCK_TOP_LIMIT if (w, h) == (640, 480) else 0
     gap = int(round(bh * OZI_GAP_OF_HEIGHT))
-    # row offsets from the first row: one pitch per row plus a gap after rows OZI_GAP_AFTER
-    offs = [k * pitch + gap * sum(1 for r in OZI_GAP_AFTER if r <= k)
-            for k in range(len(OZI_COLUMNS[0]))]
-    # the two columns get the same gap and the block is re-centred on the screen
+    while gap > 0 and ys[-1] - ((rows - 1) * pitch + gap * len(OZI_GAP_AFTER)) < top_limit:
+        gap -= 1
+    # row offsets from the first row: one pitch per row plus a gap after the rows in OZI_GAP_AFTER
+    offs = [k * pitch + gap * sum(1 for r in OZI_GAP_AFTER if r <= k) for k in range(rows)]
+    # the two columns get the full half-height gap and the block is re-centred on the screen
     col_gap = int(round(bh * OZI_COL_GAP_OF_HEIGHT))
-    left = (screen_geometry(data)[0] - (2 * bw + col_gap)) // 2
+    left = (w - (2 * bw + col_gap)) // 2
     cols = (left, left + bw + col_gap)
     place = {}
     for x, ids in zip(cols, OZI_COLUMNS):
@@ -303,34 +356,59 @@ def menu_layout(data):
 
 
 def menu_script(data):
-    """Lay the Council Wars main-menu script out for the OZI mode: five rows in the order of
-    menu_layout(), the five labels the two campaigns and the pack take over, everything else
-    (sizes, sprites, animations, `banim` pairs, the logo and the title) untouched.  Idempotent.
-    The stock file mixes CRLF and bare LF line endings; each line keeps its own.
+    """Lay the Council Wars main-menu script out for the patched exe: the rows of menu_layout(),
+    the labels the three campaigns take over, the two new Dark Colony buttons with their plates
+    and a `banim` that pairs all ten, everything else (sizes, sprites, the logo and the title)
+    untouched.  The new lines are cloned from the script's own `pushb 16` / `gadget 17` /
+    `textmsg 8` so they keep its field layout, and re-cloned on a second run, which makes this
+    idempotent.  The stock file mixes CRLF and bare LF line endings; each line keeps its own.
     Returns (new data, {id: (x, y)})."""
     place, _ = menu_layout(data)
     move = dict(place)
     move.update({OZI_GADGET[i]: xy for i, xy in place.items()})   # each gadget follows its button
+    generated = {b'pushb': set(OZI_NEW_BUTTONS),
+                 b'gadget': {OZI_GADGET[i] for i in OZI_NEW_BUTTONS},
+                 b'textmsg': set(OZI_LABEL_OF.values())}
     out = []
     for raw in data.split(b'\n'):
         line, cr = (raw[:-1], b'\r') if raw.endswith(b'\r') else (raw, b'')
         m = re.match(rb'\s*(pushb|gadget)\s+(\d+)\s', line)
         t = re.match(rb'\s*textmsg\s+(\d+)\s', line)
-        if m and int(m.group(2)) in move:            # button and gadget ids do not overlap
-            x, y = move[int(m.group(2))]
-            toks, n = re.findall(rb'\S+|[ \t]+', line), 0
-            for i, tok in enumerate(toks):
-                if tok.isspace():
-                    continue
-                n += 1
-                if n == 4:
-                    toks[i] = b'%d' % x
-                elif n == 5:
-                    toks[i] = b'%d' % y
-                    break
-            line = b''.join(toks)
-        elif t and int(t.group(1)) in OZI_LABELS:
-            line = b'textmsg %d       %s' % (int(t.group(1)), OZI_LABELS[int(t.group(1))])
+        if m:
+            kind, i = m.group(1), int(m.group(2))
+            if i in generated[kind]:
+                continue                                  # re-emitted after its template line
+            if kind == b'gadget' and i in OZI_RENUM:       # free the ids the new buttons take
+                line, i = set_tokens(line, {2: b'%d' % OZI_RENUM[i]}), OZI_RENUM[i]
+            if i in move:
+                line = set_tokens(line, {4: b'%d' % move[i][0], 5: b'%d' % move[i][1]})
+            out.append(line + cr)
+            if i == OZI_TEMPLATE[kind.decode()]:
+                for new in OZI_NEW_BUTTONS:
+                    x, y = place[new]
+                    ident = new if kind == b'pushb' else OZI_GADGET[new]
+                    changes = {2: b'%d' % ident, 4: b'%d' % x, 5: b'%d' % y}
+                    if kind == b'pushb':
+                        changes[12] = b'%d' % OZI_LABEL_OF[new]
+                    out.append(set_tokens(line, changes) + cr)
+            continue
+        if t:
+            n = int(t.group(1))
+            if n in generated[b'textmsg']:
+                continue
+            if n in OZI_LABELS:
+                line = textmsg_line(n, OZI_LABELS[n])
+            out.append(line + cr)
+            if n == OZI_TEMPLATE['textmsg']:
+                for new in OZI_NEW_BUTTONS:
+                    label = OZI_LABEL_OF[new]
+                    out.append(textmsg_line(label, OZI_LABELS[label]) + cr)
+            continue
+        if re.match(rb'\s*banim\s+\d+\s', line):
+            ids = OZI_BANIM_ORDER
+            line = b'banim   %d  0  %d %d\t %s  %s' % (
+                OZI_BANIM, len(ids), len(ids),
+                b' '.join(b'%d' % OZI_GADGET[i] for i in ids), b' '.join(b'%d' % i for i in ids))
         out.append(line + cr)
     return b'\n'.join(out), place
 
