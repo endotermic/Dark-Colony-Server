@@ -1827,10 +1827,12 @@ function Edit-DatList([string] $Text) {
 #     OZI MISSIONS (16)
 #     LOAD OZI GAME (4)   QUIT            (12)
 #
-# The block is anchored on the BOTTOM row of the grid in the script - the one row that must not move,
-# since the 640x480 backdrop's artwork starts 3 px below it - so applying this twice changes nothing.
-# The fifth row is won at the top, where the code-positioned credits box moves up by one row and a bit
-# (patch_resolution's credits_y(196, 296) at HD sizes, patch_ozi_menu's 640x480 site at the stock size).
+# with a gap of about a quarter button height (6 px) after rows 1 and 3, which separates ACADEMY, the
+# two Council Wars entries and the two pack entries.  The block is anchored on the BOTTOM row of the
+# grid in the script - the one row that must not move, since the 640x480 backdrop's artwork starts 3 px
+# below it - so applying this twice changes nothing.  The two gaps and the fifth row are won at the top,
+# out of the credits box: it moves up and gets 20 rows shorter (patch_resolution's credits_y(204, 296)
+# plus that build's height site at HD sizes, patch_ozi_menu's two 640x480 sites at the stock size).
 # The untouched exe keeps Classic's four-row grid and labels in exp\intrface\bintroe (doc 10.35).
 function Edit-OziMenu([string] $Text) {
     $cols = @(@(1, 0, 2, 16, 4), @(3, $null, 5, $null, 12))
@@ -1852,12 +1854,22 @@ function Edit-OziMenu([string] $Text) {
     $pitch = [int]::MaxValue
     for ($i = 1; $i -lt $ys.Count; $i++) { if ($ys[$i] - $ys[$i - 1] -lt $pitch) { $pitch = $ys[$i] - $ys[$i - 1] } }
     $bottom = $ys[$ys.Count - 1]
+    # the maintainer's grouping: about a quarter of a button's height after rows 1 and 3
+    $hs = @([regex]::Matches($Text, '(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s') | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object)
+    $gap = [int][Math]::Round($hs[0] * 0.25)
+    $rows = $cols[0].Count
+    $offs = @()
+    for ($k = 0; $k -lt $rows; $k++) {
+        $extra = 0
+        foreach ($r in 1, 3) { if ($r -le $k) { $extra += $gap } }
+        $offs += ($k * $pitch + $extra)
+    }
     $move = @{}
     for ($c = 0; $c -lt $cols.Count; $c++) {
         for ($k = 0; $k -lt $cols[$c].Count; $k++) {
             $id = $cols[$c][$k]
             if ($null -ne $id) {
-                $pos = @($xs[$c], ($bottom - ($cols[$c].Count - 1 - $k) * $pitch))
+                $pos = @($xs[$c], ($bottom - ($offs[$rows - 1] - $offs[$k])))
                 $move[[int]$id] = $pos
                 $move[[int]$gadgetOf[[int]$id]] = $pos        # the gadget follows its button
             }

@@ -110,8 +110,15 @@ BUILDS = {
             # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 8 px above
             # the patched menu's five-row block (comment above)
             0x42A0: dict(value=lambda g: (g.w - CREDITS_W) // 2),
-            0x4299: dict(expected='bbe6000000', value=credits_y(196, 296)),
-        }),
+            0x4299: dict(expected='bbe6000000', value=credits_y(204, 296)),
+        },
+        # The one site that exists in this build only: the patched menu's fifth row is won ABOVE
+        # the grid (build_ozi_overlay.menu_layout), and the space comes out of the credits box,
+        # which the maintainer's row grouping (a gap of a quarter button height after rows 1 and 3)
+        # needs 20 rows of.  Classic keeps its four-row menu and its 100-row box, so this cannot be
+        # a fixup of a shared site.  `push 64h` -> `push 50h` at main.c bintro's TTY create call.
+        sites=[(2, 0x429E, '6a64', None, lambda g: bytes.fromhex('6a50'),
+                'menu: intro credits text height 100 -> 80 (room for the OZI menu row)')]),
 }
 
 # ENGEXP16 is Classic shifted by +0x60 in AUTO from about 0x6000 onward, and +0 below it, with
@@ -713,7 +720,7 @@ def resolve(data, path, build, geom, stage, exclude=()):
                            (anchor + 8, geom.h, 'screen height global')):
         edits.append((off, data[off:off + 4], struct.pack('<I', val), what))
 
-    for site in sites_for(geom):
+    for site in sites_for(geom) + build.get('sites', []):
         site_stage, classic_off, _, _, _, what = site
         if site_stage > stage:
             continue
@@ -772,7 +779,7 @@ def cmd_verify(path):
         geom.dgroup_shift = cand['dgroup']
         geom.bss_shift = cand['bss']
         tally = {}
-        for site in sites_for(geom):
+        for site in sites_for(geom) + cand.get('sites', []):
             site_stage, classic_off = site[0], site[1]
             exp, want = expected_and_target(site, geom, cand)
             got = data[auto_offset(classic_off, cand):][:len(exp)]

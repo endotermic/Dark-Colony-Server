@@ -257,14 +257,19 @@ STOCK_MODE_SITES = [
      0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
 ]
 # 640x480 only (23 Sep 2026): the OZI menu has five rows (build_ozi_overlay.menu_layout - the pack's
-# two entries below the Council Wars ones), won above the four-row grid, and the code-positioned
-# credits box has to move up to make room: 8 px above the first row, i.e. y = 304 - 100 - 8 = 196
-# instead of 230 (main.c bintro `mov ebx,imm32` at 0x00404E99; x = 178 stays).  At HD sizes the same
-# value comes from patch_resolution.py's stage-2 fixup (credits_y(196, 296)); at the stock size that
-# fix does not run at all, so the OZI mode writes it here.
+# two entries below the Council Wars ones) with a gap of a quarter button height after rows 1 and 3,
+# and the block is anchored on the bottom row, so it grows upwards into the credits box.  The box
+# therefore gets 20 rows shorter and moves up, to 8 px above the first row: y = 292 - 80 - 8 = 204
+# (was 230) and height 80 (was 100), both immediates of main.c bintro's TTY create call (x = 178
+# stays).  At HD sizes those two values come from patch_resolution.py (fixup credits_y(204, 296) and
+# the build's own height site); at the stock size that fix does not run at all, so the OZI mode
+# writes them here.  `bbc4000000` is accepted as an earlier form: the same site with y = 196, from
+# the first version of the five-row menu (no row gaps, 100-row box).
 STOCK_MODE_CODE_SITES = [
-    ('credits box y 230 -> 196 (640x480: room for the five-row OZI menu)',
-     0x404E99, [bytes.fromhex('bbe6000000')], bytes.fromhex('bbc4000000')),
+    ('credits box y 230 -> 204 (640x480: room for the five-row OZI menu)',
+     0x404E99, [bytes.fromhex('bbe6000000'), bytes.fromhex('bbc4000000')], bytes.fromhex('bbcc000000')),
+    ('credits box height 100 -> 80 (640x480: room for the five-row OZI menu)',
+     0x404E9E, [bytes.fromhex('6a64')], bytes.fromhex('6a50')),
 ]
 
 

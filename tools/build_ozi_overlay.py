@@ -112,6 +112,12 @@ BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 # The patched Council Wars menu (maintainer, 23 Sep 2026), by exe button id; see menu_layout().
 # `None` = an empty place in the second column.
 OZI_COLUMNS = ((1, 0, 2, 16, 4), (3, None, 5, None, 12))
+# ... and the maintainer's grouping: a gap of about a quarter of a button's height (25 -> 6 px)
+# after row 1 and after row 3, which separates ACADEMY, the two Council Wars entries and the two
+# pack entries. The block grows upwards by the two gaps (it is anchored on the bottom row), into
+# the space the shortened credits box leaves (patch_resolution.CREDITS_H_CW).
+OZI_GAP_AFTER = (1, 3)              # 1-based row numbers
+OZI_GAP_OF_HEIGHT = 0.25
 OZI_GADGET = {0: 6, 1: 7, 2: 8, 3: 9, 4: 10, 5: 11, 12: 13, 16: 17}   # pushb -> its LARGEBUTTON
 OZI_LABELS = {                                  # `textmsg` number (button id) -> new text
     1: b'COUNCIL WARS',                         # button 0, was NEW CAMPAIGN
@@ -275,12 +281,17 @@ def menu_layout(data):
         raise SystemExit('exp/%s/bintroe: expected two button columns and at least four rows, '
                          'found %d x %d' % (HD_DIR, len(xs), len(ys)))
     pitch = min(b - a for a, b in zip(ys, ys[1:]))
-    rows = len(OZI_COLUMNS[0])
+    heights = {int(m.group(1)) for m in
+               re.finditer(rb'(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s', data)}
+    gap = int(round(min(heights) * OZI_GAP_OF_HEIGHT))
+    # row offsets from the first row: one pitch per row plus a gap after rows OZI_GAP_AFTER
+    offs = [k * pitch + gap * sum(1 for r in OZI_GAP_AFTER if r <= k)
+            for k in range(len(OZI_COLUMNS[0]))]
     place = {}
     for x, ids in zip(xs, OZI_COLUMNS):
         for k, i in enumerate(ids):
             if i is not None:
-                place[i] = (x, ys[-1] - (rows - 1 - k) * pitch)
+                place[i] = (x, ys[-1] - (offs[-1] - offs[k]))
     return place, pitch
 
 
