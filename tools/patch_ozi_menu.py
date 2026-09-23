@@ -258,18 +258,21 @@ STOCK_MODE_SITES = [
 ]
 # 640x480 only (23 Sep 2026): the OZI menu has five rows (build_ozi_overlay.menu_layout - the pack's
 # two entries below the Council Wars ones) with a gap of a quarter button height after rows 1 and 3,
-# and the block is anchored on the bottom row, so it grows upwards into the credits box.  The box
-# therefore gets 20 rows shorter and moves up, to 8 px above the first row: y = 292 - 80 - 8 = 204
-# (was 230) and height 80 (was 100), both immediates of main.c bintro's TTY create call (x = 178
-# stays).  At HD sizes those two values come from patch_resolution.py (fixup credits_y(204, 296) and
-# the build's own height site); at the stock size that fix does not run at all, so the OZI mode
-# writes them here.  `bbc4000000` is accepted as an earlier form: the same site with y = 196, from
-# the first version of the five-row menu (no row gaps, 100-row box).
+# with half-button-height gaps after rows 1 and 3, and the block is anchored on the bottom row, so it
+# grows upwards into the credits box: rows 278..432, i.e. the box has to end by 277.  This mode gets
+# its own pair of values, not the HD ones, because the *stock* 640x480 backdrop draws the planet's
+# crescent across rows 198..218 (measured; the painted HD backdrops are black there): y = 219, the
+# first black row, and height 52, which ends at 270 - 7 px above the first button.  Both are
+# immediates of main.c bintro's TTY create call (x = 178 and the width 280 stay).  At HD sizes the
+# equivalent values (y 203, height 68) come from patch_resolution.py instead; at the stock size that
+# fix does not run at all.  The earlier forms of this patch (y 196 / 204, height 80) are accepted as
+# input, so an older patched exe upgrades in place.
 STOCK_MODE_CODE_SITES = [
-    ('credits box y 230 -> 204 (640x480: room for the five-row OZI menu)',
-     0x404E99, [bytes.fromhex('bbe6000000'), bytes.fromhex('bbc4000000')], bytes.fromhex('bbcc000000')),
-    ('credits box height 100 -> 80 (640x480: room for the five-row OZI menu)',
-     0x404E9E, [bytes.fromhex('6a64')], bytes.fromhex('6a50')),
+    ('credits box y 230 -> 219 (640x480: clear of the crescent, above the five-row OZI menu)',
+     0x404E99, [bytes.fromhex('bbe6000000'), bytes.fromhex('bbc4000000'), bytes.fromhex('bbcc000000')],
+     bytes.fromhex('bbdb000000')),
+    ('credits box height 100 -> 52 (640x480: room for the five-row OZI menu)',
+     0x404E9E, [bytes.fromhex('6a64'), bytes.fromhex('6a50')], bytes.fromhex('6a34')),
 ]
 
 

@@ -112,12 +112,14 @@ BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 # The patched Council Wars menu (maintainer, 23 Sep 2026), by exe button id; see menu_layout().
 # `None` = an empty place in the second column.
 OZI_COLUMNS = ((1, 0, 2, 16, 4), (3, None, 5, None, 12))
-# ... and the maintainer's grouping: a gap of about a quarter of a button's height (25 -> 6 px)
-# after row 1 and after row 3, which separates ACADEMY, the two Council Wars entries and the two
-# pack entries. The block grows upwards by the two gaps (it is anchored on the bottom row), into
-# the space the shortened credits box leaves (patch_resolution.CREDITS_H_CW).
+# ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after row 1 and
+# after row 3, which separates ACADEMY, the two Council Wars entries and the two pack entries, and
+# the same half-height gap between the two columns (1 px in the stock grid), after which the block
+# is re-centred on the screen. It grows upwards by the two row gaps (it is anchored on the bottom
+# row), into the space the shortened credits box leaves (patch_resolution / patch_ozi_menu).
 OZI_GAP_AFTER = (1, 3)              # 1-based row numbers
-OZI_GAP_OF_HEIGHT = 0.25
+OZI_GAP_OF_HEIGHT = 0.5             # of a button's height, between rows
+OZI_COL_GAP_OF_HEIGHT = 0.5         # of a button's height, between the columns
 OZI_GADGET = {0: 6, 1: 7, 2: 8, 3: 9, 4: 10, 5: 11, 12: 13, 16: 17}   # pushb -> its LARGEBUTTON
 OZI_LABELS = {                                  # `textmsg` number (button id) -> new text
     1: b'COUNCIL WARS',                         # button 0, was NEW CAMPAIGN
@@ -275,20 +277,25 @@ def menu_layout(data):
                          'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'
                          % (HD_DIR, ', '.join(missing) or 'nothing',
                             b' '.join(m.groups()).decode() if m else 'absent'))
-    xs = sorted({x for x, _ in xy.values()})
+    xs = sorted({x for x, _ in xy.values()})      # only checked, not used: see below
     ys = sorted({y for _, y in xy.values()})
     if len(xs) != 2 or len(ys) < 4:
         raise SystemExit('exp/%s/bintroe: expected two button columns and at least four rows, '
                          'found %d x %d' % (HD_DIR, len(xs), len(ys)))
     pitch = min(b - a for a, b in zip(ys, ys[1:]))
-    heights = {int(m.group(1)) for m in
-               re.finditer(rb'(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s', data)}
-    gap = int(round(min(heights) * OZI_GAP_OF_HEIGHT))
+    sizes = {(int(m.group(1)), int(m.group(2))) for m in
+             re.finditer(rb'(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)\s', data)}
+    bw, bh = min(w for w, _ in sizes), min(h for _, h in sizes)
+    gap = int(round(bh * OZI_GAP_OF_HEIGHT))
     # row offsets from the first row: one pitch per row plus a gap after rows OZI_GAP_AFTER
     offs = [k * pitch + gap * sum(1 for r in OZI_GAP_AFTER if r <= k)
             for k in range(len(OZI_COLUMNS[0]))]
+    # the two columns get the same gap and the block is re-centred on the screen
+    col_gap = int(round(bh * OZI_COL_GAP_OF_HEIGHT))
+    left = (screen_geometry(data)[0] - (2 * bw + col_gap)) // 2
+    cols = (left, left + bw + col_gap)
     place = {}
-    for x, ids in zip(xs, OZI_COLUMNS):
+    for x, ids in zip(cols, OZI_COLUMNS):
         for k, i in enumerate(ids):
             if i is not None:
                 place[i] = (x, ys[-1] - (offs[-1] - offs[k]))

@@ -82,10 +82,12 @@ ANCHOR_PREFIX = bytes.fromhex('4f016e01')
 # (rows 159..443) and credits from y = 230, both belonging to its four-row menu. Its script is
 # Classic's 2x4 grid now, lowered by 16 px to y=330 because the *unpatched* exe cannot move its
 # credits box (immediate 230, box 230..329) off the top button row (doc 10.35), so the cluster
-# centre is 296 (rows 159..433). The PATCHED menu has a fifth row, won above the grid
-# (build_ozi_overlay.menu_layout: rows 304..408 at the stock size), and the box moves up to clear
-# it: stock-equivalent y = 304 - 100 - 8 = 196, which the fixup writes over the 230. At 640x480,
-# where this fix does not run, patch_ozi_menu.py writes the same 196 with the OZI mode.
+# centre is 296 (rows 159..433). The PATCHED menu has a fifth row and two half-button-height gaps, all
+# won above the grid (build_ozi_overlay.menu_layout: rows 278..432 at the stock size), so the box
+# moves up AND gets shorter: 68 rows at stock-equivalent y = 203, i.e. 7 px above the first button
+# row. The painted HD backdrops are black there (measured: x 454..824, rows 380..518 at 1280x800).
+# At 640x480, where this fix does not run, patch_ozi_menu.py writes that mode's own pair - y = 219
+# and 52 rows - because the stock backdrop has the planet's crescent at rows 198..218.
 CREDITS_W = 280
 LOGO_CLEARANCE = 20
 
@@ -110,15 +112,15 @@ BUILDS = {
             # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 8 px above
             # the patched menu's five-row block (comment above)
             0x42A0: dict(value=lambda g: (g.w - CREDITS_W) // 2),
-            0x4299: dict(expected='bbe6000000', value=credits_y(204, 296)),
+            0x4299: dict(expected='bbe6000000', value=credits_y(203, 296)),
         },
         # The one site that exists in this build only: the patched menu's fifth row is won ABOVE
         # the grid (build_ozi_overlay.menu_layout), and the space comes out of the credits box,
         # which the maintainer's row grouping (a gap of a quarter button height after rows 1 and 3)
         # needs 20 rows of.  Classic keeps its four-row menu and its 100-row box, so this cannot be
         # a fixup of a shared site.  `push 64h` -> `push 50h` at main.c bintro's TTY create call.
-        sites=[(2, 0x429E, '6a64', None, lambda g: bytes.fromhex('6a50'),
-                'menu: intro credits text height 100 -> 80 (room for the OZI menu row)')]),
+        sites=[(2, 0x429E, '6a64', None, lambda g: bytes.fromhex('6a44'),
+                'menu: intro credits text height 100 -> 68 (room for the OZI menu rows)')]),
 }
 
 # ENGEXP16 is Classic shifted by +0x60 in AUTO from about 0x6000 onward, and +0 below it, with

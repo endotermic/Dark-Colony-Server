@@ -1827,12 +1827,14 @@ function Edit-DatList([string] $Text) {
 #     OZI MISSIONS (16)
 #     LOAD OZI GAME (4)   QUIT            (12)
 #
-# with a gap of about a quarter button height (6 px) after rows 1 and 3, which separates ACADEMY, the
-# two Council Wars entries and the two pack entries.  The block is anchored on the BOTTOM row of the
-# grid in the script - the one row that must not move, since the 640x480 backdrop's artwork starts 3 px
-# below it - so applying this twice changes nothing.  The two gaps and the fifth row are won at the top,
-# out of the credits box: it moves up and gets 20 rows shorter (patch_resolution's credits_y(204, 296)
-# plus that build's height site at HD sizes, patch_ozi_menu's two 640x480 sites at the stock size).
+# with a gap of half a button height (12 px) after rows 1 and 3, which separates ACADEMY, the two
+# Council Wars entries and the two pack entries, and the same gap between the two columns, after which
+# the block is re-centred on the screen.  It is anchored on the BOTTOM row of the grid in the script -
+# the one row that must not move, since the 640x480 backdrop's artwork starts 3 px below it - so
+# applying this twice changes nothing.  The two row gaps and the fifth row are won at the top, out of
+# the credits box, which moves up and gets shorter: 68 rows at y = 203 through patch_resolution
+# (credits_y(203, 296) plus that build's own height site), and 52 rows at y = 219 at 640x480 through
+# patch_ozi_menu, because the stock backdrop there draws the planet's crescent across rows 198..218.
 # The untouched exe keeps Classic's four-row grid and labels in exp\intrface\bintroe (doc 10.35).
 function Edit-OziMenu([string] $Text) {
     $cols = @(@(1, 0, 2, 16, 4), @(3, $null, 5, $null, 12))
@@ -1854,9 +1856,13 @@ function Edit-OziMenu([string] $Text) {
     $pitch = [int]::MaxValue
     for ($i = 1; $i -lt $ys.Count; $i++) { if ($ys[$i] - $ys[$i - 1] -lt $pitch) { $pitch = $ys[$i] - $ys[$i - 1] } }
     $bottom = $ys[$ys.Count - 1]
-    # the maintainer's grouping: about a quarter of a button's height after rows 1 and 3
-    $hs = @([regex]::Matches($Text, '(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s') | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object)
-    $gap = [int][Math]::Round($hs[0] * 0.25)
+    # the maintainer's grouping: half a button's height after rows 1 and 3, and the same between the
+    # columns, after which the block is re-centred on the screen (25 * 0.5 rounds to 12 in .NET and
+    # in Python alike, so both implementations produce the same bytes)
+    $sz = [regex]::Matches($Text, '(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)\s')   # two passes: a
+    $bw = ($sz | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Minimum).Minimum      # pipeline flattens
+    $bh = ($sz | ForEach-Object { [int]$_.Groups[2].Value } | Measure-Object -Minimum).Minimum      # nested arrays
+    $gap = [int][Math]::Round($bh * 0.5)
     $rows = $cols[0].Count
     $offs = @()
     for ($k = 0; $k -lt $rows; $k++) {
@@ -1864,12 +1870,16 @@ function Edit-OziMenu([string] $Text) {
         foreach ($r in 1, 3) { if ($r -le $k) { $extra += $gap } }
         $offs += ($k * $pitch + $extra)
     }
+    $m4 = $SIZE4.Match($Text); $m2 = $SIZE2.Match($Text)
+    $screenW = if ($m4.Success) { [int]$m4.Groups[5].Value } elseif ($m2.Success) { [int]$m2.Groups[3].Value } else { throw 'bintroe: no size line' }   # SIZE4 = size X Y W H
+    $left = [int][Math]::Floor(($screenW - (2 * $bw + $gap)) / 2)
+    $colX = @($left, ($left + $bw + $gap))
     $move = @{}
     for ($c = 0; $c -lt $cols.Count; $c++) {
         for ($k = 0; $k -lt $cols[$c].Count; $k++) {
             $id = $cols[$c][$k]
             if ($null -ne $id) {
-                $pos = @($xs[$c], ($bottom - ($offs[$rows - 1] - $offs[$k])))
+                $pos = @($colX[$c], ($bottom - ($offs[$rows - 1] - $offs[$k])))
                 $move[[int]$id] = $pos
                 $move[[int]$gadgetOf[[int]$id]] = $pos        # the gadget follows its button
             }

@@ -135,11 +135,13 @@ PIECE_MIN_PX = 100
 # Council Wars' 230 went with its own four-row menu (buttons from y=340); since 23 Sep 2026 its
 # script is Classic's 2x4 grid, lowered by 16 px to y=330 so that the box (230..329 in the
 # *unpatched* exe, where the immediate cannot be changed) no longer overlaps the top button row
-# (doc 10.35). The PATCHED menu takes a fifth row above the grid (build_ozi_overlay.menu_layout:
-# 304..408 at the stock size), so wherever the exe IS patched the box moves up to 8 px above it:
-# 304 - 100 - 8 = 196; 230 is what the stock exe holds and what the fixup overwrites.
+# (doc 10.35). The PATCHED menu takes a fifth row and two half-button-height gaps above the grid
+# (build_ozi_overlay.menu_layout: rows 278..432 at the stock size), so wherever the exe IS patched
+# the box moves up to 7 px above it and gets shorter: 68 rows at y = 203 (HD sizes), 52 rows at
+# y = 219 at 640x480, where the stock backdrop's crescent occupies rows 198..218. 230 and 100 are
+# what the stock exe holds and what patch_resolution.py / patch_ozi_menu.py overwrite.
 CREDITS_W = 280
-CREDITS_STOCK_Y = {'classic': 200, 'council wars': 196}
+CREDITS_STOCK_Y = {'classic': 200, 'council wars': 203}
 CREDITS_EXE_IMM_Y = {'classic': 200, 'council wars': 230}
 
 
