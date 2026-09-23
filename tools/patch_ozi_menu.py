@@ -34,8 +34,10 @@ sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overla
    (gs+0x14F4 = 1 "expansion scenes", gs+0x14F0 = 0 "campaign"), calls `stub_pack` to write the
    pack strings into the four slots and enters the campaign runner 0x401C08; the rest of the
    old handler is NOP padding.
-2. NEW CAMPAIGN and TRAINING reach the campaign runner through `call 0x401C08` at 0x405065 and
-   0x405083; both calls go through `tramp_cw_campaign` (Council Wars strings, then 0x401C08).
+2. NEW CAMPAIGN reaches the campaign runner through `call 0x401C08` at 0x405065, which goes
+   through `tramp_cw_campaign` (Council Wars strings, then 0x401C08).  TRAINING does the same at
+   0x405083, but through `tramp_dc_campaign` since 23 Sep 2026: ACADEMY plays SCENARIO/TEST off
+   the Classic training scene lists, so its saves belong in `save` and its briefings in MISSION/.
 3. LOAD GAME (button id 2, `call 0x403AA4` at 0x4050BF) goes through `tramp_cw_load`: it
    always lists and loads Council Wars saves (`esave`).
 4. SINGLE PLAYER WAR (button id 4, `call 0x405AE4` at 0x4050AB, its only caller) becomes
@@ -98,7 +100,8 @@ DGROUP_VA_TO_FILE = 0x402600    # DCEXP16: DGROUP at VA 0x482000 = file 0x7FA00
 HANDLER = 0x4050DD              # PLAY INTRO handler body (after `cmp edi,10h / jne`)
 HANDLER_LEN = 0x60              # up to and including `call 00401028` at 0x405138
 HANDLER_EXIT = 0x40513D         # between-mission loop shared by every campaign button
-NEW_CAMPAIGN_CALLS = (0x405065, 0x405083)   # `call 00401C08` in the NEW CAMPAIGN / TRAINING handlers
+NEW_CAMPAIGN_CALL = 0x405065    # `call 00401C08` in the NEW CAMPAIGN handler (button id 0)
+TRAINING_CALL = 0x405083        # ... and in the TRAINING / ACADEMY handler (button id 1)
 LOAD_GAME_CALL = 0x4050BF       # `call 00403AA4` in the LOAD GAME handler (button id 2)
 SINGLE_WAR_CALL = 0x4050AB      # `call 00405AE4` in the SINGLE PLAYER WAR handler (button id 4)
 CAMPAIGN_RUNNER = 0x401C08
@@ -271,9 +274,18 @@ def build():
               tramp(TRAMP_CW_LOAD, STUB_CW, LOAD_GAME)),
              ('tramp_pack_load (stub_pack; jmp 403AA4)', TRAMP_PACK_LOAD, [bytes(10)],
               tramp(TRAMP_PACK_LOAD, STUB_PACK, LOAD_GAME))]
-    for va in NEW_CAMPAIGN_CALLS:
-        sites.append(('NEW CAMPAIGN/TRAINING call -> tramp_cw_campaign', va,
-                      [call(va, CAMPAIGN_RUNNER), call(va, STUB_CW)], call(va, TRAMP_CW_CAMPAIGN)))
+    sites.append(('NEW CAMPAIGN call -> tramp_cw_campaign', NEW_CAMPAIGN_CALL,
+                  [call(NEW_CAMPAIGN_CALL, CAMPAIGN_RUNNER), call(NEW_CAMPAIGN_CALL, STUB_CW)],
+                  call(NEW_CAMPAIGN_CALL, TRAMP_CW_CAMPAIGN)))
+    # ACADEMY (TRAINING) plays SCENARIO/TEST off the Classic scene lists htscene / gtscene, which the
+    # Council Wars prefix never shadows, so it is a Dark Colony campaign in everything but the flag:
+    # its saves belong in `save` next to them (maintainer, 23 Sep 2026) and its briefings in MISSION/
+    # rather than the Council Wars ones in exp/mission (the same shadowing that the Classic `sounds`
+    # fix removed from dc16.exe, doc 10.21).
+    sites.append(('ACADEMY (TRAINING) call -> tramp_dc_campaign', TRAINING_CALL,
+                  [call(TRAINING_CALL, CAMPAIGN_RUNNER), call(TRAINING_CALL, STUB_CW),
+                   call(TRAINING_CALL, TRAMP_CW_CAMPAIGN)],
+                  call(TRAINING_CALL, TRAMP_DC_CAMPAIGN)))
     sites.append(('LOAD GAME call -> tramp_cw_load', LOAD_GAME_CALL,
                   [call(LOAD_GAME_CALL, LOAD_GAME)], call(LOAD_GAME_CALL, TRAMP_CW_LOAD)))
     sites.append(('OZI LOAD (was SINGLE PLAYER WAR) call -> tramp_pack_load', SINGLE_WAR_CALL,

@@ -4144,7 +4144,21 @@ rebuilds the tool chain's exe byte for byte at 1024x768 (`a19972fb…`) and 640x
 work now".** DARK COLONY reaches the race overview and plays the original campaign out of the
 Council Wars build.
 
-**Still open.** A save round-trip through LOAD DC GAME (nothing outside the menu writes
+**ACADEMY joined the mode the same evening** (maintainer: "ACADEMY saves goes to COUNCIL WARS
+saves. save them in DARK COLONY instead"). TRAINING has always been Classic content - it plays
+`SCENARIO/TEST/htrain1..7` off the Classic training lists `intrf_hd/htscene` / `gtscene`, which no
+`exp/` file shadows - but its handler still reached the campaign runner through
+`tramp_cw_campaign`, so it ran in Council Wars mode and wrote its saves to `esave`. Its `call` at
+`0x00405083` now goes to `tramp_dc_campaign` instead (the same trampoline DARK COLONY uses, five
+bytes), which puts the training saves in `save/` beside the Dark Colony campaign's - exactly where
+`dc16new.exe` puts its own - and lists them under LOAD DC GAME. A second effect comes free: the
+briefing of training mission *n* is `mission/h<n>.wav`, and under the `exp/` prefix that resolved
+to `exp/mission/h1..h7.wav`, the **Council Wars** briefings; through `dc/` it falls back to the
+root `MISSION/H1..H7.WAV`, the Classic ones. This is the same shadowing the Classic `sounds` fix
+took out of `dc16.exe` (§10.21), one button later. NEW CAMPAIGN keeps `tramp_cw_campaign`.
+
+**Still open.** A training save round-trip (ACADEMY -> save -> LOAD DC GAME) and one for the
+campaign (nothing outside the menu writes
 `gs+0x14F4`, so the campaign record has to come back from the save file - as LOAD CW GAME has
 assumed since 10 Sep), and a check that COUNCIL WARS / OZI MISSIONS still behave after a Classic
 campaign has made the mode sticky. One known deviation, left in deliberately: the six **campaign
