@@ -132,8 +132,14 @@ PIECE_MIN_PX = 100
 # main.c bintro creates the scrolling credits TTY (280x100) at an imm32 x/y (doc 10.7):
 # Classic (178, 200), Council Wars DCEXP16 (178, 230) with its own exp/intrface/credits.txt. It belongs to
 # the cluster and moves with it; the numbers are patched by patch_resolution.py.
+# Council Wars' 230 went with its own four-row menu (buttons from y=340); since 23 Sep 2026 its
+# script is Classic's 2x4 grid, lowered by 16 px to y=330 so that the box (230..329 in the
+# *unpatched* exe, where the immediate cannot be changed) no longer overlaps the top button row
+# (doc 10.35). Wherever the exe IS patched the box goes 14 px above that row - the stock Classic
+# gap - i.e. 330 - 100 - 14 = 216; 230 is what the stock exe holds and what the fixup overwrites.
 CREDITS_W = 280
-CREDITS_STOCK_Y = {'classic': 200, 'council wars': 230}
+CREDITS_STOCK_Y = {'classic': 200, 'council wars': 216}
+CREDITS_EXE_IMM_Y = {'classic': 200, 'council wars': 230}
 
 
 def need_np():
@@ -649,9 +655,9 @@ def apply_scripts(game_dir, width, height, dry_run=False):
         if key == 'bintroe':
             build = 'council wars' if override else 'classic'
             sy = CREDITS_STOCK_Y[build]
-            print('        credits box (%s exe, stock (178,%d)) must be at (%d,%d): '
+            print('        credits box (%s exe, imm32 (178,%d)) must be at (%d,%d): '
                   'patch_resolution.py stage 2 fixups 0x42A0 / 0x4299'
-                  % (build, sy, (width - CREDITS_W) // 2, sy + dy))
+                  % (build, CREDITS_EXE_IMM_Y[build], (width - CREDITS_W) // 2, sy + dy))
 
 
 def stock_gif(idir, name):

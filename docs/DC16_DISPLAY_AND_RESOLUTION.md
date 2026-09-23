@@ -1790,7 +1790,9 @@ changed shows how Council Wars finds its data, and that is the whole basis of th
   (`0x004309C8`, a fixed 200-entry table — `cmp edx,0C8h` at `0x00430A62`) is read at start-up too.
   Whatever a campaign mode needs from those has to be in the base set.
 
-**Design (maintainer decisions, 10 Sep 2026):** Council Wars keeps its single-column menu; the
+**Design (maintainer decisions, 10 Sep 2026; the single column was replaced by Classic's 2x4 grid
+on 23 Sep 2026, §10.35 — the slots and their handlers are unchanged):** Council Wars keeps its
+single-column menu; the
 useless PLAY INTRO button becomes **OZI MISSIONS** and the unused SINGLE PLAYER WAR button (id 4)
 comes back as **OZI LOAD** below it (column x=422: NEW CAMPAIGN 541, LOAD GAME 567, OZI MISSIONS
 593, OZI LOAD 619, QUIT 645 — the backdrop there is plain erase colour); the pack's new models go
@@ -2303,7 +2305,8 @@ surface as in §10.16). The caller is the stock CD logic: the first CD check `0x
 (byte-identical to the CD's `/EXPENG/EXP/INTRFACE/BINTROE`, and to `shumane`/`introe`) has
 buttons 1, 3, 4, 5 `%`-commented out. Classic's script defines all of them, which is why the
 Classic original runs without its disc and the Council Wars original does not — the retail game
-behaves the same. A **CD-free 640×480 build** = original + `cdcheck` only (patcher `-Patches cdcheck`, 2 resp. 3
+behaves the same. (Reported again on 23 Sep 2026 and fixed in the data: the Council Wars script is
+Classic's script now, **§10.35**.) A **CD-free 640×480 build** = original + `cdcheck` only (patcher `-Patches cdcheck`, 2 resp. 3
 bytes; `-Verify` lists just `cdcheck`, `patch_hd_paths.py verify` says stock paths) was built and
 ran, but is **not committed** — maintainer decision 14 Sep 2026: special builds come from the
 patcher, the repository ships the originals and the fully patched exes only. Found on the way: the CD's `EXP/INTRFACE` also holds Council Wars' own 640×480
@@ -3108,22 +3111,22 @@ folders and `ozi_ns\gamestat\*scene.txt` need committing.
 
 **Why they were missing.** §10.25 left `movies` out of the stock mode because its ending names live
 in the `INTRF_HD` lists, and `ozi` required `hdpaths` because its menu rows live in
-`exp\intrf_hdintroe`; at 640×480 the exe reads the stock `GAMESTAT` lists and the stock
-`exp\intrfaceintroe`, which must stay byte-identical to the CD for the original exes (§10.17).
+`exp\intrf_hd\bintroe`; at 640×480 the exe reads the stock `GAMESTAT` lists and the stock
+`exp\intrface\bintroe`, which must stay byte-identical to the CD for the original exes (§10.17).
 So the 640×480 Classic build played `avi/intro.avi` — the Council Wars intro in the shared folder —
 and the 640×480 Council Wars build could not have the OZI mode at all (`-All` even threw, because a
 required fix that does not exist at the resolution was not treated as unavailable).
 
 **The way in.** The three DGROUP path strings end in exactly six letters followed by the next
-string: `gamestat/hscene gamestat/gscene …` (Classic file `0x7FA10`/`0x7FA20`, CW `0x7FC10`/`0x7FC20`)
-and `intrface/bintro intro.avi…` (file `0x7FC98` / `0x7FE98`, VA `0x482498` in both). The exe appends
+string: `gamestat/hscene\0gamestat/gscene\0…` (Classic file `0x7FA10`/`0x7FA20`, CW `0x7FC10`/`0x7FC20`)
+and `intrface/bintro\0intro.avi…` (file `0x7FC98` / `0x7FE98`, VA `0x482498` in both). The exe appends
 `.txt` resp. the language letter, so a six-letter **name** can be swapped in place and the exe reads
 a **new file** that the original never opens:
 
 | fix @ 640×480 | exe edit (in place, no `.reloc`) | file the patcher writes | tool |
 |---|---|---|---|
 | `movies` (Classic) | `intro.avi` → `dcintro.avi` as before **+** `gamestat/hscene` → `gamestat/hscndc`, `gamestat/gscene` → `gamestat/gscndc` (3 edits, 17 bytes) | `GAMESTAT\HSCNDC.TXT`, `GSCNDC.TXT` = the stock lists with `avi/hending.avi` → `avi/dchending.avi`, `aending` → `dcaending` (`Write-StockEndingLists`) | `patch_movies.py --width 640 --height 480` (`find_list_sites`, `LIST_NAMES`; `apply` in a game folder writes the copies too) |
-| `ozi` (Council Wars) | the 14 edits + `.reloc` insert as before **+** `intrface/bintro` → `intrface/bintoz` (16 edits) | `exp\intrfaceintoze` and `ozi_ns\intrfaceintoze` (OZI mode reads through the `ozi_ns/` prefix) = the stock CW menu with `Edit-OziMenu`'s rows: x = 228, OZI MISSIONS 392, OZI LOAD 418, QUIT 444 (`Write-StockOziMenu`) | `patch_ozi_menu.py --width 640 --height 480` (`STOCK_MODE_SITES`) |
+| `ozi` (Council Wars) | the 14 edits + `.reloc` insert as before **+** `intrface/bintro` → `intrface/bintoz` (16 edits) | `exp\intrface\bintoze` and `ozi_ns\intrface\bintoze` (OZI mode reads through the `ozi_ns/` prefix) = the stock CW menu with `Edit-OziMenu`'s rows: x = 228, OZI MISSIONS 392, OZI LOAD 418, QUIT 444 (`Write-StockOziMenu`) | `patch_ozi_menu.py --width 640 --height 480` (`STOCK_MODE_SITES`) |
 
 At HD sizes nothing changes: `hdpaths` points the exe at `INTRF_HD`/`exp\intrf_hd`, whose lists and
 menu already carry the names and rows. **Generator:** `movies` and `ozi` joined `MODE_STEPS`
@@ -3131,7 +3134,7 @@ menu already carry the names and rows. **Generator:** `movies` and `ozi` joined 
 `resolution, hdpaths, clock`; identical variants are merged (all HD modes → `Mode = 'hd'`, one
 mode → its own entry), so each fix has one 640×480 entry and one shared HD entry; `Requires` and
 `Data` are mode-aware (no `hdpaths` requirement at 640×480; `Data` adds the stock lists resp.
-`exp\intrfaceintroe` as sources). **Script:** `Get-BuildPatches` includes a resolution's own
+`exp\intrface\bintroe` as sources). **Script:** `Get-BuildPatches` includes a resolution's own
 variants at 640×480 too (the first version skipped every tagged fix there), `Get-UnavailableFixes`
 marks a fix whose required fix does not exist at the resolution, and `Invoke-PatchRun` runs the two
 writers at 640×480 after the exe. Reference builds: Classic 640×480 `ec0e6cef…`, Council Wars
@@ -3148,6 +3151,10 @@ QUIT centred (228,392); each button's LARGEBUTTON gadget moves with it, `%pushb 
 are brought back in, the last row ends at 417. `Edit-OziMenu` dispatches on the script's
 `size 640 480` line; HD scripts keep the single column (their backdrop is 768+ rows tall).
 `build_ozi_overlay.menu_rows` (Python) has no 640 branch: it never sees a stock-size script.
+**Superseded 23 Sep 2026 (§10.35):** the menu script now carries Classic's whole 2x4 grid at every
+size, so all eight rows fit above the artwork by construction, the OZI mode is two label renames and
+`Edit-OziMenu640` is gone. The reasoning above is why the grid, and not a fifth single-column row, is
+the layout the maintainer asked for.
 
 **Checked:** `-All -Resolution 640x480` for both exes in the game folder (fix lists, the four copies
 written with the right names and rows, stock `HSCENE.TXT`/`bintroe` unchanged against git),
@@ -3819,7 +3826,8 @@ drive type. Tested on a scratch copy of the game folder (`subst V:`) with `HBNFU
 `subst X:` on a folder holding `dc\anim.dat` whose `dc` folder denies the user `WD,AD,DC` (`icacls`):
 stock `ENGEXP16.EXE` ran 90 s to the main menu, flag `0x004A49B8` = 1, CD path `X:\dc\`, no file
 written on X:, `error.log` empty, all four menu buttons active (screenshot), no `widget.c` assert (the
-assert of 14 Sep only fires when the flag is 0). Any read-only location works (a folder under a
+assert of 14 Sep only fires when the flag is 0; it is fixed in the data since §10.35, and the menu
+this test showed has eight buttons now). Any read-only location works (a folder under a
 deny ACL, a read-only share, a mounted `.iso`); a plain `subst` of a writable folder fails the write
 test and the game runs as "no CD" (grey buttons). The in-game check (`0x004113E6`, every 5 s) only
 reacts to a *change* of the flag, so the folder must stay in place while playing. Files missing
@@ -3827,6 +3835,114 @@ locally are still looked up under `<letter>:\dc\` first when the flag is 1 (help
 complete game folder is required — the repo's is. The 2025 third Council Wars byte (`0x00478DD9`,
 `jne`→`je`) sits in a Watcom C-runtime write helper (strlen + `WriteFile` to a handle at `0x00499448`),
 not in any CD test; `nocd` keeps it only because the played build has it.
+
+#### 10.35 The Council Wars original's "hang" at the main menu: six buttons greyed, three of them not in the script **(23 Sep 2026, maintainer report "engexp16.exe is hanging when entering main menu … maybe by moving updated version of markup file to another place?", then "add missing widgets which are the cause of the problem" and "do the same widgets layout as in dc16.exe where ozi missions replaces intro and ozi load replaces single player war", then "for unpatched engexp16.exe put credits a bit higher and buttons a bit lower so they don't overlap each other"; mechanism re-derived from the stock bytes, fixed in the data — `exp/intrface/bintroe` is now Classic's script; both generators and the patcher rewritten and cross-checked; game test pending)**
+
+**Which exe.** The report names `engexp16.exe`; the repository has two Council Wars builds, the
+untouched `ENGEXP16.EXE` and the patched `engexp16new.exe`. The patched one was ruled out first: the
+1280×800 build in the game folder (SHA-256 `f8d82877…`) carries all thirteen fixes, its
+`INTRF_HD` set is the matching 1280×800 one, `error.log` is empty and the newest game entries in the
+Windows Application log are the already-fixed `widemap` clicks of 22 Sep (§10.33) — and since the
+game opens its log with `fopen("error.log","w")` at start-up (`0x0040529F`, then `error2.log`,
+`error3.log` if locked), an empty log means the last launch from that folder logged nothing. The
+symptom is the one first seen on 14 Sep 2026 (§10.17): the **untouched** exe, with no disc.
+
+**The bytes.** `main.c`'s menu init calls the CD flag getter and, when the answer is 0, greys six
+widgets before entering the message loop (call sites at the same addresses in both builds; only the
+call targets carry the +0x60 shift of §10.10):
+
+```
+00404F18: E8 ..            call  00405E6C      ; CW flag getter (Classic 00405E8C), al = disc answered
+00404F1D: 84 C0            test  al,al
+00404F1F: 75 66            jne   00404F87      ; file 0x431F - the byte `nocd` turns into EB (jmp)
+00404F21: BB 01000000      mov   ebx,1         ; six x set_greyed(ip, id, 1):
+00404F2B: E8 ..            call  00424574      ; id 0    CW helper (Classic 00424514)
+00404F3A: E8 ..            call  00424574      ; id 1
+00404F4C: E8 ..            call  00424574      ; id 16
+00404F5E: E8 ..            call  00424574      ; id 4
+00404F70: E8 ..            call  00424574      ; id 2
+00404F82: E8 ..            call  00424574      ; id 5
+```
+
+`set_greyed` computes `objects[id] = ip + 0x88 + 0x34*id`, writes the greyed flag at byte +0
+**without looking at the widget's type**, and only then calls `widget_redraw`/`widget_get`
+(CW `0x00421CF8`, Classic `0x00421C98`), which asserts `0 <= i < 300` (widget.c line 151) and
+`ip->objects[i].type != unknown_obj` (line 152, the byte at `ip + 0x89 + 0x34*i`). The shipped
+Council Wars `exp/intrface/bintroe` — byte-identical to the CD's `/EXPENG/EXP/INTRFACE/BINTROE` —
+has buttons 1, 3, 4, 5 and gadgets 7, 9, 10, 11 `%`-commented out, so the second call hits an
+undefined widget: `error.log` gets `assert failure, file widget.c line 152
+(ip->objects[i].type != unknown_obj)` and the runtime's message box sits behind the exclusive-mode
+surface, exactly as in §10.16. That is the whole "hang".
+
+| greyed id | label (`textmsg`) | in the shipped CW script |
+|---|---|---|
+| 0 | NEW CAMPAIGN | yes |
+| 1 | TRAINING | **commented out → assert** |
+| 16 | PLAY INTRO | yes |
+| 4 | SINGLE PLAYER WAR | **commented out** |
+| 2 | LOAD GAME | yes |
+| 5 | ENCYCLOPEDIA | **commented out** |
+
+Classic's script defines all nineteen widgets, and its greying list is the same six ids (verified in
+the stock `dc16.exe` bytes), which is why the Classic original merely comes up with a mostly grey
+menu without its disc while the Council Wars original dies. Note what the grey menu leaves usable:
+**only MULTI PLAYER WAR (id 3, not in the list) and QUIT (12)** — killing that greying is what the
+2025 hand-patch at file `0x507F`/`0x509F` was for, and `nocd` does it today.
+
+**"Moving the markup file" cannot help.** The overlay helper `0x004063E4` tries `exp/` + name and
+then the bare name in the game root, so there is no third location: either that file carries the
+widgets, or the file is removed and the exe reads the root `INTRFACE/BINTROE` (Classic's script,
+which defines them). And neither buys a *playable* CD-less original, because every useful button is
+greyed by design — the three routes to that are the patched exe, `-Patches nocd` alone (a stock
+640×480 build with a live menu), and §10.34's read-only `<letter>:\dc\anim.dat`, which satisfies the
+probe and leaves the menu fully enabled.
+
+**The fix, as instructed: Council Wars gets Classic's widget layout.** `exp/intrface/bintroe` is now
+Classic's `INTRFACE/BINTROE` — the 2×4 grid with all six buttons, their gadgets and the eight-pair
+`banim 18 0 8 8` (the commented rows in the shipped file were the Classic ones, at the Classic
+coordinates; the four-row centred column the Council Wars author left is in git history) — with the
+whole grid **lowered by 16 px**, rows **330 / 356 / 382 / 408** instead of 314 / 340 / 366 / 392, for
+the credits box below. The logo and title rows are untouched, so only the eight button/gadget pairs
+differ from Classic's file. Every id the CD logic greys now exists, so the untouched exe reaches its
+menu. The labels stay
+Classic's in that file, because the untouched exe has no pack mode: button 16 plays the intro and
+button 4 opens SINGLE PLAYER WAR there. The two OZI names live where the `ozi` exe patch is applied
+— `exp/intrf_hd/bintroe` (HD builds) and `exp/intrface/bintoze` (the 640×480 copy, §10.27) — in the
+two slots §10.13 rewires:
+
+| | left column | right column |
+|---|---|---|
+| row 1 | NEW CAMPAIGN (0) | MULTI PLAYER WAR (3) |
+| row 2 | TRAINING (1) | **OZI LOAD** (4) ← SINGLE PLAYER WAR |
+| row 3 | LOAD GAME (2) | ENCYCLOPEDIA (5) |
+| row 4 | **OZI MISSIONS** (16) ← PLAY INTRO | QUIT (12) |
+
+**Why the grid is 16 px lower: the code-drawn credits box** (maintainer, same day: "for unpatched engexp16.exe put credits a bit higher and buttons a bit lower so they don't overlap each other"). The scrolling `credits.txt` TTY (280×100, `main.c bintro` `0x00404DC8`) is the one element of this screen that the **exe** positions, from two imm32 — Classic (178, 200), Council Wars (178, **230**), because the expansion's four-row column started 26 px lower (§10.7, §10.11). Classic's grid starts at 314, so the 230 box (rows 230..329) would cover the top 16 px of the NEW CAMPAIGN / MULTI PLAYER WAR row. In the **untouched** exe the box cannot move — it is an immediate, not data — so the buttons take the whole step: first row at **330**, one row below the box, bottom row ending at 432, and the backdrop's bottom artwork starts at row **436** (`exp/intrface/intrg.gif`, re-measured: the button band x 138..496 is black to row 435), which leaves 3 px. That is the whole budget — 104 px of grid between a box that ends at 329 and art that starts at 436 — and it is why the box has to stay where it is at 640×480. Wherever the exe **is** patched the box does move up: the Council Wars fixup is now `credits_y(216, 296)` (216 = 330 − 100 − 14, the stock Classic gap; 296 = the new cluster centre, rows 159..433) instead of `credits_y(230, 301)`, and `paint_intro.CREDITS_STOCK_Y` follows, with the stock immediate kept as `CREDITS_EXE_IMM_Y` — measured on the generated scripts: **14 px between box and first row at 1024×768, 1280×720, 1280×800, 1280×1024 and 3840×1080**, and the painted HD backdrop is black under the button band to row 756 at 1280×800 (bottom row ends at 649). **One byte of the Council Wars exe changes** (file `0x429A`, verified as the only difference against the previous build): published 1024×768 Council Wars is now SHA-256 `89e33deb…` (was `bb6a1e77…`), 1280×800 `57e1ca8e…`, 640×480 `33449a9c…`; Classic is untouched (`a71d038b…`). At 640×480 the immediate is never patched (that mode has no `resolution` fix), so both the untouched exe and a patched 640×480 build show the box flush above the buttons rather than 14 px clear.
+
+**What the toolchain does now.** Because every derived script is letterboxed/relayouted from this
+one file, the grid propagates by itself and the OZI mode is two label renames:
+`build_ozi_overlay.menu_rows` / `menu_script` and the patcher's `Edit-OziMenu` were reduced to
+`textmsg 5 → OZI LOAD`, `textmsg 8 → OZI MISSIONS` plus a check that the script really is the 2×4
+grid (all eight `pushb`, all eight `gadget`, `banim` with 8 pairs; a five-row script is refused with
+the list of what is missing). They no longer re-enable button 4, move QUIT down or write a five-pair
+`banim`, and `Edit-OziMenu640` — the two-column special case of 21 Sep 2026 (§10.27), needed only
+because five single-column rows did not fit between the code-drawn credits box and the backdrop's
+bottom artwork — is gone: the stock grid is the layout that plan was taken from.
+
+**The rule this breaks, deliberately.** `exp/intrface/bintroe` is the first exception to §10.17's
+"everything the original exe reads is byte-identical to the CD" (maintainer instruction, 23 Sep
+2026). Nothing else the original reads was touched; the inventory check of §10.17 needs one line of
+tolerance for this file (it is Classic's script with the eight button rows 16 px lower).
+
+**Checks made.** Regenerated `exp/intrf_hd/bintroe` for every mode through the patcher's own `Edit-OziMenu (Set-BackgroundHd (Edit-IntroScript …))` chain (`hd_sets/` fixtures for the four shipped sizes, the game folder's live 1280×800 pair and the `ozi_ns/intrf_hd` copy) and checked per mode that every greyed id is defined, that the credits box clears the first button row by 14 px (0 at 640×480, see above) and that the bottom row clears the backdrop artwork. `build_ozi_overlay.py` reports `0 edits` against the result (idempotent) and refuses the old five-row file by name. A full patcher run (`-Original ENGEXP16.EXE -All -Resolution 1280x800`) on a scratch copy reproduced the exe the generator references and wrote an interface set identical to the game folder's, the two campaign scene lists excepted — that copy was made without `AVI\`, and `HSCENE`/`GSCENE` keep the Classic ending names only when the `DC*.AVI` files are there (§10.18). Before the credits decision the same run had rebuilt the maintainer's previous 1280×800 build byte for byte, which is what made the one-byte credits difference easy to confirm; the game folder's build was refreshed to the new one (`57e1ca8e…`, `patch_resolution.py verify` 66/66).
+
+**Open.** Game test of both builds: the untouched exe without a disc (menu instead of the assert
+box) and the patched Council Wars build (the two new left-column rows and MULTI PLAYER WAR /
+ENCYCLOPEDIA now reachable, which the click-path rule of §10.33 wants exercised by hand). TRAINING,
+MULTI PLAYER WAR and ENCYCLOPEDIA reach Classic content that the one game folder holds (§10.18,
+`DC16_SINGLE_EXE_MERGE.md`), but Council Wars has never been played over the network — the relay
+server targets Classic — so id 3 is the one to try first.
+
 
 ## 11. Risks
 

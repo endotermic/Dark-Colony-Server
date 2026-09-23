@@ -75,11 +75,15 @@ ANCHOR_PREFIX = bytes.fromhex('4f016e01')
 # screen is no longer letterboxed but painted full-frame by tools/paint_intro.py (doc 10.11), so
 # the box does not move by (menu_dx, menu_dy) like the other 42 furniture sites: it is centred
 # horizontally and follows the menu's cluster (title, credits, buttons), which keeps its stock
-# vertical centre as a fraction of the height. The cluster centre is 288 (rows 159..417) in the
-# stock `bintroe`, 301 (rows 159..443) in Council Wars' `exp/intrface/BINTROE`, whose credits
-# also start at y = 230 instead of 200, plus 20 px so that the opaque DC logo above the title
-# clears the crescent's tail (paint_intro.LOGO_CLEARANCE). `paint_intro.py plan` prints the
-# resulting positions; the two tools must agree.
+# vertical centre as a fraction of the height. The cluster centre is 288 (rows 159..417) in
+# `bintroe`, plus 20 px so that the opaque DC logo above the title clears the crescent's tail
+# (paint_intro.LOGO_CLEARANCE). `paint_intro.py plan` prints the resulting positions; the two
+# tools must agree. Council Wars used its own numbers until 23 Sep 2026 - cluster centre 301
+# (rows 159..443) and credits from y = 230, both belonging to its four-row menu. Its script is
+# Classic's 2x4 grid now, lowered by 16 px to y=330 because the *unpatched* exe cannot move its
+# credits box (immediate 230, box 230..329) off the top button row (doc 10.35): cluster centre
+# 296 (rows 159..433), and the box goes 14 px above the row - the stock Classic gap - so the
+# stock-equivalent y is 330 - 100 - 14 = 216, which the fixup writes over the 230.
 CREDITS_W = 280
 LOGO_CLEARANCE = 20
 
@@ -100,10 +104,11 @@ BUILDS = {
             # (0x00405C51 / 0x00405C40), the only two of the 44 menu-furniture sites that do
             0x5071: dict(off=0x5051),
             0x5060: dict(off=0x5040),
-            # main.c bintro: the expansion has its own exp/intrface/credits.txt, and its TTY box
-            # starts at y = 230 instead of 200 (x = 178 is the same)
+            # main.c bintro: the expansion has its own exp/intrface/credits.txt and its TTY box
+            # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 14 px above
+            # the lowered grid's first row (comment above)
             0x42A0: dict(value=lambda g: (g.w - CREDITS_W) // 2),
-            0x4299: dict(expected='bbe6000000', value=credits_y(230, 301)),
+            0x4299: dict(expected='bbe6000000', value=credits_y(216, 296)),
         }),
 }
 

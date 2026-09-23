@@ -14,9 +14,10 @@ layer).  Output is two things inside the Council Wars folder:
      - the pack's transport as `tranozi.fin` + `tranozi.spr` (bank field renamed; a smoke
        animation and a real sprite for the pack's "transmitter"/"Generator"; no Council Wars or
        Classic balance table uses TRAN), replacing the `tran.fin` line in `animozi.dat`;
-     - the main-menu label 8 "PLAY INTRO" -> "OZI MISSIONS" in `exp/intrf_hd/bintroe` (the
-       1024x768 override script; the stock `exp/intrface/bintroe` stays as it is for the
-       original exe, see split_hd_data.py).
+     - the main-menu labels 8 "PLAY INTRO" -> "OZI MISSIONS" and 5 "SINGLE PLAYER WAR" ->
+       "OZI LOAD" in `exp/intrf_hd/bintroe` (the HD override script; the stock
+       `exp/intrface/bintroe` keeps Classic's labels for the original exe, see
+       split_hd_data.py and menu_rows() below).
    The sound table `sound2.dat` is left alone: it is a full 200-entry array and the pack's four
    replacements would overwrite gun sounds Council Wars uses.
 2. The overlay `ozi_ns/` (seven characters: it has to fit the 8-byte prefix slot in the exe) with
@@ -104,7 +105,9 @@ class Plan:
 MARKER_SHIFT = (192, 144)
 FRAME_XY = re.compile(rb'^(\s*)(\d+)(\s+)(\d+)(\s+)(\d+)(\s*)$')
 SIZE_LINE = re.compile(rb'^\s*size\s+(?:\d+\s+\d+\s+)?(\d+)\s+(\d+)\s*$', re.M)
-PUSHB_XY = re.compile(rb'^%?\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
+LIVE_PUSHB = re.compile(rb'^\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s', re.M)   # `%` rows are comments
+LIVE_GADGET = re.compile(rb'^\s*gadget\s+(\d+)\s', re.M)
+BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 
 
 def screen_geometry(menu_data):
@@ -209,54 +212,54 @@ def base_set(game, pack, plan):
     if not menu:
         raise SystemExit('missing exp/%s/bintroe (run split_hd_data.py first)' % HD_DIR)
     data = open(menu, 'rb').read()
-    new, (x, y_load, y_quit) = menu_script(data)
+    new, (x_ozi, y_ozi), (x_load, y_load) = menu_script(data)
     if new != data:
-        plan.write(menu, new, 'OZI MISSIONS (label 8), OZI LOAD (button 4 at %d,%d), QUIT -> %d'
-                   % (x, y_load, y_quit))
+        plan.write(menu, new, 'OZI MISSIONS (label 8, button 16 at %d,%d), OZI LOAD (label 5, button 4 at %d,%d)'
+                   % (x_ozi, y_ozi, x_load, y_load))
     if LABEL_NEW not in new or b'OZI LOAD' not in new:
         plan.notes.append('WARNING exp/%s/bintroe: menu rows not recognised, edit by hand' % HD_DIR)
 
 
 def menu_rows(data):
-    """The row templates for the screen the script was laid out for.
+    """The two labels the OZI mode renames, plus a check that the script has the full button grid.
 
-    Council Wars is a single column: NEW CAMPAIGN (button 0), LOAD GAME (2), then PLAY INTRO
-    (16), which becomes OZI MISSIONS; OZI LOAD (the SINGLE PLAYER WAR button id 4 / gadget 10,
-    re-enabled) and QUIT (12 / gadget 13) follow below it at the same x and row pitch. At
-    1024x768 that is x=422, rows 541 567 593 619 645; at 1280x800 x=550, 561 587 613 639 665.
-    Returns (rows dict, (x, y_load, y_quit))."""
-    xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in PUSHB_XY.finditer(data)}
-    for need in (0, 2, 16):
-        if need not in xy:
-            raise SystemExit('exp/%s/bintroe: no `pushb %d` row, menu layout not recognised' % (HD_DIR, need))
-    x, y0 = xy[0]
-    pitch = xy[2][1] - y0
-    if pitch <= 0 or xy[2][0] != x or xy[16][0] != x:
-        raise SystemExit('exp/%s/bintroe: rows 0/2/16 are not a single column with a positive pitch' % HD_DIR)
-    y_load = xy[16][1] + pitch
-    y_quit = y_load + pitch
+    Until 23 Sep 2026 Council Wars' `bintroe` was Classic's with buttons 1, 3, 4, 5 (and their
+    gadgets 7, 9, 10, 11) `%`-commented out and the four survivors moved into one centred
+    column, so this function also had to re-enable button 4, move QUIT one row down and write a
+    five-pair `banim`.  The missing widgets crashed the *untouched* exe, whose CD logic greys
+    buttons 0, 1, 16, 4, 2, 5 when no disc answers (doc 10.35), so `exp/intrface/bintroe` is now
+    Classic's 2x4 grid again (its eight button rows 16 px lower, for the code-positioned credits
+    box the untouched exe cannot move) and every derived script inherits it.  What is left of the OZI mode
+    in the data is two label renames, in the slots the exe patch rewires (patch_ozi_menu.py):
+
+        NEW CAMPAIGN (0)    MULTI PLAYER WAR (3)
+        TRAINING     (1)    OZI LOAD         (4)   <- SINGLE PLAYER WAR
+        LOAD GAME    (2)    ENCYCLOPEDIA     (5)
+        OZI MISSIONS (16)   QUIT             (12)  <- PLAY INTRO
+
+    Returns (rows dict, (x, y) of button 16, (x, y) of button 4)."""
+    xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in LIVE_PUSHB.finditer(data)}
+    gadgets = {int(m.group(1)) for m in LIVE_GADGET.finditer(data)}
+    missing = [n for n in (0, 1, 2, 3, 4, 5, 12, 16) if n not in xy]
+    missing += ['gadget %d' % n for n in (6, 7, 8, 9, 10, 11, 13, 17) if n not in gadgets]
+    m = BANIM_PAIRS.search(data)
+    if missing or not m or m.group(1) != b'8' or m.group(2) != b'8':
+        raise SystemExit('exp/%s/bintroe: not Classic\'s 2x4 button grid (missing %s, banim %s) - '
+                         'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'
+                         % (HD_DIR, ', '.join(str(x) for x in missing) or 'nothing',
+                            b' '.join(m.groups()).decode() if m else 'absent'))
     rows = {
-        rb'^%?\s*pushb\s+4\s+.*$':
-            b'pushb   4       0       %-7d %-7d 179     25      -11     0        label centre   5 0 - remap 0' % (x, y_load),
-        rb'^%?\s*gadget\s+10\s+.*$':
-            b'gadget  10      0       %-7d %-7d 179     25      LARGEBUTTON  anim_stopped' % (x, y_load),
-        rb'^\s*pushb\s+12\s+.*$':
-            b'pushb   12      0       %-7d %-7d 179     25      -11     0  label centre 7 0 - remap 0' % (x, y_quit),
-        rb'^\s*gadget\s+13\s+.*$':
-            b'gadget  13      0       %-7d %-7d 179     25      LARGEBUTTON  anim_stopped' % (x, y_quit),
-        rb'^\s*banim\s+18\s+.*$':
-            b'banim   18  0  5 5\t 6 8 17 10 13  0 2 16 4 12',
         rb'^\s*textmsg\s+5\s+.*$': b'textmsg 5       OZI LOAD',
         rb'^\s*textmsg\s+8\s+.*$': b'textmsg 8       OZI MISSIONS',
     }
-    return rows, (x, y_load, y_quit)
+    return rows, xy[16], xy[4]
 
 
 def menu_script(data):
-    """Rewrite the five-button rows of the Council Wars main-menu script (idempotent).
+    """Rename the two Council Wars main-menu labels the OZI mode takes over (idempotent).
     The stock file mixes CRLF and bare LF line endings; each line keeps its own.
-    Returns (new data, (x, y_load, y_quit))."""
-    rows, geom = menu_rows(data)
+    Returns (new data, (x, y) of button 16, (x, y) of button 4)."""
+    rows, ozi_xy, load_xy = menu_rows(data)
     out = []
     for raw in data.split(b'\n'):
         line, cr = (raw[:-1], b'\r') if raw.endswith(b'\r') else (raw, b'')
@@ -265,7 +268,7 @@ def menu_script(data):
                 line = repl
                 break
         out.append(line + cr)
-    return b'\n'.join(out), geom
+    return b'\n'.join(out), ozi_xy, load_xy
 
 
 def overlay(game, pack, plan):
