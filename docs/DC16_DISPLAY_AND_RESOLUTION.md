@@ -3935,13 +3935,7 @@ script's own button height, which sets ACADEMY, the Council Wars pair and the pa
 keeps the Python tool and the patcher byte-identical.) It is **five** rows, so
 `build_ozi_overlay.menu_layout` is a layout step again, not two renames: the ids stay with their
 handlers (the exe patch rewires 16 and 4, §10.13), only positions and labels move, each gadget
-follows its button, and the `banim` pairs are untouched. **The one-shot plate animation moves with
-the order too:** the stock script starts `gadget 6` - the plate of button 0, its own first row - as
-`anim_oneoff` and every other plate as `anim_stopped`, so the first reordering left the animation
-firing on row 2 (COUNCIL WARS) while row 1 sat still. The layout step now writes that token itself,
-`anim_oneoff` for the plate of the first row in the left column and `anim_stopped` for the rest, so
-the animation marks the top row whatever button stands there (a menu-design audit of 23 Sep 2026
-found it; the untouched exe's script is correct as it is, because there button 0 *is* the first row). The block is anchored on the **bottom** row
+follows its button, and the `banim` pairs are untouched. The block is anchored on the **bottom** row
 of the grid it is given — the row the 640×480 artwork sits 3 px below — so the fifth row and the two
 gaps are won at the top, and applying the step twice changes nothing (the pitch is the smallest row
 distance in the script, the bottom row `max(y)`, both identical before and after).
@@ -3962,7 +3956,7 @@ tolerance for this file (it is Classic's script with the eight button rows 16 px
 * **hit rectangles** - hovering (736, 573) brightened the ENCYCLOPEDIA plate by **+93 %** while the   two control plates changed by 0 %, so the widget rects sit exactly where the script says;
 * **ENCYCLOPEDIA** - one click opened the encyclopedia screen (Trooper entry, HUMANS / ARTIFACTS /   GRAYS, BACK). That button was `%`-commented out in every shipped Council Wars build, so this is the   first time it has been reachable there, and the id → handler binding survives the reordering;
 * **QUIT** - one click and the process left by itself with **exit code 0**;
-* **the one-shot plate animation** - sampled at ~50 Hz by BitBlt-ing just the two top-left plates:   with the shipped script row 1 (ACADEMY) varies over seven values while row 2 (COUNCIL WARS) is   **dead constant**; with the pre-fix script (`anim_oneoff` put back on gadget 6) row 2 varies   instead. The fix does what it says, and the bug it replaced was real.
+* **the plate animation - NOT verified, and the change to it was reverted.** Sampling at ~50 Hz   showed the row-1 plate varying and the row-2 plate constant with `anim_oneoff` on gadget 7, and   the other way round with it on gadget 6, which is why this section first claimed the move was   confirmed. It is not: every sample was taken with the pointer parked away from the plates, so   what was measured is the one-shot at menu open, not the press or hover feedback, and the   maintainer reports that **nothing animates** on the menu. The move of `anim_oneoff` to the first   row was reverted on request (23 Sep 2026). Open question behind it: `LARGEBUTTON` is frames   0..11 of the `knobe` bank (`ANIMATE/KNOBE.FIN`, entries of 16-byte name + first + last), and   those cells are differently sized plates - 180x26, 180x26, 90x26, 90x26, 60x26, 60x26, 82x18 ...   - so the range is not one plate in twelve poses and what `anim_oneoff` is supposed to do with it   is still unknown. Measure a plate over time while hovering and while pressing before touching   this again.
 
 **The rig, for the next time.** `subst V:` on the game folder (never a long path, §10.29); **SPACE** aborts the intro movie - its wait loop at `0x00409080` drains `WM_KEYDOWN` with `PeekMessageA(0x100, 0x100, PM_REMOVE)`, so any key does - and **never ESC**, which the menu itself takes as QUIT. Captures come from a **DPI-aware** process: the exclusive-mode mode switch makes the physical desktop 1280×800, so a screen-DC BitBlt of the top-left 1280×800 is the game's surface 1:1. Input must come from a **DPI-unaware** one, because the game is unaware too: on this 150 % desktop a DPI-aware `SetCursorPos` lands at exactly 1/1.5 of the intended point in the game's own space (the first click aimed at (736, 573) put the game's crosshair at (490, 375) and hit nothing). That is the opposite of the map-editor rule of §"Map editor notes", where windowed output has to be captured with `PrintWindow(PW_RENDERFULLCONTENT)`.
 

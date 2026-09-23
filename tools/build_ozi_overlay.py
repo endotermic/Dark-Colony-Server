@@ -305,17 +305,12 @@ def menu_layout(data):
 def menu_script(data):
     """Lay the Council Wars main-menu script out for the OZI mode: five rows in the order of
     menu_layout(), the five labels the two campaigns and the pack take over, everything else
-    (sizes, sprites, `banim` pairs, the logo and the title) untouched.  Idempotent.
-
-    The one-shot plate animation moves with the order: the stock script starts `gadget 6`
-    (button 0, its first row) as `anim_oneoff` and every other plate as `anim_stopped`, so after
-    the reordering it fired on row 2 - the animation marks the first row again, whatever button
-    stands there.  The stock file mixes CRLF and bare LF line endings; each line keeps its own.
+    (sizes, sprites, animations, `banim` pairs, the logo and the title) untouched.  Idempotent.
+    The stock file mixes CRLF and bare LF line endings; each line keeps its own.
     Returns (new data, {id: (x, y)})."""
     place, _ = menu_layout(data)
     move = dict(place)
     move.update({OZI_GADGET[i]: xy for i, xy in place.items()})   # each gadget follows its button
-    first_plate = OZI_GADGET[OZI_COLUMNS[0][0]]                   # gadget of the first row, left column
     out = []
     for raw in data.split(b'\n'):
         line, cr = (raw[:-1], b'\r') if raw.endswith(b'\r') else (raw, b'')
@@ -323,8 +318,6 @@ def menu_script(data):
         t = re.match(rb'\s*textmsg\s+(\d+)\s', line)
         if m and int(m.group(2)) in move:            # button and gadget ids do not overlap
             x, y = move[int(m.group(2))]
-            anim = None if m.group(1) == b'pushb' else \
-                (b'anim_oneoff' if int(m.group(2)) == first_plate else b'anim_stopped')
             toks, n = re.findall(rb'\S+|[ \t]+', line), 0
             for i, tok in enumerate(toks):
                 if tok.isspace():
@@ -334,10 +327,6 @@ def menu_script(data):
                     toks[i] = b'%d' % x
                 elif n == 5:
                     toks[i] = b'%d' % y
-                    if anim is None:
-                        break
-                elif n == 9:                          # a plate's animation state
-                    toks[i] = anim
                     break
             line = b''.join(toks)
         elif t and int(t.group(1)) in OZI_LABELS:
