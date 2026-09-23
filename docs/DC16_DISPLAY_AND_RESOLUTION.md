@@ -3970,7 +3970,7 @@ tolerance for this file (it is Classic's script with the eight button rows 16 px
 **What was already there.** `DC16_SINGLE_EXE_MERGE.md` (11 Sep 2026) established that the expansion
 build *is* `dc16.exe`: the Classic campaign, the training missions, the encyclopedia and the network
 code are all compiled in, and the two builds differ only in the `exp/` overlay helper, four
-artifact-unlock immediates and the CD strings. Its §5.1 read the scene-list chooser
+per-build medal constants and the CD strings. Its §5.1 read the scene-list chooser
 (`0x00402FED`, repeated for the load path at `0x00403C9D`):
 
 ```
@@ -4147,10 +4147,14 @@ Council Wars build.
 **Still open.** A save round-trip through LOAD DC GAME (nothing outside the menu writes
 `gs+0x14F4`, so the campaign record has to come back from the save file - as LOAD CW GAME has
 assumed since 10 Sep), and a check that COUNCIL WARS / OZI MISSIONS still behave after a Classic
-campaign has made the mode sticky. The artifact-unlock schedule is still the expansion's in a
-Classic campaign (`DC16_SINGLE_EXE_MERGE.md` §5.3: four `cmp byte ptr [eax],imm8` at `0x00403FC7`,
-`0x00403FE8`, `0x004040B3`, `0x004040D4`, Classic 5/0Eh/4/0Eh against Council Wars 0Eh/7/0Eh/7);
-making them mode-aware needs a detour per site, about 100 bytes, and the tail has 86 left. Routing
+campaign has made the mode sticky. One known deviation, left in deliberately: the six **campaign
+medals** of the mission-completed screen are awarded on the expansion's schedule, because the two
+mission numbers that award the last two are per-build immediates (`DC16_SINGLE_EXE_MERGE.md` §5.3,
+re-read 23 Sep 2026 - the four `cmp byte ptr [eax],imm8` at `0x00403FC7`, `0x00403FE8`,
+`0x004040B3`, `0x004040D4`, Classic 5/0Eh/4/0Eh against Council Wars 0Eh/7/0Eh/7). The medals are
+the `SMALLMEDALS` widgets 25..30 of `wingame` and nothing outside that screen and the save reads
+them, so this is two icons lighting up at the wrong missions; making the sites mode-aware needs a
+detour per site, about 100 bytes against the 86 left in the tail. Routing
 MULTI PLAYER WAR through the same stub would make the expansion client's tables identical to a
 Classic client's for the relay's checksums (§4.2 of the merge document), 10 more bytes, untested.
 

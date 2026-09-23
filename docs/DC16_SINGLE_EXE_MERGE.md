@@ -30,7 +30,8 @@ Classic videos.
 
 What is genuinely missing is small: the Classic briefing sounds (`MISSION/`, 3.1 MB), the
 encyclopedia assets (`ENCYCLO/`, 25 MB), the Classic intro video (28 MB, name clash), and one exe
-detail - four artifact-unlock constants tuned per campaign - that needs a small mode-aware stub.
+detail - four medal-award constants tuned per campaign (§5.3, cosmetic) - that a small
+mode-aware stub could cover.
 Everything else can reuse the mode mechanism (writable prefix slots + zero-tail stubs) built for the
 OZI MISSIONS pack (`DC16_DISPLAY_AND_RESOLUTION.md` §10.13).
 
@@ -53,7 +54,7 @@ code or in immediate constants; pure address shifts disappear.
 
 | Where (DCEXP16 / Classic) | Difference | Meaning |
 |---|---|---|
-| `0x403FC7`, `0x403FE8`, `0x4040B3`, `0x4040D4` / same | `cmp byte ptr [eax],imm8`: Classic 5, 0Eh, 4, 0Eh; CW 0Eh, 7, 0Eh, 7 | Artifact-unlock schedule of the campaign (§5.3) |
+| `0x403FC7`, `0x403FE8`, `0x4040B3`, `0x4040D4` / same | `cmp byte ptr [eax],imm8`: Classic 5, 0Eh, 4, 0Eh; CW 0Eh, 7, 0Eh, 7 | Mission numbers that award the last two campaign medals (§5.3) |
 | `0x404E99` / same | `mov ebx,1AFh` vs `189h` | Not a build difference: the credits-box y that `patch_resolution.py` moves (fixup `0x4299`) |
 | `0x405050..0x4050FB` / `0x405050..0x405134` | Main-menu handler | Council Wars sets `gs+0x14F4=1` for NEW CAMPAIGN (Classic: 0); the rest of the hunk is our OZI patch |
 | `0x405271` / `0x405277` | `call 0x40B490` vs `call 0x40B430` + a string copy | Start-up: order of the CD-root string copy differs; same effect (§6.3) |
@@ -209,25 +210,51 @@ The mode is sticky for everything else, exactly as today. The main-menu script h
 that the handler already knows; a brand-new id would need a new `cmp edi,imm` branch, so reusing
 1 (TRAINING) and 4/5 where possible keeps the code patch small.
 
-### 5.3 The four artifact-unlock constants **(verified data, inferred meaning)**
+### 5.3 The four medal constants **(verified; this section said "artifact unlocks" until 23 Sep 2026)**
 
-`0x403F60..0x40414D` is the campaign-progress routine that fills the six "Alien Artifacts" slots
-`gs+0x1500..gs+0x1514` (values 1..6) from the current mission number (`byte [gs+0]`) and elapsed
-days (`gs+0x14FC >= 0x50`). Two of the six triggers are mission-number equalities whose immediates
-differ per build:
+`0x403ED4..0x40414D` is the end-of-mission routine that fills the six **medal** slots
+`gs+0x1500..gs+0x1514`. Each slot is -1 until earned and then holds a medal index - **0..5 for
+humans, 6..11 for Grays**, two artwork sets of the same six awards. They are shown on the
+mission-completed screen `intrf_hd/wingame` as its six `SMALLMEDALS` gadgets, widget ids 25..30
+(`0x004043CA` walks `i = 0..5` and greys `25+i` while slot `i` is -1), beside the `RANKS` insignia
+at widget 31 and the Money / Kills line. The array is saved and loaded with the campaign record
+(`0x00429ECE` / `0x0042A147`) and **nothing else reads it**: the medals are a campaign scoreboard,
+they do not affect a battle.
 
-| Site | Classic | Council Wars | Slot |
+The routine first totals, over the four **veteran ranks of the player's own basic infantry**
+(object types 69..72, the four `TRSC` rows of `GAMESTAT.TXT`, for humans; 73..76, the four `GRAY`
+rows, for Grays), statistic 3 of `results.c`'s per-type table at `0x004A5890`
+(`get 0x0041A8DC`, `add 0x0041A1B4`, 8 players x 130 types x 4 stats, zeroed at `0x0041A0BB`) -
+the counter the death path increments with the attacker's player and type, i.e. kills scored by
+those units *(the stat's exact meaning is read from the call site, not tested in game)*. That
+per-mission figure is added to the campaign total `gs+0x14FC`, and then:
+
+| slot | human | Gray | earned when |
 |---|---|---|---|
-| `0x403FC7` | mission 5 | mission 14 | `gs+0x1510 = 4` |
-| `0x403FE8` | mission 14 | mission 7 | `gs+0x1514 = 5` |
-| `0x4040B3` | mission 4 | mission 14 | second copy of the same test (other branch) |
-| `0x4040D4` | mission 14 | mission 7 | second copy |
+| `gs+0x1500` | 0 | 6 | always |
+| `gs+0x1504` | 1 | 7 | this mission's figure >= 15 |
+| `gs+0x1508` | 2 | 8 | this mission's figure >= 30 |
+| `gs+0x150C` | 3 | 9 | campaign total `gs+0x14FC` >= 80 (0x50) |
+| `gs+0x1510` | 4 | 10 | mission number (`byte [gs+0]`) == a **per-build** constant |
+| `gs+0x1514` | 5 | 11 | mission number == a second **per-build** constant |
 
-A Classic campaign played in the expansion build would unlock artifacts on the expansion schedule.
-Fix: make the four `cmp` sites read their immediate from a mode-dependent byte (e.g. `cmp al,[mode_tab+n]`
-via a short detour to the zero tail; each site is a 3-byte `80 38 imm8` followed by a 2- or 6-byte
-`jne`, so a `call stub` (5 bytes) fits when the `jne` is re-encoded in the stub), and let the mode
-stubs fill `mode_tab`. Alternatively accept the discrepancy for a first test.
+Only those last two rows differ between the executables - the four `cmp byte ptr [eax],imm8` sites:
+
+| Site | branch | Classic | Council Wars |
+|---|---|---|---|
+| `0x403FC7` | human, slot 4 | mission 5 | mission 14 |
+| `0x403FE8` | human, slot 5 | mission 14 | mission 7 |
+| `0x4040B3` | Gray, slot 4 | mission 4 | mission 14 |
+| `0x4040D4` | Gray, slot 5 | mission 14 | mission 7 |
+
+So a Classic campaign played in the expansion build (§10.36 of
+`DC16_DISPLAY_AND_RESOLUTION.md`, shipped 23 Sep 2026) awards its last two medals on the
+expansion's mission numbers. The first four are identical in both builds and nothing else changes:
+two icons on the results screen light up at the wrong missions. Fix if it is ever worth it: make
+the four `cmp` sites read their immediate from a mode-dependent byte (each site is a 3-byte
+`80 38 imm8` followed by a 2- or 6-byte `jne`, so a `call stub` of 5 bytes fits when the `jne` is
+re-encoded in the stub, about 100 bytes in all against the 86 left in the code section's zero
+tail), and let the mode stubs fill the table. The recommendation is to leave it.
 
 ### 5.4 Data already in the Council Wars folder **(verified)**
 
@@ -318,7 +345,7 @@ unaffected.
    RECORD_DIR=logs/replays`, then `node tools/replay.js` must report 0 mismatches. Then a mixed game:
    one `dc16.exe` client + one `DCEXP16.EXE` client.
 2. **Classic campaign**: with `MISSION/` copied and a CLASSIC CAMPAIGN handler in place, play
-   HUMAN01 to the first briefing and save/load once from `save/`. Check artifact unlocks against a
+   HUMAN01 to the first briefing and save/load once from `save/`. Check the medal row of the results screen against a
    Classic run if §5.3 is not yet patched.
 3. **Training**: TRAINING from the expansion menu, first mission loads (`TEST` scenarios).
 4. **Encyclopedia**: opens, browses a Human and a Gray unit, plays the unit WAV.
@@ -335,7 +362,7 @@ unaffected.
 | MULTI PLAYER WAR button back | data (1 row + layout) | hours, plus the test in 7.1 |
 | `MISSION/`, `ENCYCLO/`, wallpapers, `human09.tro` | data copy | minutes; +32 MB in git |
 | `stub_classic_set` + CLASSIC CAMPAIGN / TRAINING / CLASSIC LOAD handlers | exe patch (one stub, 2-3 trampolines, ~6 relocs), new `patch_classic_menu.py` in `tools/` | a day incl. mirroring into the docs |
-| Artifact constants mode-aware | exe patch (4 sites -> stub) | half a day |
+| Medal constants mode-aware (cosmetic, §5.3) | exe patch (4 sites -> stub) | half a day |
 | Classic intro | decision + data | small once decided |
 | Menu repaint (`paint_intro.py`, `build_ozi_overlay.py`) | tools | half a day |
 | Plan/protocol doc corrections (F27, "not verified on ENGEXP16") | docs | after 7.1 |
