@@ -3967,6 +3967,8 @@ tolerance for this file (it is Classic's script with the eight button rows 16 px
 
 #### 10.36 DARK COLONY and LOAD DC GAME: the original campaign from the Council Wars menu **(23 Sep 2026, maintainer instruction "it's time to add classic missions to engexp16 by adding paired buttons DARK COLONY + LOAD DC GAME between ACADEMY and COUNCIL WARS in main menu. menu grows in height so in 640x480 resolution we'll have to remove credentials", right column "MULTI 1, ENCYCLOPEDIA 2, QUIT 7, because it looks ugly when encyclopedia is somewhere in the middle"; one crash found and fixed by the maintainer's first game test, confirmed in game the same day)**
 
+**§10.37 (23-24 Sep 2026) built and then dropped a fifth mode on top of this one** (JUPITER MISSIONS, ids 8 and 9); its findings - the credits bytes are live init code, the prefix slots can move into the dead `intrface/credits.txt` string, the menu block can be anchored at `H-72` - are recorded there. This section describes the shipped state.
+
 **What was already there.** `DC16_SINGLE_EXE_MERGE.md` (11 Sep 2026) established that the expansion
 build *is* `dc16.exe`: the Classic campaign, the training missions, the encyclopedia and the network
 code are all compiled in, and the two builds differ only in the `exp/` overlay helper, four
@@ -4171,6 +4173,226 @@ them, so this is two icons lighting up at the wrong missions; making the sites m
 detour per site, about 100 bytes against the 86 left in the tail. Routing
 MULTI PLAYER WAR through the same stub would make the expansion client's tables identical to a
 Classic client's for the relay's checksums (§4.2 of the merge document), 10 more bytes, untested.
+
+
+#### 10.37 The Jupiter mod 0.3 as a fifth menu mode: built, confirmed in game, and DROPPED **(23-24 Sep 2026, maintainer instruction "mod specific files must go under 'jupiter' folder next to 'exp' folder of 'Council wars' and must be added to main menu as 'JUPITER MISSIONS' and 'LOAD JUP GAME' as last in the left column ...", then, once it was clear that the mod has no missions of its own - "jupiter missions are the same as DARK COLONY missions. is that right?" - "drop it but save findings in documentation". Nothing of it is in the exes, the data, the tools or the patcher; this section is the record of what was learnt.)**
+
+**Outcome first.** The mod turned out to be a unit / balance mod over the Classic table with **no
+missions, no animations and no campaign button of its own**, so "JUPITER MISSIONS" could only be the
+original Dark Colony campaign played with six extra unit types - the DARK COLONY mode of §10.36 under
+another prefix. The maintainer dropped it on 24 Sep 2026. Everything below was implemented, cross-checked
+and run in the game before that decision (menu, race screen, briefing, first mission, load screen), then
+reverted: `patch_ozi_menu.py` is back at v3, `build_ozi_overlay.py` at the seven-row layout, the patcher
+regenerated unchanged (CW 1024x768 `b12a0b14…`), the `jupiter/` overlay, `jupsave/` and the new
+`build_jupiter_overlay.py` deleted, the extracted installer folder removed (`Documents/DCJM_setup.exe`
+stays). The reusable findings: (1) the two prefix slots can be moved into the dead
+`intrface/credits.txt` string, which lifts the 7-letter limit on a mode prefix to 11; (2) the 45 bytes of
+the removed credits create are **live code on the menu's init path**, not a free hole - anything put
+there needs a jump over itself; (3) the start-up sound table is exactly 200 entries, all loaded at
+start-up, so no mode can add a sound; (4) the menu block can be anchored at `H-72` at every size
+because every painted backdrop's bottom artwork starts at `H-45`, but nine rows never fit the
+640x480 band; (5) two test-rig rules - a full-screen test on a locked desktop proves nothing, and the
+exclusive surface reads back black unless the capturing process is DPI-aware. Should the mod come back
+(as a skirmish or multiplayer mode, which is what its authors built it for), the code below is the
+starting point.
+
+**What the mod is.** `DCJM_setup.exe` (18.8 MB, `md5 062e6134…`, in `Documents`) is an Inno Setup
+5.2.1 installer of "DC:Jupiter Mod 0.3" by MaraProject (`setuper.iss` inside: AppVerName "Jupiter
+Mod 0.3", publisher URL `dc.maraproject.net`, built 21 Jul 2008 on a desktop). It was unpacked with
+`innoextract` 1.9 (installed through winget, `dscharrer.innoextract`; 7-Zip cannot open Inno
+archives) into `Dark-Colony-development/DC - Jupiter mod/` - 2065 files, 86 MB, one `{app}` root. It
+is a **complete Dark Colony install with the Council Wars files folded into the root** (no `exp/`
+folder: `anim.dat` = `exp/anim.dat`, the CW `animate/` and `sprites/` banks, terrains, `scenario/
+aerogen|council`, the CW briefings in `mission/`), plus the untouched Jan 1998 `dc16.exe`
+(`md5 8fc93346…`), `dc.exe`, a third-party `dc cd fix.exe`, the map editor's DLLs and InstallShield
+leftovers. A byte comparison against the game folder (root, then `exp/`) leaves **the mod itself**:
+
+| file | what changed |
+|---|---|
+| `gamestat/gamestat.txt` | **112** unit types = the 106-type table + six new: Major / Sitruc (106/107, TRSC/GRAY sprites, 47 speed, weapons 5 12 10 / 62 12 10, upgrade links 107/106), human and gray Bazooka (108/109, weapons 66-68 / 69-71), the gray Mothership (110, SAUC, 5000 health, weapon 72), the Dodo (111, TRUK); stat changes for GRAY, SCYT, T, ENGI, SLOM, HMINE |
+| `gamestat/weapstat.txt` | **72** weapons: damage / shots / speed changes on the stock 64, plus 65 Barracks gun, 66-71 Nodegun turrets (TURR / XENO), 72 Mothership cannon (4000 damage) |
+| `gamestat/depend.txt` | **86** rows: six new buildables (Major 1500, grey troopers 1500, Bazooka 700 x2, Mothership 4000, Dodo 400), Warrior Fold / Barracks 750, Gray 250, Slom 300, Ortu / Osprey 500 |
+| `gamestat/unitid.txt` | six rows `1 r 106..111 289..296` (type -> text id) |
+| `sound/slist.dat` | SEL / ACK / DEA / DPY lists for types 106-109 (borrowed stock sounds), `48 GUN 169 170`, `63 GUN 200` |
+| `sound/sound2.dat` + `sound/ion.wav` | **entry 200** `SOUND\ION.WAV` appended to the 200-entry start-up sound table (see below) |
+| `intrface/maine` | the battle HUD with `count` build buttons for the new units (285-288, 294, 296 at x=577) and their `textmsg` names |
+| `intrface/bintroe`, `intrg.gif`, `intrq.gif`, `credits.txt` | the mod's own 640x480 menu: SINGLE PLAYER WAR (id 4) top left, MULTI PLAYER WAR, LOAD GAME, QUIT - no campaign button; a repainted backdrop and an unreferenced second one; MaraProject credits |
+| `scenario/human/human09.tro` | the Council Wars copy with the `&&==` typo (the root has the fixed one) |
+| `.ovh`, `.o16`, `scenario/mplayer/debug.txt`, `scenario/test/scene.txt`, `hbnfufl.*` (`G:`) | game-written or stray |
+
+So the mod has **no missions of its own**: it is a unit / balance mod meant for skirmish and
+multiplayer, and its table extends the 106-type **Classic** table (Council Wars' own
+`exp/gamestat/gamestat.txt` has 118 rows, so the mod's tables would break the expansion's
+campaign). "JUPITER MISSIONS" is therefore the **original Dark Colony campaign played with the mod's
+tables** - the DARK COLONY mode of §10.36 with a different overlay.
+
+**A fifth prefix mode, and why the prefix slots had to move.** The mechanism is §10.13's: four
+writable DGROUP strings, a mode is their content, and the JUPITER MISSIONS handler writes
+`jupiter/` / `jupiter/` / `jupsave` / `jupsave`. The overlay helper `0x4063E4` opens
+`jupiter/<name>` first and falls back to the game root, so everything the overlay does not hold
+comes from the Classic data (`SCENARIO/HUMAN|ALIEN`, `MISSION/` briefings, `INTRF_HD/HSCENE|
+GSCENE.TXT`, sprites, sounds), and LOAD JUP GAME lists `jupsave/`. But `jupiter/` is **eight**
+characters and the stock slots are eight bytes with the next string right behind them:
+`exp/\0\0\0\0` at `0x4826D0` is followed by `strlen(e…` (an assert text), the wave loader's copy at
+`0x487DC8` by `unable to open file %s` (the `error.log` message of §10.19/10.29), so an 8-letter
+prefix would have no terminator - and a 6-letter folder name was not what was asked. Each prefix
+slot is read by exactly **one** instruction, the `mov esi,imm32` of an inline `strcpy`
+(`0x4063F9` in the helper, `0x452AC8` in the wave loader `0x452AB0`; both checked by grepping the
+disassembly for the two addresses). Both operands are re-pointed at the string
+**`intrface/credits.txt`** at `0x48246C` - 21 bytes + 3 alignment zeros = 24 bytes whose only
+reference was the `push` of the credits TTY create that §10.36 removed (its `.reloc` entry is type
+0 since then; a scan of all 18 258 HIGHLOW pointers of the published exe finds none into
+`0x48246C..0x482484`, and the untouched exe has exactly the one from `0x404E90`). The 24 bytes
+become two **12-byte** slots initialised to `exp/` (the start-up mode, as before); every stub
+keeps writing 8 bytes, so bytes 9..12 stay zero and terminate the 8-letter prefix. The two
+save-folder slots (`0x482344`, `0x485E5C`) hold 7-letter names and stay where they are. The old
+prefix slots keep `exp/` and are dead; the `.reloc` entries of the two moved operands stay HIGHLOW
+(an absolute operand is still an absolute operand).
+
+| mode | prefix (slot A `0x48246C`, slot B `0x482478`) | save folder |
+|---|---|---|
+| Council Wars | `exp/` | `esave` |
+| OZI missions | `ozi_ns/` | `ozisave` |
+| Dark Colony (and ACADEMY) | `dc/` | `save` |
+| **Jupiter mod** | **`jupiter/`** | **`jupsave`** |
+
+**Two more button ids, and where their code went.** The filter byte of §10.36 goes from 7 to **9**
+(`cmp edx,9` at `0x404F9E`), which admits ids **8** and **9** - in the stock script the
+`LARGEBUTTON` plates of buttons 2 and 3, which the menu generators renumber to 23 and 24 (the new
+plates are 25 and 26). The 59-byte dispatch block of §10.36 is full (52 used, 7 NOPs), so the
+handlers went into the **45 bytes of the removed credits create** at `0x404E80` - inside the same
+menu function, so `ebp` and the locals are the caller's - and the pad became two jumps. **Those 45
+bytes are live code**: `main.c bintro` runs straight through them on every menu init (the credits
+create used to sit there; §10.36 made them NOPs for exactly that reason). The first build put the
+handler at `0x404E80` without a guard and died at menu init with an access violation at exactly
+that address (Windows Application log, fault offset `0x4E80`: `mov [eax+14F0h],0` with the init
+path's `eax`), so the block now opens with a 2-byte jump over itself and the handler is entered at
+`0x404E82`:
+
+```
+00405120: 75 16              jne  00405138        ; LOAD DC GAME's "not 7" now lands on the jmp below
+...
+00405136: EB 05              jmp  0040513D        ; LOAD DC GAME's own fall-through (was the NOP pad)
+00405138: E9 45 FD FF FF     jmp  00404E82        ; ids 8 and 9
+
+00404E80: EB 2B                            jmp 00404EAD                  ; the menu init passes by
+00404E82: C7 80 F0 14 00 00 00 00 00 00   mov dword ptr [eax+14F0h],0   ; campaign, not training (gs+0x14F4 is 0 already)
+00404E8C: 89 C2                            mov edx,eax                   ; game state
+00404E8E: 8B 45 FC                         mov eax,[ebp-4]               ; screen
+00404E91: E8 1A A5 07 00                   call 0047F3B0                 ; stub_jup_set (keeps eax, edx, edi)
+00404E96: 83 FF 09                         cmp edi,9
+00404E99: 74 0A                            je  00404EA5
+00404E9B: E8 68 CD FF FF                   call 00401C08                 ; JUPITER MISSIONS: the campaign runner
+00404EA0: E9 98 02 00 00                   jmp 0040513D
+00404EA5: E8 FA EB FF FF                   call 00403AA4                 ; LOAD JUP GAME: the load screen
+00404EAA: EB F4                            jmp 00404EA0                  ; back onto the jmp 0040513D
+00404EAC: 90                               nop
+```
+
+44 bytes + 1 NOP, no trampolines; the tool recognises and upgrades the crashing first form. `stub_jup_set` is the fourth 73-byte slot writer, at
+**`0x47F3B0`** in the AUTO tail (the camera stub ends at `0x47F331`, `stub_dc_set` and its
+trampolines at `0x47F3AA`; **7 bytes of the tail are left**, `0x47F3F9..0x47F400`); its four
+`mov edi,imm32` operands add four HIGHLOW entries to the `.reloc` insert of page `0x7F000` (12 ->
+**16** entries, 32 bytes; 20 of the section's 52 slack bytes left). `patch_ozi_menu.py` is at **v4**:
+28 code / data edits and 20 `.reloc` edits, accepts the stock, v1, v2 and v3 forms of every site
+and upgrades in place (the published v3 exe upgraded to the same bytes the patcher builds from
+the original).
+
+**The menu: nine rows, anchored on the bottom edge.** The left column is now ACADEMY, DARK COLONY,
+LOAD DC GAME, COUNCIL WARS, LOAD CW GAME, OZI MISSIONS, LOAD OZI GAME, **JUPITER MISSIONS (8), LOAD
+JUP GAME (9)**, with the 12 px group gap after rows 1, 3, 5 **and 7**; MULTI PLAYER WAR and
+ENCYCLOPEDIA stay on rows 1 and 2 of the second column, QUIT on its last row (9). Anchoring the
+block on the script's own bottom row, as §10.36 did, no longer works: at 1024x768 that row is 606
+and nine rows with four gaps (256 px above it) would start at 350, **under the title sprite**
+(`DCUT` at 352..385). Measured on every painted backdrop (`INTRG.GIF`, black run over the button
+columns), the bottom artwork starts at **`H - 45`** at every size (435 / 675 / 723 / 755 / 979 /
+1035 for 480 .. 1080 rows) because `paint_intro.py` copies the stock bottom band 1:1 at the same
+distance from the bottom edge, and the stock 640x480 bottom row is 408 = `480 - 72`, 2 px above
+the art. So the rule is now **bottom row = `H - 72`** at every size, which reproduces the stock
+row at 640x480 and gives the HD blocks the room they need; both generators shrink the gap while
+the first row would touch the crescent (640x480, limit 218) or the title (HD: the lowest edge of
+the non-`LARGEBUTTON` gadgets + 12), and refuse if it still does not fit. Rows: 1024x768
+**440..696** (title ends 385), 1280x720 392..648, 1280x800 472..728, 1280x1024 696..952. **At
+640x480 nine rows do not fit at all**: 9 x 26 = 234 px without any gap against the 217-row band
+between the crescent (218) and the art (435), so there the left column keeps its seven rows of
+§10.36 (219/256/282/319/345/382/408) and the two Jupiter buttons take **rows 4 and 5 of the second
+column** (x 326, y 319 / 345 - their own group, level with COUNCIL WARS / LOAD CW GAME). Both
+`build_ozi_overlay.menu_layout` / `menu_script` and the patcher's `Edit-OziMenu` implement this
+(`OZI_COLUMNS` / `OZI_COLUMNS_STOCK`, `BOTTOM_FROM_EDGE`, `TITLE_CLEARANCE`; the gap count now
+counts only gaps inside the block), accept the stock 2x4 grid, their 23 Sep output (ids 19/20 +
+8/9, 10 `banim` pairs) and their own (12 pairs), and refuse anything else by name.
+
+**The overlay `DC - Council wars/jupiter/`** (new tool `tools/build_jupiter_overlay.py`, dry run /
+`--apply`, input = the extracted installer folder, default
+`<game>/../../Dark-Colony-development/DC - Jupiter mod`):
+
+* `gamestat/gamestat.txt`, `depend.txt`, `unitid.txt`, `weapstat.txt` - the balance tables, read per
+  game through the prefix (the four `gamestat/…` strings of DGROUP; the exe has no `gxmestat`
+  string, `exp/gamestat/gxmestat.txt` is a leftover nothing reads).
+* `sound/slist.dat` - the unit sound lists, read per game (`0x431390` from the game-start init
+  `0x41EB40`), **minus the line `63 GUN 200 -1`**: the start-up sound table has room for exactly
+  200 entries (`0x4309C8` clears `0..0xC7`, `0x4DFF30` + 116 bytes each, the list loader asserts
+  `i < NUM_SOUNDS` at `0x431430`) and stores the index without a bound check, so the mod's own
+  installer relied on entry 200 landing 116 bytes past the array. Every entry's WAV is opened at
+  start-up by the sound module's load-all pass (`0x430DD3`, reached through the module's function
+  table, loop over 0..199 at `0x430EA1` -> the wave loader) under the Council Wars prefix, so a
+  **per-mode sound is not possible**: a 201st entry does not fit and replacing one of the 200 would
+  reach every mode. `ion.wav` (the report of weapon 63 ZIMAL, the artifact weapon, silent in the
+  stock game) is left out; the maintainer can trade a shared entry for it if wanted.
+* `intrface/maine` - the mod's HUD verbatim, read as `jupiter/intrface/maine` by a 640x480 build.
+* `intrf_hd/maine` - the same HUD laid out for the HD set (size from `exp/intrf_hd/bintroe`):
+  `hud_layout.shift` on every widget (right panel + growth, bottom bar down, the panel's bottom
+  cluster both, PAUSED by half), the `size` line, `background intrf_hd/intrface`. The tool checks
+  that this transform reproduces the root `INTRF_HD/MAINE` from `INTRFACE/MAINE` (it does), and the
+  patcher's `Write-InterfaceSet` writes the same file with `Edit-HudScript` + `Set-BackgroundHd`.
+* `intrf_hd/bintroe` - the patched menu, written by `build_ozi_overlay.py` (the mode is sticky, so
+  the menu is reloaded through `jupiter/`), at 640x480 `intrface/bintoze` by the patcher
+  (`Write-StockOziMenu`, `.gitignore`d like the other copies).
+* `../jupsave/jupsave.txt` - the save folder marker.
+
+Not copied, and why: everything identical to the root or `exp/`; the mod's menu and backdrops (the
+patched build has its own menu; `intrg.gif` would only show in this mode at 640x480 and its layout
+does not match); `credits.txt` (the box is gone); `human09.tro` (the typo); caches and stray files;
+the installer's binaries. **Animations: the mod has none of its own** - every `animate/` and
+`sprites/` file is the Council Wars one, and its `anim.dat` is `exp/anim.dat`; the six new types
+reuse the TRSC / GRAY / SAUC / TRUK banks.
+
+**Patcher.** `ozi_data` lists the `jupiter/` tree and `jupsave/jupsave.txt` (from `git ls-files`,
+so the overlay has to be in the index; 394 files for the fix now), `Write-InterfaceSet` writes
+`jupiter\intrf_hd\bintroe` + `maine`, `Write-StockOziMenu` the 640x480 copy; the `.reloc` insert
+note reads its length instead of saying 16. Regenerated `Apply-DarkColonyPatches.ps1` (998 KB).
+Published 1024x768 outputs: Council Wars **`c9a8b838…`** (= the v3 exe upgraded in place by the
+tool, byte-identical; the crashing first build was `671c58d2…`), 640x480 `0e49c9f8…`; Classic
+untouched `a71d038b…`. `dcexp16.asm` regenerated from the new exe.
+
+**Checks made.** Python and PowerShell menu scripts byte-identical for the stock 640x480 script,
+the four `hd_sets/` fixtures (rewritten to nine rows) and the game folder's 1024x768 script;
+both idempotent; `build_ozi_overlay.py` reports the three copies identical; a full `-All` patcher
+run into a scratch copy at 1024x768 rebuilt the exe and every interface file (`exp`, `dc`, `ozi_ns`,
+`jupiter` copies, `INTRF_HD/MAINE`) byte for byte, and a 640x480 run wrote the four `bintoze` copies
+and matched the reference hash; `patch_ozi_menu.py verify` says v4 on both. The new code was read
+back from the regenerated disassembly.
+
+**Game test (23 Sep 2026, night).** Two lessons before the result. (1) A first scripted run
+(`subst V:` on the game folder, SPACE, click JUPITER MISSIONS (416,682) -> START CAMPAIGN (680,506)
+-> NEXT (780,606) -> TO BATTLE (691,603), screenshots) happened while the desktop was **locked**
+(`LogonUI` alive, foreground window "Windows Default Lock Screen"): every capture came back black
+and the game died with `0xC0000005` inside `igd9trinity32.dll` (the Intel D3D9 driver under
+DirectDraw) on the first click - for the DARK COLONY control button too. A full-screen test on a
+locked desktop proves nothing; check `Get-Process LogonUI` first. (2) Unlocked, the first build
+died at menu init (fault offset `0x4E80`, above): the live-code mistake, fixed as shown. With the
+fix the run went through: the nine-row menu as designed (screenshot: ACADEMY .. LOAD JUP GAME left,
+MULTI PLAYER WAR / ENCYCLOPEDIA / QUIT right, title clear above), JUPITER MISSIONS -> the race
+overview (HUMAN / GRAY, leader name) -> START CAMPAIGN -> briefing -> TO BATTLE -> the first
+mission's battlefield (landing message, two units, HUD frame), and LOAD JUP GAME -> its load screen;
+the process alive throughout, `error.log` empty, no Application-log event. Captures need a
+**DPI-aware** child process (`SetProcessDPIAware` before the screen-DC BitBlt) - from the
+DPI-unaware test process the exclusive surface reads back black. Still open: the HUD's new build
+buttons in play (the capture shows the landing intro), a save round-trip through LOAD JUP GAME, the
+640x480 menu in game, and where the unit names of the new types come from (`unitid.txt` maps them
+to text ids 289..296, but the mod ships no text file with those ids - the mod's own menu never
+offered a campaign, so its authors may never have seen the race overview or the encyclopedia with
+these types). Medals: as in §10.36.
 
 
 ## 11. Risks

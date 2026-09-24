@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Jupiter mod 0.3 investigated as a fifth Council Wars menu mode, built, confirmed in game, and dropped**
+  (23-24 Sep 2026; `DC16_DISPLAY_AND_RESOLUTION.md` §10.37, plan F64 + §16): the mod (MaraProject, 2008) is a unit /
+  balance mod over the 106-type Classic table with no missions of its own, so "JUPITER MISSIONS" would have been
+  the Dark Colony campaign with six extra units; the maintainer dropped it. Nothing of it ships; the section keeps
+  the findings (mode prefix slots can move into the dead `intrface/credits.txt` string, the removed credits bytes
+  are live menu-init code, the start-up sound table is a fixed 200 entries, a menu block anchored at `H-72` fits
+  every painted backdrop, two test-rig rules).
 - **Sound files load from any folder depth** (22 Sep 2026, found while running a patched build from a
   161-character folder path; plan §16 entry of 22 Sep + F58, `DC16_DISPLAY_AND_RESOLUTION.md` §10.29):
   the wave loader was the one place in the game that opened files with the Windows 3.1-era `OpenFile`,
