@@ -924,7 +924,7 @@ corrections, so that nobody restores the old text from memory:
   hero-related events *(inferred from usage; `results.c` names not recovered)*.
 * `gs+0x000` gating commander specials was read as a "multiplayer" flag from its use in game init;
   not confirmed.
-* Nothing here was re-checked against `ENGEXP16.EXE`.
+* Nothing here was re-checked against `ENGEXP16.EXE` instruction by instruction; a relocation-aware byte comparison (25 Sep 2026) found the simulation code identical (+0x60 above `0x4063E4`). The data is not: Council Wars' `troo.fin`/`grrr.fin` give ten types a DEPLOY animation and so change the Gray commander rally of §10.2 (28 ticks instead of 2, `DC16_DISPLAY_AND_RESOLUTION.md` §10.39).
 
 ---
 

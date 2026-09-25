@@ -14,6 +14,15 @@ layer).  Output is two things inside the Council Wars folder:
      - the pack's transport as `tranozi.fin` + `tranozi.spr` (bank field renamed; a smoke
        animation and a real sprite for the pack's "transmitter"/"Generator"; no Council Wars or
        Classic balance table uses TRAN), replacing the `tran.fin` line in `animozi.dat`;
+     - `grrr.fin` and `troo.fin` left OUT of `animozi.dat` (25 Sep 2026, network compatibility,
+       doc 10.39): they are the only stock Council Wars FINs whose animations a Classic unit type
+       picks up - GRAYDEPLOY / TRSCDEPLOY, the deploy poses of the Security Trooper, the Gray and
+       the eight commanders (types 0, 8, 69-76; the pack's 118/119).  Classic has neither and falls
+       back to STAND, and the commander rally waits for that animation: 28 ticks for a Gray
+       commander in Council Wars against 2 in Classic, so a mixed network game (and one against the
+       relay server's checksums) desynchronises at the first Gray rally.  Nothing else reads them
+       (no script, scenario, table or other FIN names GRRR, INSP or the two DEPLOY sets);
+       the stock `exp/anim.dat` keeps both lines for the original exe;
      - the main-menu labels 8 "PLAY INTRO" -> "OZI MISSIONS" and 5 "SINGLE PLAYER WAR" ->
        "OZI LOAD" in `exp/intrf_hd/bintroe` (the HD override script; the stock
        `exp/intrface/bintroe` keeps Classic's labels for the original exe, see
@@ -58,6 +67,9 @@ NEW_UNITS = ('dalg', 'spyo', 'reae')
 REPLACED = ('tran',)
 OZI_NAME = '%sozi'                  # pack version of a replaced stock bank: tran -> tranozi (7 chars)
 OZI_ANIM = 'animozi.dat'            # the patched exe's start-up list (patch_ozi_menu.py); anim.dat stays stock
+# stock Council Wars FINs kept out of animozi.dat so every Classic unit type animates exactly as in
+# Classic dc16.exe (network lockstep, docstring item 1; doc DC16_DISPLAY_AND_RESOLUTION.md 10.39)
+NOT_IN_OZI_ANIM = ('grrr.fin', 'troo.fin')
 SKIP_DIRS = {'animate', 'sprites'}
 SKIP_FILES = {'anim.dat', 'telp.fin', 'sound/sound2.dat', 'intrface/maine', 'intrface/bintroe',
               'intrface/introe', 'intrface/shumane', 'intrface/intrg.gif', 'intrface/intro.gif'}
@@ -244,12 +256,13 @@ def base_set(game, pack, plan):
                     or find_ci(os.path.join(game, 'SPRITES'), bank + '.spr')):
                 plan.notes.append('WARNING %s.fin needs sprite bank %s, not found' % (unit, bank))
 
-    # exp/animozi.dat = the STOCK exp/anim.dat with the replaced units renamed and the new units
-    # appended; the patched exe opens it instead of anim.dat (patch_ozi_menu.py DGROUP_SITES).
+    # exp/animozi.dat = the STOCK exp/anim.dat with the replaced units renamed, the two Classic-type
+    # deploy FINs dropped (NOT_IN_OZI_ANIM) and the new units appended; the patched exe opens it
+    # instead of anim.dat (patch_ozi_menu.py DGROUP_SITES).
     anim = find_ci(exp, 'anim.dat')
     data = open(anim, 'rb').read()
     eol = b'\r\n' if b'\r\n' in data else b'\n'
-    lines = data.split(eol)
+    lines = [l for l in data.split(eol) if l.strip().lower().decode('latin-1') not in NOT_IN_OZI_ANIM]
     lines = [((OZI_NAME % l.strip().decode()[:-4]) + '.fin').encode() if l.strip().lower()[:-4].decode() in REPLACED
              and l.strip().lower().endswith(b'.fin') else l for l in lines]
     have = {l.strip().lower() for l in lines}
@@ -257,7 +270,8 @@ def base_set(game, pack, plan):
         lines.pop()
     lines += [(u + '.fin').encode() for u in NEW_UNITS if (u + '.fin').encode() not in have]
     plan.write(os.path.join(exp, OZI_ANIM), eol.join(lines) + eol,
-               'stock anim.dat + %s, %s' % (', '.join(OZI_NAME % u for u in REPLACED), ', '.join(NEW_UNITS)))
+               'stock anim.dat + %s, %s, without %s' % (', '.join(OZI_NAME % u for u in REPLACED),
+                                                         ', '.join(NEW_UNITS), ', '.join(NOT_IN_OZI_ANIM)))
     for stock in ('anim.dat', 'animate/tran.fin', 'sprites/tran.spr'):
         p = find_ci(os.path.join(exp, *stock.split('/')[:-1]), stock.split('/')[-1])
         if p and b'TRANSMOKEY' in open(p, 'rb').read() and stock != 'anim.dat':

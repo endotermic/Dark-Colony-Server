@@ -750,6 +750,15 @@ itself uses.  Two buttons are added for it:
     LOAD DC GAME goes through tramp_dc_load, so it always lists the SAVE/ folder.  The stub and
     the two trampolines are 97 more bytes of the code section's zero tail (VA 0x47F340..0x47F3AA),
     and their four absolute slot addresses add four more entries to the .reloc insert
+  * MULTI PLAYER WAR goes through a fourth trampoline, tramp_dc_net (25 Sep 2026; 10 bytes at
+    VA 0x47F3B0, relative operands only): a network game always starts in the Dark Colony mode, so
+    it reads the Classic balance tables from the game root like dc16.exe and the relay server do.
+    The menu's mode is sticky, and after OZI MISSIONS a network game loaded the pack's tables and
+    went out of sync against every other player.  For the same reason exp/animozi.dat no longer
+    lists grrr.fin and troo.fin, the deploy poses of the Gray and Security Trooper sprites: Classic
+    has neither, and a Gray commander's rally waited 28 ticks for that animation in Council Wars
+    against 2 in Classic - a mixed network game went out of sync at the first Gray rally.  The
+    commanders of all three campaigns now rally in their STAND pose, as in Dark Colony
   * at 640x480 only, the scrolling credits box is removed (main.c bintro's TTY create, 45 bytes
     -> NOPs, the call is `ret 20h` so the stack balances, and the matching destroy count 1 -> 0):
     the seven-row menu is 217 rows tall and the black band of the 640x480 backdrop between the

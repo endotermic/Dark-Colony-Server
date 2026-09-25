@@ -78,7 +78,8 @@ both.
 build, and `RELAY_SERVER_PLAN.md` fact **F27** states that "the Council Wars executable has no working
 network play". F27 is a maintainer assumption, not a binary fact: the network code of the two
 builds is identical, it is only unreachable from the expansion's menu. F27 should be reworded once
-§7.1 has been run.
+§7.1 has been run. (Reworded 25 Sep 2026 from the static comparison and engine replays of the
+§4.2 correction; §7.1 itself has still not been run.)
 
 ---
 
@@ -147,7 +148,7 @@ A multiplayer game loads its balance tables per game start (`0x41BB50 -> 0x43C4A
 |---|---|---|
 | `gamestat/gamestat.txt` (object types) | `exp/gamestat/gamestat.txt` | Classic's 106 rows **unchanged**, 12 rows appended (types 106..117: VATO and the other expansion units); count 118 |
 | `weapstat`, `boomstat`, `mbullet`, `unitid` | root `GAMESTAT/*.TXT` (no `exp/` copy) | **byte-identical** to Classic |
-| `anim.dat`, sprite banks, `sound2.dat` | `exp/` copies | superset / different sounds - not part of the simulation |
+| `anim.dat`, sprite banks, `sound2.dat` | `exp/` copies | superset / different sounds - **partly part of the simulation, see the correction below** |
 
 The 56 multiplayer maps place only Classic object types, and the relay server never hands a slot to
 the AI, so an expansion client should produce the same `0x08` checksums as a Classic client and as
@@ -155,6 +156,28 @@ the server's engine port (`data/classic/gamestat.json`). The residual risk is th
 `DISCONNECT`: with 118 types its production choices could differ from a Classic client's. The clean
 fix is to enter multiplayer in a "Classic mode" (§5.2) so the tables come from the root, which makes
 the expansion client indistinguishable from `dc16.exe`.
+
+**Correction (25 Sep 2026, `DC16_DISPLAY_AND_RESOLUTION.md` §10.39).** The conclusion above was
+wrong in one point and incomplete in another:
+
+* The start-up animation data IS simulation input: frame durations, bounding boxes and muzzle
+  hotspots decide when a unit fires, how long a state waits and where a projectile starts (the
+  server's engine port loads them from `data/classic/sprites.json`). Council Wars' `exp/anim.dat`
+  loads `troo.fin` and `grrr.fin` before the Classic list, which give the Security Trooper, the
+  Gray and the eight commanders a `DEPLOY` animation that Classic lacks (Classic falls back to
+  STAND). The commander rally waits for it: 28 ticks for a Gray commander in Council Wars against
+  2 in Classic. Replayed through the engine port, every one of the six recorded battles with a Gray
+  commander rally diverged 3 to 10 ticks after the first rally. Fixed for the patched build: its
+  list `exp/animozi.dat` no longer names the two files.
+* The 118 types are harmless: the type count `0x518B34` is read only by a sound assert and by the
+  save/load of the upgrade bytes, never by the simulation or the AI.
+* Once the menu modes existed (OZI, DARK COLONY, §5.2 realised as `DC16_DISPLAY_AND_RESOLUTION.md`
+  §10.13/§10.36), a network game inherited whatever mode was last - after OZI MISSIONS the pack's
+  tables. Fixed: MULTI PLAYER WAR now goes through `tramp_dc_net` (the "Classic mode" of §4.3
+  item 2), so the tables always come from the root.
+* Verified identical by a relocation-aware byte comparison of the untouched exes: all code outside
+  the menu/start-up block `0x405000..0x406600` and the medal constants, the whole `.bss` layout
+  (delta 0) and DGROUP's constants including the rand table. Not verified in a real network game.
 
 ### 4.3 What to do
 
@@ -323,8 +346,9 @@ anyway, so a new button would be needed to play it.
 
 `anim.dat`, all FIN/SPR banks and `sound2.dat` load once at start-up through `exp/` (the reason the
 OZI units live in `exp/`). In Classic mode the game therefore still uses the expansion's sound table
-(different gun sounds for some weapons) and the superset sprite banks. Cosmetic; the simulation is
-unaffected.
+(different gun sounds for some weapons) and the superset sprite banks. The sounds are cosmetic; the
+animations are not (25 Sep 2026): Council Wars' `troo.fin` / `grrr.fin` changed the Gray commander's
+rally timing, see the correction in §4.2. The patched build's `exp/animozi.dat` leaves them out.
 
 ### 6.5 Things that are already fine
 

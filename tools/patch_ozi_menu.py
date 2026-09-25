@@ -89,10 +89,20 @@ sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overla
    The count becomes 0.  (The TTY module allows exactly one instance: its create asserts when
    the count reaches 2, which is why the menu frees its own before leaving.)  At the HD sizes the
    create runs, so the destroy keeps its 1.
+8. MULTI PLAYER WAR (button id 3, `call 0x405C20` at 0x405097, the network options screen) goes
+   through `tramp_dc_net` since 25 Sep 2026 (doc 10.39): `call stub_dc_set; jmp 0x405C20`, 10 bytes
+   at 0x47F3B0 in the zero tail, relative operands only (no .reloc change).  A network battle
+   loads its balance tables per game start through the prefix, and the menu's mode is sticky, so
+   after OZI MISSIONS / LOAD OZI GAME a network game read ozi_ns/gamestat (126 types, other weapon,
+   explosion and bullet tables) and desynchronised against every other client and the relay
+   server's checksums.  In the Dark Colony mode every table comes from the game root, i.e. the
+   106-type Classic set that dc16.exe and the server's engine port use.  (The other half of network
+   compatibility is data: build_ozi_overlay.py keeps grrr.fin / troo.fin out of animozi.dat.)
 
 Version 1 of this patch (10 Sep 2026, before OZI LOAD) had `stub_cw` tail-jump into 0x401C08
 itself and left LOAD GAME direct; the tool recognises a v1 exe and upgrades it in place.
-Nothing is written unless every site holds its stock, v1 or v2 bytes.
+Nothing is written unless every site holds its stock, v1 or v2 bytes (an exe of the v3 form, before
+item 8, holds the stock call at 0x405097 and is upgraded to v4 the same way).
 
 CLI
     python patch_ozi_menu.py verify "DC - Council wars/DCEXP16.EXE"
@@ -146,6 +156,11 @@ RELOC_PAGE_HANDLER = 0x5000     # page of the old handler: operands at 0x0DE and
 RELOC_PAGE_TAIL = 0x7F000       # page of the stubs: eight new operands, four for stub_dc_set
 RELOC_PAGE_CREDITS = 0x4000     # page of the credits call: its two string operands vanish
 CREDITS_RELOC = (0xE8B, 0xE90)  # `push intrface/mfonto5`, `push intrface/credits.txt`
+
+# Network games in the Dark Colony mode (25 Sep 2026, docstring item 8)
+NETWORK_CALL = 0x405097         # `call 00405C20` in the MULTI PLAYER WAR handler (button id 3)
+NETWORK_OPTIONS = 0x405C20      # the netopt screen: DirectPlay / ACT AS SERVER / CONNECT TO SERVER
+TRAMP_DC_NET = 0x47F3B0         # after tramp_dc_load (ends 0x47F3AA); 70 tail bytes left behind it
 
 STOCK_HANDLER = bytes.fromhex(
     'be f2 46 4a 00 8d bd f0 fe ff ff 57 8a 06 88 07 3c 00 74 10 8a 46 01 83 c6 02 88 47 01'
@@ -307,6 +322,11 @@ def build(stock_mode=False):
                   tramp(TRAMP_DC_CAMPAIGN, STUB_DC, CAMPAIGN_RUNNER)))
     sites.append(('tramp_dc_load (stub_dc_set; jmp 403AA4)', TRAMP_DC_LOAD, [bytes(10)],
                   tramp(TRAMP_DC_LOAD, STUB_DC, LOAD_GAME)))
+    # MULTI PLAYER WAR always in the Dark Colony mode: the Classic tables, whatever mode was last
+    sites.append(('tramp_dc_net (stub_dc_set; jmp 405C20)', TRAMP_DC_NET, [bytes(10)],
+                  tramp(TRAMP_DC_NET, STUB_DC, NETWORK_OPTIONS)))
+    sites.append(('MULTI PLAYER WAR call -> tramp_dc_net', NETWORK_CALL,
+                  [call(NETWORK_CALL, NETWORK_OPTIONS)], call(NETWORK_CALL, TRAMP_DC_NET)))
     sites.append(('menu id filter: accept the button ids 6 and 7 (cmp edx,5 -> 7)', ID_FILTER_IMM,
                   [bytes.fromhex('83 FA 05')], bytes.fromhex('83 FA 07')))
     sites.append(('end of the id chain: jne 0040513D -> the Dark Colony handlers', ID_CHAIN_END,
@@ -454,10 +474,10 @@ def resolve(data, stock_mode=False):
 def state(edits):
     kinds = {k for *_, k in edits}
     if kinds == {'done'}:
-        return 'patched (v3)'
+        return 'patched (v4)'
     if kinds == {'stock'}:
         return 'stock'
-    return 'earlier version or partial (apply upgrades to v3)'
+    return 'earlier version or partial (apply upgrades to v4)'
 
 
 def main(argv=None):
@@ -489,7 +509,7 @@ def main(argv=None):
             '%03X->%s' % (off, 'ABS' if typ == 0 else 'HIGHLOW') for off, typ in redits)))
     if a.command == 'plan':
         return 0
-    if state(edits) == 'patched (v3)' and rstate == 'patched':
+    if state(edits) == 'patched (v4)' and rstate == 'patched':
         print('nothing to do')
         return 0
 
