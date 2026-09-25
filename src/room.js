@@ -463,6 +463,19 @@ export class Room {
     const slot = s >= 0 ? this.slots[s] : null;
     const name = slot?.name || `Player${s}`;
     const wasReady = slot?.status === 2;
+    // The battle numbers tell a silent client apart from a lagging one (25 Sep 2026, plan §16):
+    // sinceLastMessageMs = how long nothing at all arrived (echoes, progress reports, commands);
+    // clientTime/serverUntil = where its simulation stood against the frames issued.
+    const now = this.now();
+    const battle = this.state === STATE.RUNNING || this.state === STATE.STARTING
+      ? {
+        sinceLastMessageMs: now - client.lastSeen,
+        clientTime: client.clientTime,
+        serverUntil: this.game.lastIssuedUntil,
+        pendingEchoes: client.pendingEchoes.size,
+        latencyMs: client.latencyMs < 0 ? null : Math.round(client.latencyMs),
+      }
+      : {};
     this.log.info('client left', {
       id: client.id,
       slot: s,
@@ -470,6 +483,7 @@ export class Room {
       reason,
       state: this.state,
       players: this.clients.size,
+      ...battle,
     });
     if (slot && slot.client === client) this.slots[s] = this.emptySlot(s);
     switch (this.state) {

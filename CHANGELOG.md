@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Eviction log lines carry the battle numbers** (25 Sep 2026; plan F66 + §16 entry of 25 Sep): after
+  a player was dropped mid-game with `no echo for frame 20116` and saw "Connection Lost" (the client's
+  reaction to the relay closing the socket, read from the battle loop `0x40115C` / client step
+  `0x40AAFC`), the `client left` line now adds `sinceLastMessageMs`, `clientTime`, `serverUntil`,
+  `pendingEchoes` and `latencyMs`, so the next case shows whether the client went completely silent
+  (network) or kept reporting while its echoes were missing. `ECHO_TIMEOUT_MS` stays at 5 s; the plan
+  entry weighs raising it. The recording of that game (first Dark Colony Ultimate battle on the wire,
+  14 min 50 s against seven Krusty bots, engine clean) is `logs/replays/2026-09-25T14-08-09-018Z-room1-J8PLAY01.jsonl`.
 - **Jupiter mod 0.3 investigated as a fifth Council Wars menu mode, built, confirmed in game, and dropped**
   (23-24 Sep 2026; `DC16_DISPLAY_AND_RESOLUTION.md` §10.37, plan F64 + §16): the mod (MaraProject, 2008) is a unit /
   balance mod over the 106-type Classic table with no missions of its own, so "JUPITER MISSIONS" would have been
