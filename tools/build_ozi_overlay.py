@@ -162,7 +162,16 @@ OZI_GADGET = {0: 19, 1: 20, 2: 8, 3: 9, 4: 10, 5: 11,
 OZI_LABEL_OF = {6: 9, 7: 10}                    # the new buttons -> their `textmsg` number
 OZI_TEMPLATE = {'pushb': 16, 'gadget': 17, 'textmsg': 8}   # lines the new ones are cloned after
 OZI_BANIM = 18                                  # the `banim` object id (unchanged)
-OZI_BANIM_ORDER = (0, 1, 2, 3, 4, 5, 16, 12) + OZI_NEW_BUTTONS   # the stock pair order + the new pair
+# The `banim` widget (button.c `create_banim` 0x427854 / update 0x4279EC in Classic) is the
+# menu's opening wave: the FIRST listed plate must carry `anim_oneoff` (it starts at open), and
+# whenever plate k has finished its one-shot the widget starts plate k+1 and reveals button k+1
+# - so the pair order IS the order of the wave, and until 25 Sep 2026 it was the stock script's
+# (0 1 2 3 4 5 16 12 + 6 7), which the seven-row layout scattered over the block (maintainer:
+# "initial animation of buttons are in wrong places. animation must go from top buttons to
+# bottom buttons").  menu_order() lists the placed buttons column by column, each from top to
+# bottom, left column first - the stock 2x4 grid's own sequence (6 7 8 = left column, 9 10 11 =
+# right column, 17 13 = the bottom row appended later).
+PLATE_FIRST, PLATE_REST = b'anim_oneoff', b'anim_stopped'   # the plate gadgets' 9th token
 OZI_LABELS = {                                  # `textmsg` number (button id) -> new text
     1: b'COUNCIL WARS',                         # button 0, was NEW CAMPAIGN
     2: b'ACADEMY',                              # button 1, was TRAINING
@@ -394,15 +403,24 @@ def menu_layout(data):
     return place, pitch
 
 
+def menu_order(place):
+    """The order of the opening wave = the `banim` pair order: the placed buttons column by
+    column (left first), each column from top to bottom - see the note at PLATE_FIRST."""
+    return tuple(sorted(place, key=lambda i: (place[i][0], place[i][1])))
+
+
 def menu_script(data):
     """Lay the Council Wars main-menu script out for the patched exe: the rows of menu_layout(),
-    the labels the three campaigns take over, the two new Dark Colony buttons with their plates
-    and a `banim` that pairs all ten, everything else (sizes, sprites, the logo and the title)
-    untouched.  The new lines are cloned from the script's own `pushb 16` / `gadget 17` /
-    `textmsg 8` so they keep its field layout, and re-cloned on a second run, which makes this
-    idempotent.  The stock file mixes CRLF and bare LF line endings; each line keeps its own.
-    Returns (new data, {id: (x, y)})."""
+    the labels the three campaigns take over, the two new Dark Colony buttons with their plates,
+    a `banim` that pairs all ten in the order of menu_order() and `anim_oneoff` on the first
+    plate of that order (`anim_stopped` on the other nine), everything else (sizes, sprites,
+    the logo and the title) untouched.  The new lines are cloned from the script's own
+    `pushb 16` / `gadget 17` / `textmsg 8` so they keep its field layout, and re-cloned on a
+    second run, which makes this idempotent.  The stock file mixes CRLF and bare LF line
+    endings; each line keeps its own.  Returns (new data, {id: (x, y)})."""
     place, _ = menu_layout(data)
+    order = menu_order(place)
+    first_plate = OZI_GADGET[order[0]]
     move = dict(place)
     move.update({OZI_GADGET[i]: xy for i, xy in place.items()})   # each gadget follows its button
     generated = {b'pushb': set(OZI_NEW_BUTTONS),
@@ -420,7 +438,10 @@ def menu_script(data):
             if kind == b'gadget' and i in OZI_RENUM:       # free the ids the new buttons take
                 line, i = set_tokens(line, {2: b'%d' % OZI_RENUM[i]}), OZI_RENUM[i]
             if i in move:
-                line = set_tokens(line, {4: b'%d' % move[i][0], 5: b'%d' % move[i][1]})
+                changes = {4: b'%d' % move[i][0], 5: b'%d' % move[i][1]}
+                if kind == b'gadget':                      # a plate: the wave starts at the first
+                    changes[9] = PLATE_FIRST if i == first_plate else PLATE_REST
+                line = set_tokens(line, changes)
             out.append(line + cr)
             if i == OZI_TEMPLATE[kind.decode()]:
                 for new in OZI_NEW_BUTTONS:
@@ -429,6 +450,8 @@ def menu_script(data):
                     changes = {2: b'%d' % ident, 4: b'%d' % x, 5: b'%d' % y}
                     if kind == b'pushb':
                         changes[12] = b'%d' % OZI_LABEL_OF[new]
+                    else:
+                        changes[9] = PLATE_FIRST if ident == first_plate else PLATE_REST
                     out.append(set_tokens(line, changes) + cr)
             continue
         if t:
@@ -444,7 +467,7 @@ def menu_script(data):
                     out.append(textmsg_line(label, OZI_LABELS[label]) + cr)
             continue
         if re.match(rb'\s*banim\s+\d+\s', line):
-            ids = OZI_BANIM_ORDER
+            ids = order
             line = b'banim   %d  0  %d %d\t %s  %s' % (
                 OZI_BANIM, len(ids), len(ids),
                 b' '.join(b'%d' % OZI_GADGET[i] for i in ids), b' '.join(b'%d' % i for i in ids))

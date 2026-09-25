@@ -1338,7 +1338,9 @@ plus `label 18` on `NEWGAMEE`. `meta`, `multi`, `lost`, `loadg`, `dpblank`, `dpl
 ##### Two things that were data after all
 
 1. **`label` was missing from `pad_background.py`'s widget-kind list.** The keyword table at
-   `0x004895F0` pairs `"label"` with handler `0x00424A40`, which parses `x y w h` through the
+   `0x00489588` pairs `"label"` with handler `0x00426BD4` (button.c's label button; the table is
+   `{name, creator}` pairs and the neighbouring `0x00424A40` is the `gadget` creator - corrected in
+   §10.40, the conclusion below is unchanged), which parses `x y w h` through the
    same field parser (`0x00422414`) as every other kind. So the 44 `label` lines across the
    scripts — including the four the tester saw — had never moved. `POSITIONED` now has `label`
    (and, for completeness, `count`/`scount`). A census of every keyword in the 30 scripts found
@@ -3965,7 +3967,7 @@ tolerance for this file (it is Classic's script with the eight button rows 16 px
 * **hit rectangles** - hovering (736, 573) brightened the ENCYCLOPEDIA plate by **+93 %** while the   two control plates changed by 0 %, so the widget rects sit exactly where the script says;
 * **ENCYCLOPEDIA** - one click opened the encyclopedia screen (Trooper entry, HUMANS / ARTIFACTS /   GRAYS, BACK). That button was `%`-commented out in every shipped Council Wars build, so this is the   first time it has been reachable there, and the id → handler binding survives the reordering;
 * **QUIT** - one click and the process left by itself with **exit code 0**;
-* **the plate animation - NOT verified, and the change to it was reverted.** Sampling at ~50 Hz   showed the row-1 plate varying and the row-2 plate constant with `anim_oneoff` on gadget 7, and   the other way round with it on gadget 6, which is why this section first claimed the move was   confirmed. It is not: every sample was taken with the pointer parked away from the plates, so   what was measured is the one-shot at menu open, not the press or hover feedback, and the   maintainer reports that **nothing animates** on the menu. The move of `anim_oneoff` to the first   row was reverted on request (23 Sep 2026). Open question behind it: `LARGEBUTTON` is frames   0..11 of the `knobe` bank (`ANIMATE/KNOBE.FIN`, entries of 16-byte name + first + last), and   those cells are differently sized plates - 180x26, 180x26, 90x26, 90x26, 60x26, 60x26, 82x18 ...   - so the range is not one plate in twelve poses and what `anim_oneoff` is supposed to do with it   is still unknown. Measure a plate over time while hovering and while pressing before touching   this again.
+* **the plate animation - resolved in §10.40 (25 Sep 2026).** Sampling at ~50 Hz showed the row-1 plate varying and the row-2 plate constant with `anim_oneoff` on gadget 7, and the other way round with it on gadget 6; the move of `anim_oneoff` to the first row was reverted on request (23 Sep 2026) because what the flag does was not understood. It is now: `anim_oneoff` starts the plate's one-shot when the screen opens, and the `banim` widget chains the plates in the order of its pair list and reveals each button as its plate finishes - the opening wave the maintainer reported as "in wrong places" on 25 Sep 2026. Since then the generators derive the order from the layout and put `anim_oneoff` on the first plate of that order (§10.40).
 
 **The rig, for the next time.** `subst V:` on the game folder (never a long path, §10.29); **SPACE** aborts the intro movie - its wait loop at `0x00409080` drains `WM_KEYDOWN` with `PeekMessageA(0x100, 0x100, PM_REMOVE)`, so any key does - and **never ESC**, which the menu itself takes as QUIT. Captures come from a **DPI-aware** process: the exclusive-mode mode switch makes the physical desktop 1280×800, so a screen-DC BitBlt of the top-left 1280×800 is the game's surface 1:1. Input must come from a **DPI-unaware** one, because the game is unaware too: on this 150 % desktop a DPI-aware `SetCursorPos` lands at exactly 1/1.5 of the intended point in the game's own space (the first click aimed at (736, 573) put the game's crosshair at (490, 375) and hit nothing). That is the opposite of the map-editor rule of §"Map editor notes", where windowed output has to be captured with `PrintWindow(PW_RENDERFULLCONTENT)`.
 
@@ -4526,6 +4528,63 @@ What was checked and is identical (so the rest of the answer rests on data, not 
 
 **Builds.** Council Wars 1024x768 `7f5e5322…` (was `dcd973eb…`; 13 bytes: file `0x4498..0x449A` and `0x7E7B0..0x7E7B9`), 640x480 `e6f375e8…` (was `faa3511e…`), 1280x800 `2b430a8f…` (was `1859fa0a…`, the maintainer's working copy, rebuilt with the exe copied back alone so the interface set stayed); Classic `e9cc0561…` and the map editor unchanged. Tool chain = patcher byte for byte (PowerShell 5.1 run on a scratch copy of the game folder: "byte-identical to the executable published in the repository" at 1024x768, "to the reference build" at 1280x800); `dcexp16.asm` regenerated (differs from the previous dump only at the two edits). **Not run in the game** (maintainer decision): the MULTI PLAYER WAR click after OZI mode, a network battle from the Ultimate build, and an OZI mission with the new animation list. Still true for the untouched exe: stock `ENGEXP16.EXE` reads the stock `exp/anim.dat`, so it keeps difference 1 - and since §10.35 its menu script (`exp/intrface/bintroe` = Classic's grid) does show MULTI PLAYER WAR - but not difference 2 (it has no modes; its prefix is always `exp/`, whose tables are harmless). Only the patched Ultimate build is network-compatible with Dark Colony.
 
+#### 10.40 The main menu's opening wave: `banim` decoded, the Ultimate plates now animate top to bottom **(25 Sep 2026, maintainer: "ultimate executable main screen. initial animation of buttons are in wrong places. animation must go from top buttons to bottom buttons"; data + tools only, no exe byte changed; confirmed in game)**
+
+**What the maintainer saw.** When the Dark Colony Ultimate menu opens, the ten button plates play their
+one-shot animation one after another and each label appears when its plate has settled. Since the
+seven-row block of §10.36 the sequence hopped about the block: row 4, row 1, row 5, right row 1, row 7,
+right row 2, row 6, right row 7, row 2, row 3. The stock 2×4 grid never showed the problem because the
+generators kept the stock *pair order* while moving the buttons.
+
+**How the wave works (button.c, read from `dc16.asm`; Council Wars = +0x60).** The widget keyword
+table at `0x489588` is a list of `{name pointer, creator}` pairs (`… "textmsg"→0x42259C,
+"gadget"→0x424A40, "label"→0x426BD4, "banim"→0x427854`, NULL-terminated at `0x489608`) — which also
+corrects §10.15's reading of it: `0x424A40` is the **`gadget`** creator and the `label` (label button:
+keywords `label`, `align`, `font`, assert text "reading label button widget") creator is `0x426BD4`;
+both parse `x y w h` through `0x422414`, so the `POSITIONED` fix of §10.15 stands. `create_banim`
+`0x427854` parses `banim <id> <desc> <n> <m> g1..gn b1..bm` (every id `< 300`, `MAX_OBJ`; asserts at
+button.c lines 532/536) into a 16-byte record at `widget+0x28`: `{n, m, ids*, buttons* = ids + n}`.
+The runtime `0x4279EC`, called from `0x427AE4` for every widget of type `0x0C` when the screen opens,
+is a **blocking loop** that pumps the interface (`0x424294`) while `i < n`:
+
+* when plate `k`'s animation state (`0x425034`) is 2 = finished, it **starts plate `k+1`**
+  (`0x425164(ip, g[k+1], 1)`, plus display method `+0x7C(0xBA, 1)`, the same call it makes on entry)
+  and advances `k`;
+* when plate `i`'s own state (`0x4250CC`) is 2, it finalises it (`0x42436C(ip, g[i], 0)`), advances
+  `i`, and **reveals the next button** of the button list whose byte `ip+0x8A+0x34·id` is set
+  (`0x421AA4`; buttons with the byte clear are skipped).
+
+So the first listed plate must carry **`anim_oneoff`** — nothing else starts it; that is what the
+flag does, which closes the open question of §10.35 — the **order of the pairs is the order of the
+wave**, and each pair's button appears when its plate has finished. Measured at 20 Hz on the fixed
+1024×768 menu: the ten plates settle 11.57 … 12.19 s after launch, about 60 ms apart.
+
+**The fix** (`build_ozi_overlay.menu_order` / the patcher's `Edit-OziMenu`): the pair order is derived
+from the layout — **column by column, left column first, each from top to bottom**, the stock grid's own
+sequence (its `6 7 8` = left column, `9 10 11` = right column, `17 13` = the later-added bottom row) —
+and the plate of the first button in that order gets `anim_oneoff`, the other nine `anim_stopped`
+(9th token of the gadget line; the two cloned Dark Colony plates included). Ultimate at every size:
+ACADEMY → DARK COLONY → LOAD DC GAME → COUNCIL WARS → LOAD CW GAME → OZI MISSIONS → LOAD OZI GAME →
+MULTI PLAYER WAR → ENCYCLOPEDIA → QUIT; `banim 18 0 10 10  20 21 22 19 8 17 10 9 11 13  1 6 7 0 2 16 4
+3 5 12`, `anim_oneoff` on gadget 20. (A strict row-major wave — ACADEMY, MULTI PLAYER WAR, DARK COLONY,
+ENCYCLOPEDIA, … — is a one-line change of the sort key; the column order was chosen because it is what
+the stock menu does and the left column carries seven of the ten rows.) Data regenerated: the three
+identical 1024×768 copies `exp/intrf_hd/bintroe`, `ozi_ns/intrf_hd/bintroe`, `dc/intrf_hd/bintroe`
+(`build_ozi_overlay.py --apply`, only these three changed), the four `hd_sets/<WxH>` fixtures, the
+640×480 `exp\intrface\bintoze` through the patcher. Checks: the PowerShell editor under 5.1 and 7 is
+byte-identical to the Python tool on all six inputs (four fixtures, the game folder's script, the stock
+640×480 grid) and both are idempotent; the committed blob is LF-only and the checkout CRLF, so compare
+after stripping CR. Classic's `INTRF_HD/BINTROE` keeps the stock order (its grid did not move).
+
+**Game test** (scratch copy of the game folder on `subst W:`, `avi\INTRO.AVI` renamed away so the menu
+comes up directly at 10.6 s, 20 Hz screen-DC capture from a DPI-aware ctypes process, per-plate MD5
+of the 179×25 rects): the plates settle in exactly the intended order — ACADEMY 11.57, DARK COLONY
+11.62, LOAD DC GAME 11.67, COUNCIL WARS 11.74, LOAD CW GAME 11.84, OZI MISSIONS 11.89, LOAD OZI GAME
+11.94, MULTI PLAYER WAR 12.05, ENCYCLOPEDIA 12.10, QUIT 12.19 s — each label appearing as its plate
+finishes, the logo, title and credits box drawn after the wave, `error.log` empty. A posted ESC did
+not quit the game (as noted before), the process was terminated. Not run: the other resolutions and
+the 640×480 build.
+
 ## 11. Risks
 
 | Risk | Assessment |
@@ -4566,7 +4625,8 @@ What was checked and is identical (so the rest of the answer rests on data, not 
 | `0x00408CB8` / `0x00408AC8` | `play_avi` / display thread (`0x00408B37` picks the drawer by `0x488E0C`) |
 | `0x00428448` / `0x004289D0` | `scenario.c` **text-file box** (TTY) / **animated picture window** (PIC) — the two primitives behind every code-positioned menu element; x in `edx`, y in `ebx` (§10.7) |
 | `0x00428968` / `0x00428B8C` | TTY glyph placement / PIC per-frame draw |
-| `0x00424A40` | `widget.c` `label` keyword handler (keyword table `0x004895F0`) |
+| `0x00424A40` | `gadget` keyword creator (keyword table `0x00489588`, `{name, creator}` pairs; `label` = `0x00426BD4`, `banim` = `0x00427854`, §10.40) |
+| `0x00427854` | `button.c` `create_banim`: n plate ids + m button ids at `widget+0x28`; the opening wave runs in `0x004279EC` (from `0x00427AE4`, type `0x0C`) (§10.40) |
 | `0x00403732` | briefing screen: `intrface/epic` marker at `(gs+0x14E0, gs+0x14DC)` from `GAMESTAT/*SCENE.TXT` (`scenario.c 0x00429B67`) |
 | `0x0041EB34` / `0x0041EB63` | `proto.c`: `"intrface/main"` → `load_interface`, HUD handle to `0x004AB1C4` — same function as the map view rect below |
 | `0x0041ED1E`ff | `proto.c` initial camera + map view screen rect |
