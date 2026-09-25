@@ -3838,7 +3838,7 @@ not in any CD test; `nocd` keeps it only because the played build has it.
 
 #### 10.35 The Council Wars original's "hang" at the main menu: six buttons greyed, three of them not in the script **(23 Sep 2026, maintainer report "engexp16.exe is hanging when entering main menu … maybe by moving updated version of markup file to another place?", then "add missing widgets which are the cause of the problem" and "do the same widgets layout as in dc16.exe where ozi missions replaces intro and ozi load replaces single player war", then "for unpatched engexp16.exe put credits a bit higher and buttons a bit lower so they don't overlap each other"; mechanism re-derived from the stock bytes, fixed in the data — `exp/intrface/bintroe` is now Classic's script; both generators and the patcher rewritten and cross-checked; game test pending)**
 
-**Partly superseded the same evening by §10.36**, which adds the DARK COLONY and LOAD DC GAME buttons: the patched menu is seven rows, not five, the row grouping gains a gap after row 5, the second column is MULTI PLAYER WAR / ENCYCLOPEDIA on rows 1 and 2 with QUIT on row 7, and the credits box is removed from the patched build at every resolution rather than shortened, so the y/height values quoted below now describe only what the fix `resolution` writes before `ozi` overwrites it. The stock `exp/intrface/bintroe` that this section is about - Classic's grid 16 px lower, for the untouched exe - is unchanged.
+**Partly superseded the same evening by §10.36**, which adds the DARK COLONY and LOAD DC GAME buttons: the patched menu is seven rows, not five, the row grouping gains a gap after row 5, the second column is MULTI PLAYER WAR / ENCYCLOPEDIA on rows 1 and 2 with QUIT on row 7, and the credits box is removed from the patched build at 640x480 (from the evening of 23 Sep to 24 Sep 2026 at every resolution; since 24 Sep the HD sizes keep it and move the block down under it, §10.36), so the y/height values quoted below are superseded: the box keeps y = title + 11 but is 94 rows at 1024x768, 76 at 1280x720 and the stock 100 from 1280x800 up, and at 640x480 `ozi` removes it. The stock `exp/intrface/bintroe` that this section is about - Classic's grid 16 px lower, for the untouched exe - is unchanged.
 
 **Which exe.** The report names `engexp16.exe`; the repository has two Council Wars builds, the
 untouched `ENGEXP16.EXE` and the patched `engexp16new.exe`. The patched one was ruled out first: the
@@ -4061,7 +4061,8 @@ OZI GAME `ozisave`, LOAD DC GAME `save`. Whether a save restores the campaign fl
 by code reading - nothing outside the menu writes `gs+0x14F4` - but LOAD CW GAME has depended on
 exactly that since 10 Sep, so the record must come back from the file.
 
-**The menu grows to seven rows, and the credits box goes.** The maintainer's order, with the
+**The menu grows to seven rows, and the credits box goes** (at every size until 24 Sep 2026; since then
+at 640x480 only - see the 24 Sep paragraph below). The maintainer's order, with the
 grouping rule of §10.35 extended to a gap after rows 1, 3 and 5:
 
 ```
@@ -4093,9 +4094,95 @@ At 640x480 the 12 px gap becomes **11**: the block would otherwise start at row 
 the crescent's tail. Both generators shrink the gap by a pixel at a time while the first row is
 above the measured limit 218, which is a no-op at every other size, and the rows come out at
 219/256/282/319/345/382/408 with the bottom row and the 3 px above the artwork unchanged. The HD
-rows are 414..606 (1024x768), 384..576 (1280x720), 433..625 (1280x800), 571..763 (1280x1024) and
-606..798 (3840x1080), all inside the backdrops' black bands (measured per size over the button
-columns: 195..722, 188..674, 201..754, 242..978, 253..1034) and 24 px below the `DCUT` title.
+rows were 414..606 (1024x768), 384..576 (1280x720), 433..625 (1280x800), 571..763 (1280x1024) and
+606..798 (3840x1080) in the 23 Sep form, all inside the backdrops' black bands (measured per size over
+the button columns: 195..722, 188..674, 201..754, 242..978, 253..1034) and 24 px below the `DCUT`
+title - the arrangement the next paragraph replaced.
+
+**The credits box is back above 640x480 (24 Sep 2026, maintainer: "return back credentials for higher
+that 640x480 resolutions!").** The 217-row argument holds for the stock backdrop only. The painted HD
+backdrops are black from under the planet's crescent down to the bottom artwork, which starts at
+**H-45** at every size (measured over the menu columns: rows 194..722 at 1024x768, 186..674 at
+1280x720, 199..754 at 1280x800, 240..978 at 1280x1024, 253..1034 at 3840x1080), and the 23 Sep block,
+scaled with the cluster, left 90 unused black rows under itself at 1024x768. So the HD block now hangs
+from the **title** instead of the stock bottom row: its first row sits **120 rows under the `DCUT`
+gadget's last row** - 11 px, the stock 100-row credits box, 9 px - unless that would take the bottom
+row past **H-72** (the stock 640x480 bottom row 408, 2-3 px above the artwork; the anchor §10.37 found
+for the nine-row menu), in which case the block stops there and the box gives up the difference. The
+box keeps its place 11 px under the title (`credits_y(203, 296)`, unchanged) and gets the height the
+block leaves, `patch_resolution.cw_credits_height` = min(100, H − 72 − 192 − 9 − y):
+
+| mode | title last row | credits box (rows) | button rows 1..7 | plates end | artwork from |
+|---|---|---|---|---|---|
+| 1024x768 | 389 | 401..494 (94) | 504 / 542 / 568 / 606 / 632 / 670 / 696 | 721 | 723 |
+| 1280x720 | 359 | 371..446 (76) | 456 / 494 / 520 / 558 / 584 / 622 / 648 | 673 | 675 |
+| 1280x800 | 408 | 420..519 (100) | 529 / 567 / 593 / 631 / 657 / 695 / 721 | 746 | 755 |
+| 1280x1024 | 546 | 558..657 (100) | 667 / 705 / 731 / 769 / 795 / 833 / 859 | 884 | 979 |
+| 3840x1080 | 581 | 593..692 (100) | 702 / 740 / 766 / 804 / 830 / 868 / 894 | 919 | 1035 |
+| 640x480 | 191 | removed | 219 / 256 / 282 / 319 / 345 / 382 / 408 (unchanged) | 433 | 436 |
+
+(The `knobe` plates are 26 rows, one more than the `pushb` height, hence "plates end".) In the exe the
+**640x480 form** of `ozi` keeps its two credits edits (create → 45 NOPs, destroy count 1 → 0) and the
+page-0x4000 `.reloc` change; the **HD form has neither** (`patch_ozi_menu.build(stock_mode)`; the
+patcher counts 24 `ozi` edits at 640x480 and 20 at an HD size), and `resolution`'s Council Wars-only
+height site writes `push 5Eh` (94) at 1024x768 and `push 4Ch` (76) at 1280x720 and is left out where
+the stock `push 64h` fits - `patch_resolution.resolve` now skips any site whose replacement equals the
+expected bytes, so the plan never lists a no-op (which the generator would have rejected). The layout
+rule lives in three places and was cross-checked: `build_ozi_overlay.menu_layout` (reads the `DCUT`
+gadget and the `size` line, so applying it to its own output changes nothing), the patcher's
+`Edit-OziMenu` (PowerShell twin - its output for all five HD sizes is byte-identical to the Python
+tool's, the four `hd_sets` fixtures were regenerated) and `cw_credits_height` on the exe side. An exe
+patched by the 23 Sep form at an HD size keeps its NOPs (the tool does not restore code;
+`patch_ozi_menu.py verify` prints a note), so such a build is rebuilt from the original. Builds:
+Council Wars 1024x768 **`ec7ab499…`** (was `b12a0b14…`; staged for the repository from a scratch
+build, the maintainer's working copy keeps its 640x480 build), 640x480 `5d8202f8…` unchanged,
+generator references 1280x1024 `be1905a7…`, 1280x720 `1f3e3c8b…`, 1280x800 `a1a6c6f6…`, 3840x1080
+`6dbf747f…`; Classic untouched (`a71d038b…`). `dcexp16.asm` regenerated from the 1024x768 build
+(`mov ebx,191h` / `push 5Eh` at `0x404E99` / `0x404E9E`). **Smoke test** (24 Sep 2026, scratch copy of
+the game folder on `subst W:`, no `AVI\` so the intro is skipped, DPI-aware screen capture 14 s after
+launch): the 1024x768 build reached the main menu with the credits text scrolling in the box columns
+between rows 390 and 474, nothing but black between the box and the first button row (495..503),
+buttons on 504..720, the Take 2 artwork from 723, `error.log` empty; a synthetic Esc from the probe
+did not quit the game this time and it was terminated. Not run in the game: the other sizes and a
+click through the menu.
+
+**The whole cluster 15 rows higher (24 Sep 2026, second instruction: "move DC logo, DARK COLONY logo,
+credentials and buttons block 15 points higher for resolutions except 640x480").** Council Wars only.
+The letterbox rule (`paint_intro.layout_for`: the cluster keeps its stock vertical centre as a
+fraction of the height, plus `LOGO_CLEARANCE` 20) now takes `paint_intro.cw_menu_lift(H)` rows off
+the shift for the `exp/` override scripts, and the same amount comes off the credits y
+(`patch_resolution`) and the block's H-72 cap (`build_ozi_overlay.menu_layout`, the patcher's
+`Edit-OziMenu`), so logo, title, box and buttons move as one and the box heights stay 94 / 76 / 100.
+The lift is **15 wherever the opaque, black-baked DC logo stays below the planet's crescent** - the
+painted fade ends at row **112 of the 480-row design** over the logo's columns (measured on the shipped
+backdrops: brightest pixel above the logo top 55/255 at 1280x720 with no black row between, 7/255 in
+rows 183..184 at 1024x768, nothing at 1280x800; 112·H/480 = 168 / 179 / 187 keeps the logo clear of
+every pixel brighter than 7/255) - and **0 at 1280x720**, where the logo already touches that tail
+(a 15 px lift would cut a 310-px-wide black notch into the crescent). The function is a pure function
+of H (`max(0, min(15, logo_top − round(112·H/480) − 1))`), so the exe tool, the two Python layout
+tools and the PowerShell twin (`Get-MenuLift`) agree without measuring anything at patch time:
+
+| mode | lift | logo top | title last row | credits box (rows) | button rows 1..7 | plates end | artwork from |
+|---|---|---|---|---|---|---|---|
+| 1024x768 | 15 | 183 | 374 | 386..479 (94) | 489 / 527 / 553 / 591 / 617 / 655 / 681 | 706 | 723 |
+| 1280x720 | 0 | 168 | 359 | 371..446 (76) | 456 / 494 / 520 / 558 / 584 / 622 / 648 | 673 | 675 |
+| 1280x800 | 15 | 202 | 393 | 405..504 (100) | 514 / 552 / 578 / 616 / 642 / 680 / 706 | 731 | 755 |
+| 1280x1024 | 15 | 340 | 531 | 543..642 (100) | 652 / 690 / 716 / 754 / 780 / 818 / 844 | 869 | 979 |
+| 3840x1080 | 15 | 375 | 566 | 578..677 (100) | 687 / 725 / 751 / 789 / 815 / 853 / 879 | 904 | 1035 |
+| 640x480 | 0 | 0 | 191 | removed | 219 / 256 / 282 / 319 / 345 / 382 / 408 | 433 | 436 |
+
+`exp/intrf_hd/introe` (the same cluster on INTRO.GIF, unreachable in the retail exe) is lifted with
+`bintroe`, since both are override scripts; nothing of Classic's moves. Cross-checked: the patcher's
+`exp\intrf_hd\bintroe` equals `paint_intro.relayout` + `build_ozi_overlay.menu_script` byte for byte
+for all five HD sizes (apart from the `background` line, which `Set-BackgroundHd` / `split_hd_data.py`
+retarget to `intrf_hd/`), every mode's exe matches its regenerated reference, 1280x720 (`1f3e3c8b…`)
+and 640x480 (`5d8202f8…`) came out unchanged. Council Wars builds: 1024x768 **`39a49a3b…`**,
+1280x800 `c11cfbab…`, 1280x1024 `f4a46caf…`, 3840x1080 `1d7b44b5…`; the `hd_sets` fixtures and
+the game folder's three 1024x768 menu copies regenerated, `dcexp16.asm` regenerated. **Game test (24 Sep 2026, same rig as above):** the lifted 1024x768 build reached the menu with the logo
+on rows 183..302 and only 2 non-black pixels in the 15 rows above it (the crescent's tail stays
+untouched), the title on 342..374, the credits text scrolling in 386..442, black between box and
+buttons (480..488) and below the block (707..722), buttons on 489..705, artwork from 723, `error.log`
+empty, and this time the synthetic Esc quit the game with exit code 0.
 
 **The crash the first game test found, and why it was mine.** Maintainer, after the first build:
 "for DARK COLONY missions: race overview is empty and clicking button hangs the game". The Windows
@@ -4123,7 +4210,7 @@ in a global that the *next* screen indexes.
 
 **What the tools do.** `patch_ozi_menu.py` (fix `ozi`, Council Wars only) now makes 8 code edits
 beyond the OZI ones - the id filter, the chain end, the two handlers inside the 96-byte block,
-`stub_dc_set`, the two trampolines, the 45 NOPs and the destroy count - plus 4 `.reloc` entries; the
+`stub_dc_set`, the two trampolines, the 45 NOPs and the destroy count (the last two, with their page-0x4000 `.reloc` entries, in the 640x480 form only since 24 Sep 2026 - `build(stock_mode)`, see the 24 Sep paragraph) - plus 4 `.reloc` entries; the
 credits site is matched with wildcards on the three immediates so the tool accepts an exe patched
 for any resolution, and an exe with the 21 Sep form upgrades in place (`v2` -> `v3`).
 `build_ozi_overlay.py`'s `menu_layout` / `menu_script` and the patcher's `Edit-OziMenu` place ten

@@ -51,6 +51,9 @@ import shutil
 import struct
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paint_intro import cw_menu_lift  # noqa: E402  (the Council Wars HD menu cluster sits higher, doc 10.36)
+
 NEW_UNITS = ('dalg', 'spyo', 'reae')
 REPLACED = ('tran',)
 OZI_NAME = '%sozi'                  # pack version of a replaced stock bank: tran -> tranozi (7 chars)
@@ -120,12 +123,24 @@ OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (3, 5, None, None, None, None, 12))
 # ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after rows 1, 3
 # and 5, which separates ACADEMY, the two Dark Colony entries, the two Council Wars entries and the
 # two pack entries, and the same half-height gap between the two columns (1 px in the stock grid),
-# after which the block is re-centred on the screen.  It is anchored on the bottom row and grows
-# upwards, into the space the credits box leaves - patch_ozi_menu.py removes that box, because the
-# seven-row block is 217 rows tall and the black band of the 640x480 backdrop is exactly 217 rows.
+# after which the block is re-centred on the screen.  Vertically (24 Sep 2026, maintainer: "return
+# back credentials [credits] for higher than 640x480 resolutions") the block's first row sits
+# OZI_CREDITS_ROOM rows under the DCUT title - 11 px, the stock 100-row credits box, 9 px - unless
+# that would take the bottom row past H-72 (the stock 640x480 bottom row 408, 2-3 px above the
+# bottom artwork that every backdrop starts at H-45): then the block stops there and the box loses
+# the difference (patch_resolution.cw_credits_height: 94 rows at 1024x768, 76 at 1280x720, 100 at
+# 1280x800 and above).  At 640x480 the 217-row block fills the backdrop's black band, so the block
+# grows upwards from row 408 as before and patch_ozi_menu.py removes the box there.  Both anchors
+# depend only on the title row and the screen size, so the layout is idempotent.  The whole Council
+# Wars cluster - title included, so the block follows - sits paint_intro.cw_menu_lift(H) rows higher
+# at the HD sizes (maintainer, same day: "... 15 points higher for resolutions except 640x480"), and
+# so does the H-72 cap.
 OZI_GAP_AFTER = (1, 3, 5)           # 1-based row numbers
 OZI_GAP_OF_HEIGHT = 0.5             # of a button's height, between rows
 OZI_COL_GAP_OF_HEIGHT = 0.5         # of a button's height, between the columns
+OZI_CREDITS_ROOM = 11 + 100 + 9     # title -> first row at the HD sizes: 11 px, the stock 100-row credits box, 9 px
+OZI_BOTTOM_MARGIN = 72              # the bottom row never passes H-72 (stock 640x480 row 408; artwork from H-45)
+TITLE_GADGET = re.compile(rb'^\s*gadget\s+\d+\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)\s+DCUT\b', re.M | re.I)
 STOCK_BUTTONS = (0, 1, 2, 3, 4, 5, 12, 16)      # the stock script's `pushb` ids
 STOCK_GADGETS = (8, 9, 10, 11, 13, 17)          # ... and the gadgets that keep their id
 OZI_NEW_BUTTONS = (6, 7)                        # the two Dark Colony buttons
@@ -305,11 +320,13 @@ def menu_layout(data):
 
     Ids are the exe's button numbers, which decide the handler (patch_ozi_menu.py rewires 16 and
     4 to the pack and adds 6 and 7 for Dark Colony), so only the positions and the labels move.
-    The layout is anchored on the **bottom** row of the grid it is given, which is the one
-    position that must not move (the 640x480 backdrop's artwork starts 3 px below it, doc 10.27)
-    - and because that row is the same before and after, applying this twice changes nothing.
-    The rows above it are won from the credits box, which patch_ozi_menu.py removes; at 640x480
-    the group gap shrinks by a pixel so that the first row still clears the crescent.
+    Columns, pitch and button size are read off the grid; the rows hang from the DCUT title: the
+    first row OZI_CREDITS_ROOM (120) rows under it, leaving the code-drawn credits box its stock
+    100 rows, unless the bottom row would pass H-72 - then the block stops there (94-row box at
+    1024x768, 76 at 1280x720, and at 640x480, where H-72 is the stock bottom row 408, the whole
+    block grows upwards from it and patch_ozi_menu.py removes the box).  Both limits depend only
+    on the title and the screen size, so applying this twice changes nothing.  At 640x480 the
+    group gap shrinks by a pixel so that the first row still clears the crescent.
 
     Returns ({id: (x, y)}, pitch)."""
     xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in LIVE_PUSHB.finditer(data)}
@@ -326,8 +343,12 @@ def menu_layout(data):
                          'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'
                          % (HD_DIR, ', '.join(missing) or 'nothing',
                             b' '.join(m.groups()).decode() if m else 'absent'))
+    t = TITLE_GADGET.search(data)
+    if not t:
+        raise SystemExit('exp/%s/bintroe: no DCUT title gadget (the menu rows hang from it)' % HD_DIR)
+    title_bottom = int(t.group(1)) + int(t.group(2))
     xs = sorted({x for x, _ in xy.values()})      # only checked, not used: see below
-    ys = sorted({y for _, y in xy.values()})
+    ys = sorted({y for _, y in xy.values()})      # only the pitch is taken from the rows
     if len(xs) != 2 or len(ys) < 4:
         raise SystemExit('exp/%s/bintroe: expected two button columns and at least four rows, '
                          'found %d x %d' % (HD_DIR, len(xs), len(ys)))
@@ -339,7 +360,11 @@ def menu_layout(data):
     w, h = screen_geometry(data)
     top_limit = STOCK_TOP_LIMIT if (w, h) == (640, 480) else 0
     gap = int(round(bh * OZI_GAP_OF_HEIGHT))
-    while gap > 0 and ys[-1] - ((rows - 1) * pitch + gap * len(OZI_GAP_AFTER)) < top_limit:
+    while True:
+        rise = (rows - 1) * pitch + gap * len(OZI_GAP_AFTER)      # first row -> bottom row
+        bottom = min(title_bottom + OZI_CREDITS_ROOM + rise, h - OZI_BOTTOM_MARGIN - cw_menu_lift(h))
+        if gap == 0 or bottom - rise >= top_limit:
+            break
         gap -= 1
     # row offsets from the first row: one pitch per row plus a gap after the rows in OZI_GAP_AFTER
     offs = [k * pitch + gap * sum(1 for r in OZI_GAP_AFTER if r <= k) for k in range(rows)]
@@ -351,7 +376,7 @@ def menu_layout(data):
     for x, ids in zip(cols, OZI_COLUMNS):
         for k, i in enumerate(ids):
             if i is not None:
-                place[i] = (x, ys[-1] - (offs[-1] - offs[k]))
+                place[i] = (x, bottom - (offs[-1] - offs[k]))
     return place, pitch
 
 

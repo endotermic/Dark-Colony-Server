@@ -48,6 +48,9 @@ import struct
 import sys
 import textwrap
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paint_intro import cw_menu_lift  # noqa: E402  (the Council Wars HD menu cluster sits higher, doc 10.36)
+
 # ------------------------------------------------------------------- builds
 #
 # The width and height globals are preceded in DGROUP by the dword pair (0x14F, 0x16E), whose
@@ -82,18 +85,42 @@ ANCHOR_PREFIX = bytes.fromhex('4f016e01')
 # (rows 159..443) and credits from y = 230, both belonging to its four-row menu. Its script is
 # Classic's 2x4 grid now, lowered by 16 px to y=330 because the *unpatched* exe cannot move its
 # credits box (immediate 230, box 230..329) off the top button row (doc 10.35), so the cluster
-# centre is 296 (rows 159..433). The PATCHED menu has a fifth row and two half-button-height gaps, all
-# won above the grid (build_ozi_overlay.menu_layout: rows 278..432 at the stock size), so the box
-# moves up AND gets shorter: 68 rows at stock-equivalent y = 203, i.e. 7 px above the first button
-# row. The painted HD backdrops are black there (measured: x 454..824, rows 380..518 at 1280x800).
-# At 640x480, where this fix does not run, patch_ozi_menu.py writes that mode's own pair - y = 219
-# and 52 rows - because the stock backdrop has the planet's crescent at rows 198..218.
+# centre is 296 (rows 159..433). The PATCHED menu is a seven-row block in three groups
+# (build_ozi_overlay.menu_layout, doc 10.36). From the evening of 23 Sep 2026 it grew upwards into
+# the box, which the `ozi` fix then removed at every size; since 24 Sep 2026 (maintainer: "return
+# back credentials for higher than 640x480 resolutions") the HD block is moved DOWN instead - its
+# first row 120 rows under the DCUT title (11 px, the stock 100-row box, 9 px), or less where the
+# bottom row would pass H-72 (the stock 640x480 bottom row 408; every painted backdrop's bottom
+# artwork starts at H-45) - and the box keeps its place 11 px under the title (stock-equivalent
+# y = 203 = the title's last row 192 + 11) with the height the block leaves, cw_credits_height():
+# min(100, H - 72 - 192 - 9 - y) = 94 rows at 1024x768, 76 at 1280x720, the stock 100 at 1280x800,
+# 1280x1024 and 3840x1080 (where the height site is a no-op and is skipped). The painted HD
+# backdrops are black there (measured per size over the menu columns, e.g. rows 194..722 at
+# 1024x768). At 640x480, where this fix does not run, `ozi` removes the box: the stock backdrop's
+# crescent (rows 198..218) and the 217-row band below it leave no room.
+# Since the same day's second instruction ("move DC logo, DARK COLONY logo, credentials and buttons
+# block 15 points higher for resolutions except 640x480") the whole Council Wars cluster - and with
+# it the box and the H-72 cap - sits paint_intro.cw_menu_lift(H) rows higher: 15, except 0 at
+# 1280x720, where the opaque DC logo already touches the crescent's tail (see that function).
 CREDITS_W = 280
+CREDITS_H = 100                 # the stock box height (`push 64h`)
 LOGO_CLEARANCE = 20
+OZI_BLOCK_RISE = 192            # seven-row menu block, first row to bottom row: 6 x pitch 26 + 3 x 12 px gap
+MENU_BOTTOM_ROW_MARGIN = 72     # the block's bottom row is H-72 at most (stock 640x480 row 408; artwork from H-45)
+CREDITS_TO_BUTTONS = 9          # black rows between the box and the first button row
 
 
 def credits_y(stock_y, cluster_centre):
     return lambda g: stock_y + int(round(cluster_centre * (g.h / 480 - 1))) + LOGO_CLEARANCE
+
+
+def cw_credits_height(g):
+    """Rows of the Council Wars credits box above the patched seven-row menu (doc 10.36): the stock
+    100 where the block can sit 120 rows under the title, less on short screens (94 at 1024x768,
+    76 at 1280x720). Must agree with build_ozi_overlay.menu_layout and the patcher's Edit-OziMenu."""
+    lift = cw_menu_lift(g.h)
+    y = credits_y(203, 296)(g) - lift
+    return min(CREDITS_H, g.h - MENU_BOTTOM_ROW_MARGIN - lift - OZI_BLOCK_RISE - CREDITS_TO_BUTTONS - y)
 
 
 BUILDS = {
@@ -109,18 +136,17 @@ BUILDS = {
             0x5071: dict(off=0x5051),
             0x5060: dict(off=0x5040),
             # main.c bintro: the expansion has its own exp/intrface/credits.txt and its TTY box
-            # starts at y = 230 instead of 200 (x = 178 is the same); it is lifted to 8 px above
-            # the patched menu's five-row block (comment above)
+            # starts at y = 230 instead of 200 (x = 178 is the same); the patched build puts it
+            # 11 px under the title, above the seven-row menu block (comment above)
             0x42A0: dict(value=lambda g: (g.w - CREDITS_W) // 2),
-            0x4299: dict(expected='bbe6000000', value=credits_y(203, 296)),
+            0x4299: dict(expected='bbe6000000', value=lambda g: credits_y(203, 296)(g) - cw_menu_lift(g.h)),
         },
-        # The one site that exists in this build only: the patched menu's fifth row is won ABOVE
-        # the grid (build_ozi_overlay.menu_layout), and the space comes out of the credits box,
-        # which the maintainer's row grouping (a gap of a quarter button height after rows 1 and 3)
-        # needs 20 rows of.  Classic keeps its four-row menu and its 100-row box, so this cannot be
-        # a fixup of a shared site.  `push 64h` -> `push 50h` at main.c bintro's TTY create call.
-        sites=[(2, 0x429E, '6a64', None, lambda g: bytes.fromhex('6a44'),
-                'menu: intro credits text height 100 -> 68 (room for the OZI menu rows)')]),
+        # The one site that exists in this build only: the box's height follows the room the
+        # seven-row block leaves under the title (cw_credits_height, comment above).  Classic keeps
+        # its four-row menu and its 100-row box, so this cannot be a fixup of a shared site.
+        # `push 64h` -> `push <rows>` at main.c bintro's TTY create call; a no-op (100) is skipped.
+        sites=[(2, 0x429E, '6a64', None, lambda g: bytes([0x6A, cw_credits_height(g)]),
+                lambda g: 'menu: intro credits text height 100 -> %d (above the seven-row menu)' % cw_credits_height(g))]),
 }
 
 # ENGEXP16 is Classic shifted by +0x60 in AUTO from about 0x6000 onward, and +0 below it, with
@@ -726,6 +752,8 @@ def resolve(data, path, build, geom, stage, exclude=()):
         site_stage, classic_off, _, _, _, what = site
         if site_stage > stage:
             continue
+        if callable(what):                  # a description that names the value it writes
+            what = what(geom)
         if any(x.lower() in what.lower() for x in exclude):
             continue
         exp, new = expected_and_target(site, geom, build)
@@ -737,6 +765,8 @@ def resolve(data, path, build, geom, stage, exclude=()):
         elif len(new) != len(exp):
             problems.append('0x%-7X %-42s replacement changes instruction length'
                             % (off, what))
+        elif new == exp:
+            continue                        # nothing to write (the credits height where the stock 100 rows fit)
         else:
             edits.append((off, exp, new, what))
 

@@ -124,6 +124,27 @@ LOGOS = (b'DCSS', b'DCUK')      # the DC logo: centred, moves with the cluster, 
 # a few hundred (27,7,0) pixels), so a screen with a logo shifts a little further, onto rows
 # that are entirely black. patch_resolution.py adds the same amount to the credits box.
 LOGO_CLEARANCE = 20
+# Council Wars only (maintainer, 24 Sep 2026: "move DC logo, DARK COLONY logo, credentials and buttons
+# block 15 points higher for resolutions except 640x480"): the whole main-menu cluster of the exp/
+# override scripts is lifted by MENU_LIFT at the HD sizes - as far as the opaque DC logo stays below
+# the painted crescent's tail, which ends at row CRESCENT_TAIL of the 480-row design over the logo's
+# columns (measured on the shipped backdrops: 167 at 720 rows, 184 at 768, 189 at 800; 112 * H/480 =
+# 168 / 179 / 187 keeps the logo clear of every pixel brighter than 7/255). At 1280x720 the logo
+# already touches the tail, so the lift is 0 there; at 640x480 the rule gives 0 as well (stock
+# backdrop, logo drawn over the planet). patch_resolution.py (credits box), build_ozi_overlay.py
+# (button block cap) and the patcher's Get-MenuLift use this same function.
+MENU_LIFT = 15
+CRESCENT_TAIL = 112
+CW_CLUSTER_CENTRE = 296          # exp/intrface/bintroe: title, credits and buttons span rows 159..433
+
+
+def cw_menu_lift(height):
+    """Rows the Council Wars HD menu cluster moves up: MENU_LIFT, or less where the DC logo would
+    reach the crescent (0 at 1280x720 and at the stock size)."""
+    logo_top = int(round(CW_CLUSTER_CENTRE * (height / STOCK_H - 1))) + LOGO_CLEARANCE   # layout_for's dy
+    return max(0, min(MENU_LIFT, logo_top - int(round(CRESCENT_TAIL * height / STOCK_H)) - 1))
+
+
 BUTTON_SPRITES = (b'LARGEBUTTON', b'MEDBUTTON')
 PLATE_MIN_AGREE = 5
 STAR_MAX_PX = 12
@@ -136,10 +157,11 @@ PIECE_MIN_PX = 100
 # script is Classic's 2x4 grid, lowered by 16 px to y=330 so that the box (230..329 in the
 # *unpatched* exe, where the immediate cannot be changed) no longer overlaps the top button row
 # (doc 10.35). The PATCHED menu takes a fifth row and two half-button-height gaps above the grid
-# (build_ozi_overlay.menu_layout: rows 278..432 at the stock size), so wherever the exe IS patched
-# the box moves up to 7 px above it and gets shorter: 68 rows at y = 203 (HD sizes), 52 rows at
-# y = 219 at 640x480, where the stock backdrop's crescent occupies rows 198..218. 230 and 100 are
-# what the stock exe holds and what patch_resolution.py / patch_ozi_menu.py overwrite.
+# (build_ozi_overlay.menu_layout), so wherever the exe IS patched the box sits 11 px under the title
+# with the rows the block leaves (patch_resolution.cw_credits_height; at 640x480 patch_ozi_menu.py
+# removes it, doc 10.36), and at the HD sizes the whole Council Wars cluster - logo, title, box,
+# buttons - is cw_menu_lift() rows higher than the letterbox rule alone would put it. 230 and 100
+# are what the stock exe holds and what patch_resolution.py / patch_ozi_menu.py overwrite.
 CREDITS_W = 280
 CREDITS_STOCK_Y = {'classic': 200, 'council wars': 203}
 CREDITS_EXE_IMM_Y = {'classic': 200, 'council wars': 230}
@@ -607,12 +629,13 @@ def is_title(kind, rest):
     return kind == b'gadget' and bool(rest) and rest[0] not in BUTTON_SPRITES + LOGOS
 
 
-def layout_for(data, width, height):
+def layout_for(data, width, height, lift=0):
     """The move() function for one stock script. Title, credits and buttons are one cluster
     that keeps its stock vertical centre as a fraction of the height (dy); the button grid is
     centred horizontally as a unit (dx), the title gadget (DCUT) on its own. The DC logo
     (DCSS/DCUK) is centred and moves by the same dy, so it stays right above the title with the
-    stock gap (the maintainer's requirement, 10 Sep 2026). Returns (move, dx, dy)."""
+    stock gap (the maintainer's requirement, 10 Sep 2026). `lift` rows are taken off dy (the
+    Council Wars overrides: cw_menu_lift). Returns (move, dx, dy)."""
     widgets = parse_widgets(data)
     cluster = [w for w in widgets if not is_logo(w[0], w[6])]
     if not cluster:
@@ -622,6 +645,7 @@ def layout_for(data, width, height):
     dy = int(round((y0 + y1) / 2 * (height / STOCK_H - 1)))
     if any(is_logo(w[0], w[6]) for w in widgets):
         dy += LOGO_CLEARANCE
+    dy -= lift
     grid = [w for w in cluster if not is_title(w[0], w[6])]
     x0 = min(w[2] for w in grid)
     x1 = max(w[2] + w[4] for w in grid)
@@ -646,15 +670,17 @@ def logo_positions(data, move):
 def apply_scripts(game_dir, width, height, dry_run=False):
     for path, key, override in script_paths(game_dir):
         data = pristine(path)
-        move, dx, dy = layout_for(data, width, height)
+        lift = cw_menu_lift(height) if override else 0      # the Council Wars menu sits higher
+        move, dx, dy = layout_for(data, width, height, lift)
         new, moved = relayout(data, move, b'size %d %d' % (width, height))
         rel = os.path.relpath(path, game_dir)
         if not dry_run:
             if not os.path.exists(path + '.bak'):
                 shutil.copy2(path, path + '.bak')
             open(path, 'wb').write(new)
-        print('%s %-26s %d widget(s): cluster and logo +(%d,%d), centred, size %d %d'
-              % ('  plan ' if dry_run else 'script', rel, moved, dx, dy, width, height))
+        print('%s %-26s %d widget(s): cluster and logo +(%d,%d)%s, centred, size %d %d'
+              % ('  plan ' if dry_run else 'script', rel, moved, dx, dy,
+                 ' (incl. the Council Wars lift of %d)' % lift if lift else '', width, height))
         if key == 'bintroe':
             build = 'council wars' if override else 'classic'
             sy = CREDITS_STOCK_Y[build]

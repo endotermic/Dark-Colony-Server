@@ -62,22 +62,33 @@ sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overla
    `gs+0x14F0 = 0` and enters the campaign runner through `tramp_dc_campaign`, LOAD DC GAME does
    the same through `tramp_dc_load`, which always lists `save`.  `jne 0x40513D` at 0x4050DB (the
    end of the id chain) is retargeted at 0x405102.
-7. The scrolling credits box is removed: the seven-row menu is 217 rows tall and the black band
-   of the 640x480 backdrop between the crescent and the artwork is exactly 217 rows (218..434,
-   measured), so nothing is left for it, and at the HD sizes the block occupies the same place
-   relative to the title.  main.c bintro's TTY create call (0x404E80..0x404EAC, eight pushes and
-   `call 0x4284A8`, which is `ret 20h` so the stack balances) becomes 45 NOPs; the two absolute
-   operands it carried (`intrface/mfonto5`, `intrface/credits.txt`) become ABSOLUTE .reloc
-   padding.  This supersedes the credits y/height sites of the 21 Sep version of this patch and
-   the values patch_resolution.py writes for the Council Wars build, which are simply overwritten
-   (the fix runs last); an exe with `resolution` but without `ozi` keeps its credits box.
-   The DESTROY call has to go with it (edit 8, found by the first game test): every menu click
+7. The scrolling credits box is removed AT 640x480 ONLY (--width 640 --height 480): the seven-row
+   menu is 217 rows tall and the black band of the 640x480 backdrop between the crescent and the
+   artwork is exactly 217 rows (218..434, measured), so nothing is left for it there.  main.c
+   bintro's TTY create call (0x404E80..0x404EAC, eight pushes and `call 0x4284A8`, which is
+   `ret 20h` so the stack balances) becomes 45 NOPs; the two absolute operands it carried
+   (`intrface/mfonto5`, `intrface/credits.txt`) become ABSOLUTE .reloc padding.  This supersedes
+   the credits y/height sites of the 21 Sep version of this patch at that size.
+   At the HD sizes the box STAYS (24 Sep 2026, maintainer: "return back credentials [credits] for
+   higher than 640x480 resolutions"; from the evening of 23 Sep to 24 Sep it was removed at every
+   size): the painted backdrops are black from far above the title down to the bottom artwork at
+   H-45, so the menu block is moved DOWN instead - build_ozi_overlay.menu_layout (and the
+   patcher's Edit-OziMenu) put its first row 120 rows under the DCUT title (11 px, the stock
+   100-row box, 9 px), or less where the bottom row would pass H-72 (the stock 640x480 bottom
+   row, 2-3 px above the artwork) - and patch_resolution.py writes the box: y = title + 11 as
+   before (`credits_y(203, 296)`) and height = min(100, what the block leaves) = 94 rows at
+   1024x768, 76 at 1280x720, the stock 100 at 1280x800, 1280x1024 and 3840x1080
+   (`cw_credits_height`).  Neither credits edit nor the page-0x4000 .reloc change exists in the HD
+   form of this patch; an exe patched by the 23 Sep form at an HD size keeps its NOPs (this tool
+   does not restore code) - rebuild it from the original (the CLI prints a note).
+   The DESTROY call has to go with the create at 640x480 (edit 8, found by the first game test): every menu click
    runs `mov edx,1; call 0x429684` at 0x405008, which frees that one TTY and decrements the
    global TTY count 0x4D61C0.  Without the create the count goes to -1, the next screen's TTY -
    the race overview's text - is built at index -1, so that screen comes up empty and the
    corrupted neighbourhood takes the level teardown down with an access violation at 0x44DE14.
    The count becomes 0.  (The TTY module allows exactly one instance: its create asserts when
-   the count reaches 2, which is why the menu frees its own before leaving.)
+   the count reaches 2, which is why the menu frees its own before leaving.)  At the HD sizes the
+   create runs, so the destroy keeps its 1.
 
 Version 1 of this patch (10 Sep 2026, before OZI LOAD) had `stub_cw` tail-jump into 0x401C08
 itself and left LOAD GAME direct; the tool recognises a v1 exe and upgrades it in place.
@@ -229,11 +240,12 @@ def dispatch_block():
     return bytes(d)
 
 
-def build():
+def build(stock_mode=False):
     """Return ([(name, va, [accepted old bytes...], new)], {page: [(offset, new_u16)]}).
 
     The first accepted variant of every site is the stock code, the others are earlier versions
-    of this patch; `new` is the current version."""
+    of this patch; `new` is the current version.  `stock_mode` (640x480) adds the two credits
+    edits and their .reloc change (docstring item 7); the HD form leaves the credits box alone."""
     body, ops = slot_writer(PACK_STRINGS)
     stub_pack = b'\x50\x57' + body + b'\x5F\x58\xC3'                 # push eax/edi ... pop/pop/ret
     pack_ops = [2 + o for o in ops]
@@ -300,17 +312,19 @@ def build():
     sites.append(('end of the id chain: jne 0040513D -> the Dark Colony handlers', ID_CHAIN_END,
                   [b'\x75' + bytes([DISPATCH_END - (ID_CHAIN_END + 2)])],
                   b'\x75' + bytes([DISPATCH - (ID_CHAIN_END + 2)])))
-    sites.append(('credits TTY create -> %d NOPs (the seven-row menu needs the rows)' % CREDITS_LEN,
-                  CREDITS_CALL, [Masked(CREDITS_TEMPLATE, CREDITS_MASK)], b'\x90' * CREDITS_LEN))
-    sites.append(('credits TTY destroy count 1 -> 0 (nothing was created)', CREDITS_FREE,
-                  [bytes.fromhex('ba 01 00 00 00')], bytes.fromhex('ba 00 00 00 00')))
     relocs = {
         RELOC_PAGE_HANDLER: [(0x0DE, 0), (0x103, 0)],
-        RELOC_PAGE_CREDITS: [(o, 0) for o in CREDITS_RELOC],
         RELOC_PAGE_TAIL: [((STUB_PACK + o) & 0xFFF, 3) for o in pack_ops]
                        + [((STUB_CW + o) & 0xFFF, 3) for o in cw_ops]
                        + [((STUB_DC + o) & 0xFFF, 3) for o in dc_ops],
     }
+    if stock_mode:
+        # 640x480 only: the 217-row block fills the backdrop's black band, the box goes (item 7)
+        sites.append(('credits TTY create -> %d NOPs (640x480: the seven-row menu needs the rows)' % CREDITS_LEN,
+                      CREDITS_CALL, [Masked(CREDITS_TEMPLATE, CREDITS_MASK)], b'\x90' * CREDITS_LEN))
+        sites.append(('credits TTY destroy count 1 -> 0 (nothing was created)', CREDITS_FREE,
+                      [bytes.fromhex('ba 01 00 00 00')], bytes.fromhex('ba 00 00 00 00')))
+        relocs[RELOC_PAGE_CREDITS] = [(o, 0) for o in CREDITS_RELOC]
     return sites, relocs
 
 
@@ -403,7 +417,7 @@ STOCK_MODE_SITES = [
      0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
 ]
 def resolve(data, stock_mode=False):
-    sites, relocs = build()
+    sites, relocs = build(stock_mode)
     for va, s in zip(SLOTS, CW_STRINGS):
         off = va - DGROUP_VA_TO_FILE
         if data[off:off + 8] != s:
@@ -450,14 +464,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=('verify', 'plan', 'apply'))
     ap.add_argument('exe')
-    ap.add_argument('--width', type=int, default=1024, help='screen size the exe is patched for; 640x480 adds the bintoz menu-script site')
+    ap.add_argument('--width', type=int, default=1024, help='screen size the exe is patched for; 640x480 adds the bintoz menu-script site and removes the credits box (docstring item 7)')
     ap.add_argument('--height', type=int, default=768)
     a = ap.parse_args(argv)
 
     data = bytearray(open(a.exe, 'rb').read())
-    edits, relocs = resolve(data, (a.width, a.height) == (640, 480))
+    stock_mode = (a.width, a.height) == (640, 480)
+    edits, relocs = resolve(data, stock_mode)
     rstate = reloc_state(data, relocs)
     print('%s: Council Wars DCEXP16.EXE, OZI menu code %s, .reloc %s' % (a.exe, state(edits), rstate))
+    if not stock_mode and data[CREDITS_CALL - AUTO_VA_TO_FILE:CREDITS_END - AUTO_VA_TO_FILE] == b'\x90' * CREDITS_LEN:
+        print('  NOTE: the credits TTY create is NOPs (the 23 Sep 2026 form of this patch); the HD form keeps the'
+              ' box and this tool does not restore code - rebuild from the original exe (item 7)')
     if a.command == 'verify':
         return 0
 

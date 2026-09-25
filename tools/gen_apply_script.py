@@ -725,10 +725,16 @@ itself uses.  Two buttons are added for it:
     LOAD DC GAME goes through tramp_dc_load, so it always lists the SAVE/ folder.  The stub and
     the two trampolines are 97 more bytes of the code section's zero tail (VA 0x47F340..0x47F3AA),
     and their four absolute slot addresses add four more entries to the .reloc insert
-  * the scrolling credits box is removed (main.c bintro's TTY create, 45 bytes -> NOPs, the call
-    is `ret 20h` so the stack balances): the seven-row menu is 217 rows tall and the black band of
-    the 640x480 backdrop between the planet's crescent and the artwork is exactly 217 rows.  The
-    two string operands the call carried become type 0 relocation padding.
+  * at 640x480 only, the scrolling credits box is removed (main.c bintro's TTY create, 45 bytes
+    -> NOPs, the call is `ret 20h` so the stack balances, and the matching destroy count 1 -> 0):
+    the seven-row menu is 217 rows tall and the black band of the 640x480 backdrop between the
+    planet's crescent and the artwork is exactly 217 rows.  The two string operands the call
+    carried become type 0 relocation padding.  At the HD sizes the box stays (24 Sep 2026): the
+    menu block is placed 120 rows under the title instead - 11 px, the stock 100-row box, 9 px -
+    or as low as H-72 allows, and the `resolution` fix writes the box's height (94 rows at
+    1024x768, 76 at 1280x720, the stock 100 from 1280x800 up).  The whole Council Wars menu
+    cluster - logo, title, box, buttons - sits 15 rows higher than the letterbox rule at the HD
+    sizes (same day; 0 at 1280x720, where the DC logo already touches the planet's crescent).
 REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/animate/tranozi.fin,
 exp/sprites/tranozi.spr, dc/intrf_hd/bintroe and the rewritten main-menu script
 (exp/intrf_hd/bintroe) from the repository.  Because the .reloc insert shifts every later
@@ -1764,12 +1770,25 @@ function Get-Positioned([string[]] $w) {
     return @{ kind = $w[0].ToLower(); n = [int]$w[1]; x = [int]$w[3]; y = [int]$w[4]; w = $ww; h = $hh; rest = @($rest) }
 }
 $LOGOS = @('DCSS', 'DCUK'); $BUTTON_SPRITES = @('LARGEBUTTON', 'MEDBUTTON'); $LOGO_CLEARANCE = 20
+# paint_intro.cw_menu_lift (24 Sep 2026, maintainer: "move DC logo, DARK COLONY logo, credentials and
+# buttons block 15 points higher for resolutions except 640x480"): the Council Wars menu cluster sits
+# 15 rows higher than the letterbox rule at the HD sizes - as far as the opaque DC logo stays below the
+# painted crescent's tail (row 112 of the 480-row design, measured; 0 at 1280x720, where it already
+# touches, and 0 at the stock size).  Used for exp\intrf_hd\bintroe and introe, the credits box
+# (fix `resolution`) and the button block's H-72 cap (Edit-OziMenu).
+$MENU_LIFT = 15; $CRESCENT_TAIL = 112; $CW_CLUSTER_CENTRE = 296
+function Get-MenuLift([int] $H) {
+    $logoTop = [int][Math]::Round($CW_CLUSTER_CENTRE * ($H / 480 - 1), [System.MidpointRounding]::ToEven) + $LOGO_CLEARANCE
+    $tail = [int][Math]::Round($CRESCENT_TAIL * $H / 480, [System.MidpointRounding]::ToEven)
+    return [Math]::Max(0, [Math]::Min($MENU_LIFT, $logoTop - $tail - 1))
+}
 function Test-Logo($p)  { return ($p.kind -eq 'gadget' -and $p.rest.Count -gt 0 -and $LOGOS -contains $p.rest[0]) }
 function Test-Title($p) { return ($p.kind -eq 'gadget' -and $p.rest.Count -gt 0 -and ($BUTTON_SPRITES + $LOGOS) -notcontains $p.rest[0]) }
 
 # paint_intro.layout_for + relayout: the title/credits/button cluster keeps its stock vertical centre
 # as a fraction of the height, the button grid is centred horizontally, logo and title centred each.
-function Edit-IntroScript([string] $Text, [int] $W, [int] $H) {
+# $Lift rows come off the vertical shift (the Council Wars overrides: Get-MenuLift).
+function Edit-IntroScript([string] $Text, [int] $W, [int] $H, [int] $Lift = 0) {
     $widgets = @()
     foreach ($ln in $Text.Split("`n")) {
         $i = $ln.IndexOf('%'); $body = if ($i -ge 0) { $ln.Substring(0, $i) } else { $ln }
@@ -1782,6 +1801,7 @@ function Edit-IntroScript([string] $Text, [int] $W, [int] $H) {
     $y1 = ($cluster | ForEach-Object { $_.y + $_.h } | Measure-Object -Maximum).Maximum
     $dy = [int][Math]::Round(($y0 + $y1) / 2 * ($H / 480 - 1), [System.MidpointRounding]::ToEven)
     if (@($widgets | Where-Object { Test-Logo $_ }).Count -gt 0) { $dy += $LOGO_CLEARANCE }
+    $dy -= $Lift
     $grid = @($cluster | Where-Object { -not (Test-Title $_) })
     $x0 = ($grid | ForEach-Object { $_.x } | Measure-Object -Minimum).Minimum
     $x1 = ($grid | ForEach-Object { $_.x + $_.w } | Measure-Object -Maximum).Maximum
@@ -1858,11 +1878,17 @@ function Edit-DatList([string] $Text) {
 # rows in the left column - ACADEMY, the two Dark Colony entries, the two Council Wars entries and
 # the two pack entries - with MULTI PLAYER WAR and ENCYCLOPEDIA at the top of the second column and
 # QUIT on its last row, a gap of half a button height (12 px) after rows 1, 3 and 5 and the same
-# gap between the columns, after which the block is re-centred on the screen.  It is anchored on
-# the BOTTOM row of the grid in the script - the one row that must not move, since the 640x480
-# backdrop's artwork starts 3 px below it - so applying this twice changes nothing.  The rows above
-# it are won from the credits box, which the `ozi` fix removes from the exe; at 640x480 the gap
-# shrinks by a pixel so that the first row still clears the planet's crescent (rows 198..217).
+# gap between the columns, after which the block is re-centred on the screen.  Vertically the rows
+# hang from the DCUT title gadget (24 Sep 2026, maintainer: "return back credentials [credits] for
+# higher than 640x480 resolutions"): the first row 120 rows under it - 11 px, the stock 100-row
+# credits box, 9 px - unless the bottom row would pass H-72 (the stock 640x480 bottom row 408,
+# 2-3 px above the bottom artwork every backdrop starts at H-45); then the block stops there and
+# the box gets shorter (the `resolution` fix writes its height: 94 rows at 1024x768, 76 at
+# 1280x720, 100 from 1280x800 up).  At 640x480 that is the whole 217-row band, so the block grows
+# upwards from row 408, the `ozi` fix removes the box, and the gap shrinks by a pixel so that the
+# first row still clears the planet's crescent (rows 198..217).  Both anchors depend only on the
+# title and the screen size, so applying this twice changes nothing.  The whole Council Wars cluster
+# (title included, so the block follows) and the H-72 cap sit Get-MenuLift rows higher at the HD sizes.
 # The two Dark Colony buttons are ids 6 and 7, which the stock script used for the LARGEBUTTON
 # gadgets of buttons 0 and 1; those move to 19 and 20, the new plates are 21 and 22, and `banim`
 # pairs all ten.  The new lines are cloned from the script's own `pushb 16` / `gadget 17` /
@@ -1921,7 +1947,11 @@ function Edit-OziMenu([string] $Text) {
     if ($xs.Count -ne 2 -or $ys.Count -lt 4) { throw ('bintroe: expected two button columns and at least four rows, found {0} x {1}' -f $xs.Count, $ys.Count) }
     $pitch = [int]::MaxValue
     for ($i = 1; $i -lt $ys.Count; $i++) { if ($ys[$i] - $ys[$i - 1] -lt $pitch) { $pitch = $ys[$i] - $ys[$i - 1] } }
-    $bottom = $ys[$ys.Count - 1]
+    $tm = [regex]::Match($Text, '(?im)^\s*gadget\s+\d+\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)\s+DCUT\b')
+    if (-not $tm.Success) { throw 'bintroe: no DCUT title gadget (the menu rows hang from it)' }
+    $titleBottom = [int]$tm.Groups[1].Value + [int]$tm.Groups[2].Value
+    $creditsRoom = 11 + 100 + 9      # title -> first row at the HD sizes: 11 px, the stock 100-row credits box, 9 px
+    $bottomMargin = 72               # the bottom row never passes H-72 (stock 640x480 row 408; artwork from H-45)
     $sz = [regex]::Matches($Text, '(?m)^\s*pushb\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)\s')   # two passes: a
     $bw = ($sz | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Minimum).Minimum      # pipeline flattens
     $bh = ($sz | ForEach-Object { [int]$_.Groups[2].Value } | Measure-Object -Minimum).Minimum      # nested arrays
@@ -1932,7 +1962,13 @@ function Edit-OziMenu([string] $Text) {
     $gap = [int][Math]::Round($bh * 0.5)
     $rows = $cols[0].Count
     $topLimit = if ($screenW -eq 640 -and $screenH -eq 480) { $stockTopLimit } else { 0 }
-    while ($gap -gt 0 -and ($bottom - (($rows - 1) * $pitch + $gap * $gapAfter.Count)) -lt $topLimit) { $gap-- }
+    $bottom = 0
+    while ($true) {
+        $rise = ($rows - 1) * $pitch + $gap * $gapAfter.Count      # first row -> bottom row
+        $bottom = [Math]::Min($titleBottom + $creditsRoom + $rise, $screenH - $bottomMargin - (Get-MenuLift $screenH))
+        if ($gap -le 0 -or ($bottom - $rise) -ge $topLimit) { break }
+        $gap--
+    }
     $offs = @()
     for ($k = 0; $k -lt $rows; $k++) {
         $extra = 0
@@ -2101,7 +2137,7 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
                 $gs = if ($gif) { [DcGif]::Size([System.IO.File]::ReadAllBytes($gif)) } else { @(640, 480) }
                 $t = Set-BackgroundHd (Edit-PaddedScript $text ([int][Math]::Floor(($W - $gs[0]) / 2)) ([int][Math]::Floor(($H - $gs[1]) / 2)) @(0, 0, $W, $H))
             } else {
-                $t = Set-BackgroundHd (Edit-IntroScript $text $W $H)
+                $t = Set-BackgroundHd (Edit-IntroScript $text $W $H (Get-MenuLift $H))   # the Council Wars cluster sits higher
                 if ($nm -eq 'bintroe') { $t = Edit-OziMenu $t }
             }
             Write-Latin1 (Join-Path $expHd ([System.IO.Path]::GetFileName($p))) $t; $expWritten++
