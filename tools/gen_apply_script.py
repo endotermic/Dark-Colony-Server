@@ -53,7 +53,7 @@ DEFAULT_MODE = '1024x768'           # the mode of the exes published in the repo
 # tools replayed per mode (--width/--height): the display fixes differ per size; `movies` and `ozi` have
 # a 640x480 variant (the exe is pointed at copies of the lists / the menu script that the original exe
 # never reads, since the stock files must stay untouched) and one shared HD variant
-MODE_STEPS = {'resolution', 'clock', 'movies', 'ozi'}
+MODE_STEPS = {'resolution', 'clock', 'movies', 'ozi', 'music'}
 HD_STEPS = {'resolution', 'hdpaths', 'clock'}   # fixes that do not exist in the stock mode
 CUR_MODE = None
 
@@ -149,7 +149,7 @@ def ozi_data(g, mode=None):
     # `*.o16` is gitignored in Dark-Colony; the game recreates them on first load).
     assert len(files) >= 370, (g, len(files))
     files += ['ozi_ns\\gamestat\\hxscene.txt', 'ozi_ns\\gamestat\\gxscene.txt']   # unshifted lists, untracked at generation time
-    files += ['dc\\intrf_hd\\bintroe']      # the DARK COLONY mode's overlay: the patched menu, nothing else
+    files += ['dc\\intrf_hd\\bintroe', 'dc\\intrface\\credits.txt']   # the DARK COLONY mode's overlay: the patched menu and the Council Wars credits (the `music` fix adds its dialog)
     if mode == STOCK_MODE:
         files += ['exp\\intrface\\bintroe']                              # source of the bintoze copies
     return files
@@ -328,16 +328,25 @@ def blocks_music(g):
     t = plan(g, 'music'); out = []
     for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) VA 0x[0-9a-f]+ (\d+) bytes\s*$', t, re.M):
         out.append((int(m.group(2), 16), int(m.group(3)), m.group(1).strip()))
-    assert [n for _, n, _ in out] == [0x751, 0x6E], (g, out)             # the rewritten cdaudio module + the aux volume walk
+    sizes = [n for _, n, _ in out]
+    if g == 'classic':
+        assert sizes == [0x751, 0x6E], (g, out)                          # the rewritten cdaudio module + the aux volume walk
+    else:                                                                # Ultimate: + the two options-dialog hooks and the press-only jne (+ the dialog name at 640x480)
+        assert sizes in ([0x751, 0x6E, 12, 11, 6], [0x751, 0x6E, 12, 11, 6, 14]), (g, out)
+    n = len(out)
     out += reloc_lines(t, '.reloc table: ')
-    assert len(out) == 2 + 44, (g, len(out))                              # 24 re-pointed + 20 neutralised entries
+    # 44 entries of the two pages minus those the old and the new code use at the same offset (no edit)
+    assert 40 <= len(out) - n <= 44, (g, len(out) - n)
     return out
 
 def music_data(g, mode=None):
-    """The MP3 tracks of the `music` fix: Dark Colony's four under MUSIC\\, Council Wars' four under
+    """The MP3 tracks of the `music` fix: Dark Colony's four under MUSIC\\; Dark Colony Ultimate plays
+    both discs (its MUSIC row offers DC / CW / ALL), so it needs those four and Council Wars' four under
     exp\\music\\ (both games share one folder and the two discs differ)."""
-    files = _tree(g, 'MUSIC', pattern=r'^track0[2-9]\.mp3$') if g == 'classic' else _tree(g, 'exp', 'music', pattern=r'^track0[2-9]\.mp3$')
-    assert len(files) == 4, (g, files)
+    files = _tree(g, 'MUSIC', pattern=r'^track0[2-9]\.mp3$')
+    if g == 'cw':
+        files = files + _tree(g, 'exp', 'music', pattern=r'^track0[2-9]\.mp3$')
+    assert len(files) == (4 if g == 'classic' else 8), (g, files)
     for f in files:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), f
     return files
@@ -678,9 +687,21 @@ the two discs have different music.  Everything inside the two rewritten routine
 relocation entries of the old code's absolute operands are re-pointed at the new ones and the
 rest become padding; nothing moves.
 
+Dark Colony Ultimate (since 25 Sep 2026) plays both discs and lets you choose: its battlefield
+options dialog (the Options button of the Game Option tab) gets a MUSIC row with "-" / "+" and the
+values DC (the Dark Colony disc), CW (the Council Wars disc) and ALL (all eight tracks in a random
+order, reshuffled after each round).  The campaign you start sets the default - ACADEMY and DARK
+COLONY play DC, COUNCIL WARS plays CW, OZI MISSIONS and MULTI PLAYER WAR play ALL (the menu fix writes it) - and the
+dialog changes it at any time, with the music switching at once.  Two small in-place edits route
+the dialog's new buttons and value text into the rewritten routines; the dialog script with the
+new row is written beside the exe for the three campaign modes (exp\\, dc\\ and ozi_ns\\ copies
+of intrf_hd\\lopte - at 640x480 intrface\\lopme, because the exe would otherwise read the
+original's own exp\\intrface\\lopte).
+
 REQUIRES the eight tracks from the repository (encoded from the CD images at 192 kbit/s, 32 MB):
 MUSIC\\TRACK02.MP3 .. TRACK05.MP3 for Dark Colony, exp\\music\\track02.mp3 .. track05.mp3 for
-Council Wars.  Without a TRACK02 file the game simply stays silent, as it does today.'''),
+Council Wars (Dark Colony Ultimate needs both sets).  Without a TRACK02 file the game simply stays
+silent, as it does today.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -830,7 +851,8 @@ directory that lists them); their SHA-256 is checked like every other edit.'''),
 ]
 
 # Names of the patched builds and their desktop shortcuts since 25 Sep 2026 (maintainer: "resulting files and
-# shortcuts names must be: 'Dark Colony map editor 1.2', 'Dark Colony', 'Dark Colony Ultimate'"); before that
+# shortcuts names must be: 'Dark Colony map editor 1.2', 'Dark Colony', 'Dark Colony Ultimate'"; the editor's name
+# became 'Dark Colony Map Editor' later that day at the maintainer's request); before that
 # dc16new.exe, engexp16new.exe (DCEXP16.EXE 10-15 Sep 2026) and maped_ozi_ns_v1.2.exe.  `orig_path` is where the
 # window finds the untouched original, relative to the repository root = the folder of the script.
 BUILDS = [
@@ -842,8 +864,8 @@ BUILDS = [
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
       steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'ozi', 'icon']),
- dict(id='MapEditor', g='maped', exe='Dark Colony map editor 1.2.exe', product='Dark Colony map editor 1.2', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
-      title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony map editor 1.2.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
+ dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
+      title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
       steps=['blocksets', 'teams', 'healer', 'troopsframe', 'icon']),
 ]
@@ -884,7 +906,7 @@ def attribute(g, step, cur, nxt, mode):
                 if page == 0x7F000: blk = (p, size)
                 p += size
             ins_at = blk[0] + blk[1]
-            ins_len = struct.unpack_from('<I', nxt, blk[0] + 4)[0] - blk[1]   # 12 entries since 23 Sep 2026
+            ins_len = struct.unpack_from('<I', nxt, blk[0] + 4)[0] - blk[1]   # 15 entries + 1 pad since 25 Sep 2026 (12 from 23 Sep)
             assert 0 < ins_len <= 64 and ins_len % 4 == 0, ins_len
             ins = nxt[ins_at:ins_at + ins_len]
             assert cur[rend - ins_len:rend] == b'\0' * ins_len and nxt[ins_at + ins_len:rend] == cur[ins_at:rend - ins_len]
@@ -893,7 +915,7 @@ def attribute(g, step, cur, nxt, mode):
             covered.update(range(ins_at, rend))
             dirsz = pe + 24 + 96 + 5 * 8 + 4
             blocks = blocks + [
-                (dirsz, 4, f'PE optional header: base-relocation directory size 0x{struct.unpack_from("<I", cur, dirsz)[0]:X} -> 0x{struct.unpack_from("<I", nxt, dirsz)[0]:X} (+16)'),
+                (dirsz, 4, f'PE optional header: base-relocation directory size 0x{struct.unpack_from("<I", cur, dirsz)[0]:X} -> 0x{struct.unpack_from("<I", nxt, dirsz)[0]:X} (+{ins_len})'),
                 (blk[0] + 4, 4, f'.reloc block for page 0x7F000 (header at 0x{blk[0]:X}): SizeOfBlock 0x{blk[1]:X} -> 0x{blk[1]+ins_len:X}'),
             ]
             # neutralised entries of the pages 0x5000 and 0x4000: leftover runs inside .reloc
@@ -1012,7 +1034,7 @@ W(r'''<#
       * run without arguments it opens a window: the three originals beside this script (Dark Colony,
         Council Wars, the map editor) are found and ticked with all their fixes, and one press of
         "Patch selected executables" writes "Dark Colony.exe", "Dark Colony Ultimate.exe" and
-        "Dark Colony map editor 1.2.exe" with a shortcut of the same name on the desktop; untick what
+        "Dark Colony Map Editor.exe" with a shortcut of the same name on the desktop; untick what
         you do not want - or drive it from the command line, see the examples
       * it never touches the input file; it writes a new file
       * every patch is a list of (file offset, old bytes, new bytes, reason) in plain text below
@@ -1048,7 +1070,7 @@ W(r'''<#
     The third build is the map editor "Dark Colony - Map editor\maped.exe" (the original from the Dark
     Colony CD): its fixes clear the "disabled" flag on dialog controls the original greyed out - the
     functional part of the ozi_ns editor, without the Polish translation - and write
-    "Dark Colony map editor 1.2.exe".  (Until 25 Sep 2026 the three were dc16new.exe, engexp16new.exe
+    "Dark Colony Map Editor.exe".  (Until 25 Sep 2026 the three were dc16new.exe, engexp16new.exe
     and maped_ozi_ns_v1.2.exe.)
 
     The script is complete in itself: it uses nothing but the .NET classes that ship with Windows
@@ -1070,7 +1092,7 @@ W(r'''<#
 
 .PARAMETER Output
     Where to write the patched copy (only together with -Original).  Default: "Dark Colony.exe" /
-    "Dark Colony Ultimate.exe" / "Dark Colony map editor 1.2.exe" next to the original.
+    "Dark Colony Ultimate.exe" / "Dark Colony Map Editor.exe" next to the original.
     An existing file is not overwritten unless -Overwrite is given.
 
 .PARAMETER Resolution
@@ -1096,7 +1118,7 @@ W(r'''<#
 
 .PARAMETER DesktopShortcut
     After a successful write, put a shortcut to the patched exe on the desktop ("Dark Colony",
-    "Dark Colony - Council Wars" or "Dark Colony map editor"; start folder = the game folder, which
+    "Dark Colony - Council Wars" or "Dark Colony Map Editor"; start folder = the game folder, which
     the game needs to find its data).  An existing shortcut of that name is replaced.  The window
     does the same with its "Desktop shortcut" checkbox (ticked by default).
 
@@ -1113,7 +1135,7 @@ W(r'''<#
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches nocd,resolution,hdpaths,pool
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All -DesktopShortcut
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All -Resolution 1280x800
-    .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> "Dark Colony map editor 1.2.exe")
+    .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> "Dark Colony Map Editor.exe")
     .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\Dark Colony.exe"
 
 .NOTES
@@ -2350,6 +2372,72 @@ function Write-StockOziMenu([string] $GameDir) {
     return $lines
 }
 
+# The battlefield options dialog with the MUSIC row (Dark Colony Ultimate, fix `music`, doc 10.41): the port of
+# patch_music.music_row(), byte-identical.  The GAME DETAIL row (pushb 44/45, in_text 48, label 63, cell picture
+# 19), the bottom frame cell (picture 15) and the OK / cancel buttons (55/56) move down one row (32 px); the new
+# row takes GAME DETAIL's old place with pushb 71 "-" / 72 "+", in_text 73, label 74 (textmsg 6 MUSIC) and cell
+# picture 22; two middle frame cells (pictures 20/21) fill the gap; textmsg 20/21/22 = DC / CW / ALL; the erase
+# rect grows by a row.  Idempotent; each line keeps its own line ending.
+function Edit-MusicDialog([string] $Text) {
+    if ([regex]::IsMatch($Text, '(?m)^\s*pushb\s+71\s')) { return $Text }
+    $move = @('pushb 44', 'pushb 45', 'in_text 48', 'label 63', 'picture 19', 'picture 15', 'pushb 55', 'pushb 56')
+    $clone = @{ 'pushb 44' = @{ 2 = '71' }; 'pushb 45' = @{ 2 = '72' }; 'in_text 48' = @{ 2 = '73' }
+                'label 63' = @{ 2 = '74'; 9 = '6' }; 'picture 19' = @{ 2 = '22' } }
+    $out = New-Object System.Collections.Generic.List[string]
+    $frame14 = $null
+    foreach ($raw in $Text.Split("`n")) {
+        $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
+        $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
+        $m = [regex]::Match($line, '^\s*(pushb|in_text|label|picture|textmsg|size)\s+(\d+)\s')
+        if (-not $m.Success) { $out.Add($line + $cr); continue }
+        $kind = $m.Groups[1].Value; $n = [int] $m.Groups[2].Value; $key = "$kind $n"
+        if ($kind -eq 'size') {
+            $toks = @([regex]::Matches($line, '\S+') | ForEach-Object { $_.Value })
+            $ch = @{}; $ch[$toks.Count] = [string] ([int] $toks[$toks.Count - 1] + 32)
+            $out.Add((Set-ScriptTokens $line $ch) + $cr); continue
+        }
+        if ($kind -eq 'picture' -and $n -eq 14) { $frame14 = $line }
+        if ($clone.ContainsKey($key)) { $out.Add((Set-ScriptTokens $line $clone[$key]) + $cr) }
+        if ($move -contains $key) {
+            $y = [int] @([regex]::Matches($line, '\S+') | ForEach-Object { $_.Value })[4]
+            $line = Set-ScriptTokens $line @{ 5 = [string] ($y + 32) }
+        }
+        if ($kind -eq 'picture' -and $n -eq 15 -and $null -ne $frame14) {
+            $y14 = [int] @([regex]::Matches($frame14, '\S+') | ForEach-Object { $_.Value })[4]
+            $out.Add((Set-ScriptTokens $frame14 @{ 2 = '20'; 5 = [string] ($y14 + 16) }) + $cr)
+            $out.Add((Set-ScriptTokens $frame14 @{ 2 = '21'; 5 = [string] ($y14 + 32) }) + $cr)
+        }
+        $out.Add($line + $cr)
+        if ($kind -eq 'textmsg' -and $n -eq 12) {
+            foreach ($pair in @(@(6, 'MUSIC'), @(20, 'DC'), @(21, 'CW'), @(22, 'ALL'))) { $out.Add(('textmsg {0} {1}' -f $pair[0], $pair[1]) + $cr) }
+        }
+    }
+    return ($out -join "`n")
+}
+
+# The copies of that dialog the Dark Colony Ultimate exe reads in its three campaign modes: HD sizes
+# exp\intrf_hd\lopte, dc\intrf_hd\lopte, ozi_ns\intrf_hd\lopte from INTRF_HD\LOPTE (the set just written);
+# 640x480 exp\intrface\lopme, dc\intrface\lopme, ozi_ns\intrface\lopme from the stock INTRFACE\LOPTE (the exe's
+# script name is "intrface/lopm" there, so the original exe's exp\intrface\lopte is never touched).  dc\ is the
+# DARK COLONY mode's overlay and is created if needed; ozi_ns\ only when the OZI data is there.
+function Write-MusicDialogs([string] $GameDir, [string] $Mode) {
+    $stock = ($Mode -eq '640x480')
+    $src = if ($stock) { Find-CI (Join-Path $GameDir 'INTRFACE') 'LOPTE' } else { Find-CI (Join-Path $GameDir 'INTRF_HD') 'LOPTE' }
+    if (-not $src) { return @('options dialog copies NOT written: LOPTE is missing') }
+    $t = Edit-MusicDialog (Read-Latin1 $src)
+    $name = if ($stock) { 'lopme' } else { 'lopte' }
+    $sub = if ($stock) { 'intrface' } else { 'intrf_hd' }
+    $lines = @()
+    foreach ($root in 'exp', 'dc', 'ozi_ns') {
+        if ($root -eq 'ozi_ns' -and -not (Test-Path -LiteralPath (Join-Path $GameDir $root))) { continue }
+        $d = Join-Path $GameDir (Join-Path $root $sub)
+        if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+        Write-Latin1 (Join-Path $d $name) $t
+        $lines += ('wrote {0}\{1}\{2} (the battlefield options dialog with the MUSIC row)' -f $root, $sub, $name)
+    }
+    return $lines
+}
+
 # Desktop shortcut to a patched exe (the window's "Desktop shortcut" checkbox, -DesktopShortcut on the
 # command line).  The game opens its data files relative to its working folder, so the shortcut's
 # "Start in" is the game folder - a COPY of the exe on the desktop would not find anything.  Made with
@@ -2357,7 +2445,7 @@ function Write-StockOziMenu([string] $GameDir) {
 # replaced.  $script:DesktopFolder lets a test write somewhere else than the real desktop.
 $script:DesktopFolder = $null
 function New-GameShortcut([string] $ExePath, $Build) {
-    $name = $Build.ProductName          # "Dark Colony", "Dark Colony Ultimate", "Dark Colony map editor 1.2"
+    $name = $Build.ProductName          # "Dark Colony", "Dark Colony Ultimate", "Dark Colony Map Editor"
     $desktop = if ($script:DesktopFolder) { $script:DesktopFolder } else { [Environment]::GetFolderPath('Desktop') }
     if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) { throw 'this user has no desktop folder' }
     $exe = Get-AbsolutePath $ExePath
@@ -2411,6 +2499,11 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
         if ($ordered | Where-Object { $_.Id -eq 'movies' }) { try { $generated += Write-StockEndingLists $dir } catch { $generated += 'GAMESTAT lists NOT written: ' + $_.Exception.Message } }
         if ($ordered | Where-Object { $_.Id -eq 'ozi' })    { try { $generated += Write-StockOziMenu $dir } catch { $generated += 'bintoze NOT written: ' + $_.Exception.Message } }
+    }
+    # Dark Colony Ultimate's `music` fix: the options dialog with the MUSIC row for its three campaign modes
+    if ($Mode -and $Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'music' })) {
+        $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
+        try { $generated += Write-MusicDialogs $dir $Mode } catch { $generated += 'options dialog copies NOT written: ' + $_.Exception.Message }
     }
     return @{
         Generated = $generated
@@ -2604,7 +2697,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         '    Dark Colony                  dc16.exe      ->  Dark Colony.exe',
         '    Dark Colony Ultimate         ENGEXP16.EXE  ->  Dark Colony Ultimate.exe   (Council Wars plus the Dark Colony,',
         '                                                                               OZI and Academy campaigns)',
-        '    Dark Colony map editor 1.2   maped.exe     ->  Dark Colony map editor 1.2.exe',
+        '    Dark Colony Map Editor       maped.exe     ->  Dark Colony Map Editor.exe',
         '',
         'The next three pages show the fixes of each executable - all of them are selected; you only have to',
         'press Next three times and then Patch.  Nothing is downloaded, the originals are never changed, and every',
@@ -2618,7 +2711,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $chkLnk.Checked = $true; $chkLnk.Font = $bold
     $lblLnk = New-Object System.Windows.Forms.Label
     $lblLnk.Location = '44,330'; $lblLnk.Size = '900,36'
-    $lblLnk.Text = 'Named "Dark Colony", "Dark Colony Ultimate" and "Dark Colony map editor 1.2"; each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
+    $lblLnk.Text = 'Named "Dark Colony", "Dark Colony Ultimate" and "Dark Colony Map Editor"; each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
     $lblNext = New-Object System.Windows.Forms.Label
     $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = 'Press Next to continue.'
     # a missing or wrong original: a big red banner here, the details and the remedies on its page
@@ -3264,7 +3357,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $c.Done.Visible = ($step -eq $n + 1)
         if ($step -eq 0) {
             $c.Title.Text = 'Welcome to the Dark Colony patcher'
-            $c.Sub.Text = 'Builds Dark Colony, Dark Colony Ultimate and the map editor 1.2 from the untouched originals in this folder.'
+            $c.Sub.Text = 'Builds Dark Colony, Dark Colony Ultimate and the Map Editor from the untouched originals in this folder.'
         } elseif ($step -le $n) {
             $b = $g.Items[$step - 1].Build
             $c.Title.Text = "Step $step of ${n}: $($b.ProductName)"

@@ -72,7 +72,13 @@ OZI_ANIM = 'animozi.dat'            # the patched exe's start-up list (patch_ozi
 NOT_IN_OZI_ANIM = ('grrr.fin', 'troo.fin')
 SKIP_DIRS = {'animate', 'sprites'}
 SKIP_FILES = {'anim.dat', 'telp.fin', 'sound/sound2.dat', 'intrface/maine', 'intrface/bintroe',
-              'intrface/introe', 'intrface/shumane', 'intrface/intrg.gif', 'intrface/intro.gif'}
+              'intrface/introe', 'intrface/shumane', 'intrface/intrg.gif', 'intrface/intro.gif',
+              'intrface/credits.txt'}      # the pack's credits: the menu shows Council Wars' in every mode (25 Sep 2026)
+# The main menu's credits box reads `intrface/credits.txt` through the mode prefix, so the DARK COLONY
+# mode fell back to the root = Classic's text and the OZI mode showed the pack's.  Maintainer, 25 Sep
+# 2026: "ultimate executable main menu must always show CW credentials" - both overlays get a copy of
+# exp/intrface/credits.txt (the root file stays Classic's for dc16.exe).
+CREDITS = 'intrface/credits.txt'
 SKIP_SUFFIXES = ('.bak', '.med')
 UI_FROM_EXP = ('bintroe', 'shumane', 'introe')
 HD_DIR = 'intrf_hd'                 # 1024x768 screens and briefing lists (split_hd_data.py / patch_hd_paths.py)
@@ -511,6 +517,14 @@ def overlay(game, pack, plan):
         dst = os.path.join(dst_root, HD_DIR, name)
         produced.add(os.path.normcase(dst))
         plan.copy(src, dst, '%dx%d screen from exp/%s' % (MARKER_SHIFT[0] * 2 + 640, MARKER_SHIFT[1] * 2 + 480, HD_DIR))
+    credits = find_ci(os.path.join(game, 'exp', 'intrface'), 'credits.txt')
+    if credits:
+        for root in (dst_root, os.path.join(game, DC_OVERLAY)):
+            dst = os.path.join(root, *CREDITS.split('/'))
+            produced.add(os.path.normcase(dst))
+            plan.copy(credits, dst, 'Council Wars credits (the menu shows them in every mode)')
+    else:
+        plan.notes.append('WARNING exp/intrface/credits.txt missing: the menu would show Classic\'s credits in the DARK COLONY mode')
     # Briefings.  The scene loader plays `mission/h<n>` / `mission/g<n>` before every mission
     # through the wave loader, whose last resort after the overlay and the root is the CD path -
     # with no CD that is the "Please insert The Dark Colony Expansion Pak CD" prompt and an exit

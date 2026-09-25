@@ -4495,7 +4495,7 @@ these types). Medals: as in §10.36.
 
 #### 10.38 One-shot installer: all three executables, new names, the high-resolution icon **(25 Sep 2026, maintainer: "all three files for patching must be selected by default so installer patches all in one shot. resulting files and shortcuts names must be: 'Dark Colony map editor 1.2', 'Dark Colony', 'Dark Colony Ultimate'. Based on DC.ICO create a high resolution icon and apply it to all three patched files", then "make them [the letters] a bit 3 dimensional" and "gray frame ... must be thinner. use best practices of icon drawing"; the day's earlier steps - `INSTALL.CMD`, the `-Output` fix, desktop shortcuts - are in plan §16)**
 
-**Names.** The patched builds are `DC - Council wars/Dark Colony.exe` (was `dc16new.exe`), `DC - Council wars/Dark Colony Ultimate.exe` (was `engexp16new.exe`, before 15 Sep `DCEXP16.EXE`) and `Dark Colony - Map editor/Dark Colony map editor 1.2.exe` (was `maped_ozi_ns_v1.2.exe`); the desktop shortcuts carry the same names without `.exe` (build field `ProductName`). Renamed in git with `git mv`, so history follows. Checked before renaming: the games call `GetModuleFileNameA` only from the Watcom C runtime (`0x45A5B2`, `0x45A6CF`, `0x46C820`), open their data by relative paths and never look at their own name; the editor does not import it at all. No name contains `patch`, `setup`, `update` or `install` (the UAC installer heuristic of 15 Sep; `INSTALL.CMD` is a batch file, `cmd.exe` has a manifest). All three started from a `subst` drive under the new names (both games 9 s past the intro, the editor to its window), `error.log` empty, no Application-log event.
+**Names.** The patched builds are `DC - Council wars/Dark Colony.exe` (was `dc16new.exe`), `DC - Council wars/Dark Colony Ultimate.exe` (was `engexp16new.exe`, before 15 Sep `DCEXP16.EXE`) and `Dark Colony - Map editor/Dark Colony map editor 1.2.exe` (**`Dark Colony Map Editor.exe` since later that day**, maintainer: "rename 'Dark Colony map editor 1.2' to 'Dark Colony Map Editor'" - `git mv`, patcher `OutputName`/`ProductName` = shortcut name, README/HOWTO/INSTALL.CMD; the bytes and the SHA-256 `c72dd205…` are unchanged; was `maped_ozi_ns_v1.2.exe`); the desktop shortcuts carry the same names without `.exe` (build field `ProductName`). Renamed in git with `git mv`, so history follows. Checked before renaming: the games call `GetModuleFileNameA` only from the Watcom C runtime (`0x45A5B2`, `0x45A6CF`, `0x46C820`), open their data by relative paths and never look at their own name; the editor does not import it at all. No name contains `patch`, `setup`, `update` or `install` (the UAC installer heuristic of 15 Sep; `INSTALL.CMD` is a batch file, `cmd.exe` has a manifest). All three started from a `subst` drive under the new names (both games 9 s past the intro, the editor to its window), `error.log` empty, no Application-log event.
 
 **Window = a classical installer** (the maintainer's fourth request of the day, after a list with one Browse button, three rows with a Browse button each and a tab per checklist: "let's do the classical installer way for patch region instead of tabs. on opening there is a greeting message and button forward. second screen contains options for patching DC, third screen for patching CW and fourth for patching maped"). A fixed-size dialog with a white header band (title + subtitle of the step), five pages and a navigation bar (`Inspect an exe...`, a log line, `< Back` / `Next >` / `Cancel`; Next is the default button, Cancel the cancel button). **Welcome**: greeting, what becomes what, the list of the originals found at `<script folder>\<OriginalPath>` (paths shown relative to the script folder, "OK" = SHA-256 of the untouched original), the desktop-shortcut option (ticked). **Step 1..3 of 3** (Dark Colony, Dark Colony Ultimate, map editor): "Patch <name>" (ticked when the original was found), the original's path + its own Browse (dialog opens in that page's folder, the original's name as the first filter; a file of another build lands on that build's page and the log says so; the "already patched, original beside it" redirect of 21 Sep kept), the status lines, the screen resolution on the two game pages (two drop-downs kept equal, because both games share the one `INTRF_HD` folder), "Select all fixes" + the fix checklist + the page's own description box, "Written to". Each page keeps its own unticked fixes and unavailable fixes (resources checked against its output folder) across resolution changes. On step 3 Next reads **Patch**: `$script:gui.Apply` (unchanged: checks every ticked executable first - no fix, output = input, data problems: one message, nothing written - asks once about existing outputs, the "in progress" box, one result message box) and then the **Finished** page with every result line (Back and Cancel disabled, Next reads Close). Test hooks: `$script:gui.GoTo <step>`, `Apply $false` (returns one result per executable: `Item`, `R`, `Error`, `Shortcut`, `Kind`, `Line`), `Load`, `Items` (`.UI` = the page's controls), `Results`; `$c.All` / `List` / `Info` / `Out` / `Status` / `Res` are re-pointed to the current page. Every page control carries its executable's index in `.Tag`, because the handlers run outside `Show-PatcherWindow` (no closures). `DrawToBitmap` mis-draws a `TabControl` (the intermediate tab version); the wizard has none and captures cleanly. Command line: `-All` without `-Original` patches all three originals beside the script (`-Patches` and `-Output` need `-Original`); exit code 1 if one failed.
 
@@ -4584,6 +4584,96 @@ of the 179×25 rects): the plates settle in exactly the intended order — ACADE
 finishes, the logo, title and credits box drawn after the wave, `error.log` empty. A posted ESC did
 not quit the game (as noted before), the process was terminated. Not run: the other resolutions and
 the 640×480 build.
+
+#### 10.41 Music source DC / CW / ALL for Dark Colony Ultimate: a MUSIC row in the battlefield options, per-campaign defaults, a shuffle **(25 Sep 2026, maintainer: "ultimate version. now let's update musical selection. battlefield menu for sounds. add new entry for music selection with possibility to select: original game, expansion pack, shuffle them all. entries must be named: DC, CW, ALL. ACADEMY and DARK COLONY must play DC music by default, COUNCIL WARS must play CW by default, OZI MISSIONS must play shuffled all. But in sounds menu client can select any setting in any time", then "640x480 version must contain the same musical menu"; Ultimate only, confirmed in game)**
+
+**What it does.** The options dialog of the battlefield (Game Option tab → Options, `LOPTE`) has a fifth
+row **MUSIC** between CDROM VOLUME and GAME DETAIL, with the dialog's usual `-` / `+` buttons and a value
+text **DC** (the Dark Colony disc, `MUSIC\TRACK02-05.MP3`), **CW** (the Council Wars disc,
+`exp\music\track02-05.mp3`) or **ALL** (all eight tracks in a random order). A press switches the
+music at once. Starting a campaign from the main menu sets the default: ACADEMY, DARK COLONY, LOAD DC
+GAME and MULTI PLAYER WAR → DC, COUNCIL WARS and LOAD CW GAME → CW, OZI MISSIONS and LOAD OZI GAME →
+ALL. The setting lives for the session (not saved); Dark Colony (Classic) is untouched and keeps
+§10.31's one-set player.
+
+**The module** (`tools/music_asm.py`, keystone at development time; the bytes and their fixup table are
+pasted into `patch_music.py`, which stays stdlib-only; the seven entry points and the aux-walk hook
+keep their offsets; 805 code bytes of the 0x751, 21 absolute operands against 41 stock / 22 earlier
+`.reloc` entries in the page). State block (the dead TOC array `.bss 0x5327D0`): +0 device, **+4 track
+index 0..7** (set = index/4, file = `TRACK0<2+index%4>`; replaces the track number), +8 volume, +12 the
+built name, **+36 source** (0 DC / 1 CW / 2 ALL), +37 shuffle position, +38 order[8], +48 LCG state.
+`cd_open` (every main-menu init) seeds the LCG from `rdtsc` (the game's `rand()` drives the simulation
+and is never touched) and opens the first track of the current source without playing;
+`cd_seek_track` (battle start) and a source change call `start_source` = close, `first_idx`
+(DC/CW: the set's TRACK02; ALL: a fresh Fisher-Yates shuffle over the LCG, never starting with the
+track that just ended), `open_track` (two templates, digit written into the copy), `play_dev`;
+`impl_mode` on `MCI_MODE_STOP` plays `next_idx` (DC/CW: the set's four in a ring; ALL: the next of the
+order, reshuffled after the eighth). Layout: `open_track` +0x110, `setvol_dev` +0x200 (the aux hook's
+target, unchanged), `impl_mode` +0x240, `first_idx` +0x2E0, `shuffle` +0x340, `start_source` +0x3A0,
+`opt_tail` +0x3C0, `opt_refresh_tail` +0x420, `play_dev` +0x450, `next_idx` +0x480.
+
+**The dialog hooks** (interface.c, Council Wars addresses, pattern-located on the code *after* the
+edited bytes so a patched exe is recognised): the options handler `0x432CE4(ctx)` reads the event with
+`0x42417C(ip, &id)`, handles the button ids in a `cmp [ebp-8], id` chain and ends in `test bl,bl /
+call 0x432584` (close when OK/cancel set the flag); its tail `0x432F20` (11 bytes) is now `mov eax,esi;
+mov edx,[ebp-8]; call opt_tail` — `opt_tail` steps the source for id 71 (−) / 72 (+) modulo 3, restarts
+the music when the layer's flag `0x489770` is clear and a device is open, calls the refresh routine
+`0x432C28`, then does the original close test. **Every event kind reaches that tail** (`cmp eax,1 / jne
+tail` at `0x432D02`), and the original tail was harmless for the others only because `bl` is set by
+press events alone — the first build stepped twice per click (press + release). The `jne` now goes to the
+epilogue `0x432F2B` (the third edit, 6 bytes). The refresh routine `0x432C28` writes every value text
+(`sprintf` → `0x423ED4(ip, id, str)`, GAME DETAIL through `textmsg(ip, 10+detail)` `0x422718`); its
+epilogue `0x432CD6` (12 bytes) is now `lea esp,[ebp+0FEh]; jmp opt_refresh_tail`, which — **only when
+`ip->objects[73].type == 4` (an `in_text`, `0x34` bytes per object from `ip+0x88`)** — sets widget 73 to
+`textmsg(20 + source)` and runs the five pops + `ret` itself. So a stock dialog script (no widget 73)
+is safe; `0x423ED4` asserts on a missing widget, `0x422718` returns "" for a missing message.
+
+**The dialog script** is data, one transformation in Python (`patch_music.music_row`) and PowerShell
+(`Edit-MusicDialog`, byte-identical under 5.1 and 7, idempotent): GAME DETAIL (pushb 44/45, in_text
+48, label 63, cell picture 19), the bottom frame cell (picture 15) and OK / cancel (55/56) move down one
+row (32 px), the new row takes GAME DETAIL's old place (pushb 71 / 72, in_text 73, label 74 = textmsg 6
+MUSIC, cell 22), pictures 20/21 fill the frame, textmsg 20/21/22 = DC / CW / ALL, the erase rect grows
+by a row. The Ultimate exe reads the dialog through its mode prefix, so the copies go to **`exp/`,
+`dc/` and `ozi_ns/`**: at the HD sizes `intrf_hd/lopte` from the set's `INTRF_HD/LOPTE` (root stays
+Classic's, row-less); **at 640x480** the exe would read `exp/intrface/lopte`, a file the original exe
+reads too, so the DGROUP name `intrface/lopt` becomes `intrface/lopm` (one byte; the exe appends the
+language letter) and the copies are `intrface/lopme` from the stock `INTRFACE/LOPTE` (the same trick
+as the menu's `bintoze`, §10.27). `patch_music.py apply` writes them (`--width/--height` selects the
+size), the patcher's `Write-MusicDialogs` after the interface set; `.gitignore` ignores the 640x480
+copies, the 1024x768 ones are committed. `music` Data for Ultimate = all eight tracks.
+
+**The defaults** are three bytes in the OZI menu's mode stubs (`patch_ozi_menu.py`, `ozi` v5): each
+`stub_*_set` grows from 73 (77) to exactly the 80 bytes of its slot with `mov byte [0x5327F4], N`
+before the `ret` (N = 0 / 1 / 2 for `stub_dc_set` / `stub_cw_set` / `stub_pack`; the address from
+`patch_music.music_state()`, any form of the module), three more HIGHLOW entries in the page-0x7F000
+block (15 + 1 pad, insert 32 bytes; the `.reloc` slack was 52). Without `ozi` the byte is dead `.bss`
+and the source stays DC; without `music` the stubs write a dead byte. **MULTI PLAYER WAR plays ALL**
+(maintainer, same evening: "network game must be with shuffle all music set"): its trampoline
+`tramp_dc_net` `0x47F3B0` is now `call stub_dc_set; mov byte [0x5327F4], 2; jmp 0x405C20` (17 bytes,
+one more HIGHLOW entry, 16 in the page-0x7F000 insert = still 32 bytes; 63 tail bytes left behind it),
+so a relay game runs on the Classic tables with the shuffled soundtrack.
+
+**Council Wars credits in every menu mode** (same evening, maintainer: "ultimate executable main menu
+must always show CW credentials"): `main.c bintro`'s credits TTY reads `intrface/credits.txt` through
+the mode prefix, so after DARK COLONY / ACADEMY / LOAD DC GAME the box scrolled the ROOT file =
+Classic's text ("DARK COLONY ... PROGRAMMING"), and in the OZI mode the pack's ("DARK COLONY MISSION
+PACK by ozi_ns"). Data only: `build_ozi_overlay.py` skips the pack's `intrface/credits.txt` and copies
+`exp/intrface/credits.txt` ("DARK COLONY Expansion pack") into both `ozi_ns/intrface/` and
+`dc/intrface/` (the root file stays Classic's for `dc16.exe`); `ozi_data` lists the `dc/` copy. The
+`dc/` overlay now holds three files: `intrf_hd/bintroe`, `intrf_hd/lopte`, `intrface/credits.txt`.
+
+**Game test** (scratch copy on `subst W:`, `avi\INTRO.AVI` renamed away, clicks by `SendInput` from a
+DPI-unaware process at the game's own coordinates, screen captures by a DPI-aware child, the state
+block read with `ReadProcessMemory`): start-up `dev 1, idx 0, vol 500, music\track02.mp3, src DC`, LCG
+seeded; ACADEMY (416,501) → name → START TRAINING (680,506) → NEXT (780,606) → TO BATTLE (691,603) →
+Game Option tab (1002,102) → Options (931,213): the dialog shows the MUSIC row with `DC`; `+` (567,439)
+→ `CW`, `exp\music\track02.mp3` (idx 4); `+` → `ALL`, a shuffled order and its first track playing
+(`exp\music\track04.mp3`); `−` (471,439) → `CW`, `−` → `DC`; the stock rows still step by one (GAME
+SPEED 100 → 110 %, SOUND 5 → 6). Main menu: COUNCIL WARS → `src 1`, OZI MISSIONS → `src 2`, ACADEMY →
+`src 0`, DARK COLONY → `src 0` (BACK between them; every return to the main menu re-runs `cd_open`,
+which re-seeds and re-opens the first track of the then-current source, silently, as before).
+`error.log` empty throughout. Not run: the 640x480 build, the end-of-track transitions, the volume
+slider on the new module (code unchanged), a save/load round trip.
 
 ## 11. Risks
 

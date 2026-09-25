@@ -46,7 +46,8 @@ sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overla
    mode is still sticky for everything else (mission continuation 0x405165 and the post-load
    call 0x403B29 stay direct).
 5. Code lives in the zero tail of AUTO after the cursor stub: `stub_pack` 0x47F240 and
-   `stub_cw_set` 0x47F290 (73 bytes each: `push eax/edi`, four slot writes with
+   `stub_cw_set` 0x47F290 (80 bytes each since 25 Sep 2026 = 73 + the music-source default byte
+   `mov byte [state+36], N` of patch_music.py, see MUSIC_SRC; before: `push eax/edi`, four slot writes with
    `mov edi,imm32; mov eax,imm32; stosd`, `pop; ret`), then the three 10-byte trampolines
    (`call stub; jmp target`) at 0x47F2E0 / 0x47F2F0 / 0x47F300.  Only the eight `mov edi,imm32`
    operands are absolute, so eight HIGHLOW entries are appended to the .reloc block of page
@@ -149,6 +150,13 @@ CREDITS_CALL = 0x404E80         # main.c bintro's credits TTY create: 8 pushes +
 CREDITS_END = 0x404EAD
 CREDITS_FREE = 0x405008         # `mov edx,1` of the matching destroy call (0x429684) -> 0
 SLOTS = (0x4826D0, 0x487DC8, 0x482344, 0x485E5C)
+# The music source of patch_music.py (Ultimate, 25 Sep 2026): each mode stub ends with `mov byte [state+36], N`
+# - ACADEMY / DARK COLONY / LOAD DC GAME / MULTI PLAYER WAR = 0 "DC", COUNCIL WARS / LOAD CW GAME = 1 "CW",
+# OZI MISSIONS / LOAD OZI GAME = 2 "ALL" (maintainer's defaults; the battlefield options dialog changes it
+# at any time).  The stubs grow from 73 (77) to exactly the 80 bytes of their slots; the state block's
+# address comes from patch_music.music_state() (pattern-located, any form of the module).
+MUSIC_SRC = {'pack': 2, 'cw': 1, 'dc': 0, 'net': 2}   # 'net': MULTI PLAYER WAR = DC tables but ALL music (tramp_dc_net)
+STUB_LEN = 80
 CW_STRINGS = (b'exp/\0\0\0\0', b'exp/\0\0\0\0', b'esave\0\0\0', b'esave\0\0\0')
 PACK_STRINGS = (b'ozi_ns/\0', b'ozi_ns/\0', b'ozisave\0', b'ozisave\0')
 DC_STRINGS = (b'dc/\0\0\0\0\0', b'dc/\0\0\0\0\0', b'save\0\0\0\0', b'save\0\0\0\0')
@@ -160,7 +168,7 @@ CREDITS_RELOC = (0xE8B, 0xE90)  # `push intrface/mfonto5`, `push intrface/credit
 # Network games in the Dark Colony mode (25 Sep 2026, docstring item 8)
 NETWORK_CALL = 0x405097         # `call 00405C20` in the MULTI PLAYER WAR handler (button id 3)
 NETWORK_OPTIONS = 0x405C20      # the netopt screen: DirectPlay / ACT AS SERVER / CONNECT TO SERVER
-TRAMP_DC_NET = 0x47F3B0         # after tramp_dc_load (ends 0x47F3AA); 70 tail bytes left behind it
+TRAMP_DC_NET = 0x47F3B0         # after tramp_dc_load (ends 0x47F3AA); 17 bytes since 25 Sep 2026, 63 tail bytes left behind it
 
 STOCK_HANDLER = bytes.fromhex(
     'be f2 46 4a 00 8d bd f0 fe ff ff 57 8a 06 88 07 3c 00 74 10 8a 46 01 83 c6 02 88 47 01'
@@ -255,21 +263,27 @@ def dispatch_block():
     return bytes(d)
 
 
-def build(stock_mode=False):
+def build(stock_mode=False, music_src_va=None):
     """Return ([(name, va, [accepted old bytes...], new)], {page: [(offset, new_u16)]}).
 
     The first accepted variant of every site is the stock code, the others are earlier versions
     of this patch; `new` is the current version.  `stock_mode` (640x480) adds the two credits
     edits and their .reloc change (docstring item 7); the HD form leaves the credits box alone."""
+    def music_byte(src):
+        # mov byte ptr [state+36], src  (C6 05 imm32 imm8) - the operand needs a HIGHLOW entry
+        return b'\xC6\x05' + struct.pack('<I', music_src_va) + bytes([src])
     body, ops = slot_writer(PACK_STRINGS)
-    stub_pack = b'\x50\x57' + body + b'\x5F\x58\xC3'                 # push eax/edi ... pop/pop/ret
-    pack_ops = [2 + o for o in ops]
+    stub_pack_v3 = b'\x50\x57' + body + b'\x5F\x58\xC3'              # push eax/edi ... pop/pop/ret (73 bytes)
+    stub_pack = b'\x50\x57' + body + b'\x5F\x58' + music_byte(MUSIC_SRC['pack']) + b'\xC3'
+    pack_ops = [2 + o for o in ops] + [2 + len(body) + 2 + 2]
     body, ops = slot_writer(CW_STRINGS)
     stub_cw_v1 = b'\x50\x57' + body + b'\x5F\x58'
     stub_cw_v1 += jmp(STUB_CW + len(stub_cw_v1), CAMPAIGN_RUNNER)  # v1: tail-jump into 401C08
-    stub_cw = b'\x50\x57' + body + b'\x5F\x58\xC3' + bytes(4)        # v2: plain subroutine
-    assert len(stub_cw) == len(stub_cw_v1) == 77
-    cw_ops = [2 + o for o in ops]
+    stub_cw_v2 = b'\x50\x57' + body + b'\x5F\x58\xC3' + bytes(4)     # v2: plain subroutine
+    assert len(stub_cw_v2) == len(stub_cw_v1) == 77
+    stub_cw = b'\x50\x57' + body + b'\x5F\x58' + music_byte(MUSIC_SRC['cw']) + b'\xC3'
+    cw_ops = [2 + o for o in ops] + [2 + len(body) + 2 + 2]
+    assert len(stub_pack) == len(stub_cw) == STUB_LEN
 
     h = bytearray()
     h += bytes.fromhex('C7 80 F4 14 00 00 01 00 00 00')     # mov dword ptr [eax+14F4h],1
@@ -288,13 +302,17 @@ def build(stock_mode=False):
     assert len(h) == HANDLER_LEN == len(STOCK_HANDLER)
 
     body, ops = slot_writer(DC_STRINGS)
-    stub_dc = b'\x50\x57' + body + b'\x5F\x58\xC3'              # push eax/edi ... pop/pop/ret
-    dc_ops = [2 + o for o in ops]
+    stub_dc_v3 = b'\x50\x57' + body + b'\x5F\x58\xC3'            # push eax/edi ... pop/pop/ret (73 bytes)
+    stub_dc = b'\x50\x57' + body + b'\x5F\x58' + music_byte(MUSIC_SRC['dc']) + b'\xC3'
+    dc_ops = [2 + o for o in ops] + [2 + len(body) + 2 + 2]
+    assert len(stub_dc) == STUB_LEN
 
     sites = [('OZI MISSIONS + DARK COLONY handlers (was PLAY INTRO)', HANDLER,
               [STOCK_HANDLER, handler_v2], bytes(h)),
-             ('stub_pack (pack strings into the 4 slots)', STUB_PACK, [bytes(len(stub_pack))], stub_pack),
-             ('stub_cw_set (Council Wars strings)', STUB_CW, [bytes(len(stub_cw)), stub_cw_v1], stub_cw),
+             ('stub_pack (pack strings into the 4 slots, music source ALL)', STUB_PACK,
+              [bytes(STUB_LEN), stub_pack_v3 + bytes(STUB_LEN - len(stub_pack_v3))], stub_pack),
+             ('stub_cw_set (Council Wars strings, music source CW)', STUB_CW,
+              [bytes(STUB_LEN), stub_cw_v1 + bytes(STUB_LEN - len(stub_cw_v1)), stub_cw_v2 + bytes(STUB_LEN - len(stub_cw_v2))], stub_cw),
              ('tramp_cw_campaign (stub_cw_set; jmp 401C08)', TRAMP_CW_CAMPAIGN, [bytes(10)],
               tramp(TRAMP_CW_CAMPAIGN, STUB_CW, CAMPAIGN_RUNNER)),
              ('tramp_cw_load (stub_cw_set; jmp 403AA4)', TRAMP_CW_LOAD, [bytes(10)],
@@ -317,14 +335,21 @@ def build(stock_mode=False):
                   [call(LOAD_GAME_CALL, LOAD_GAME)], call(LOAD_GAME_CALL, TRAMP_CW_LOAD)))
     sites.append(('OZI LOAD (was SINGLE PLAYER WAR) call -> tramp_pack_load', SINGLE_WAR_CALL,
                   [call(SINGLE_WAR_CALL, SINGLE_WAR)], call(SINGLE_WAR_CALL, TRAMP_PACK_LOAD)))
-    sites.append(('stub_dc_set (Dark Colony strings)', STUB_DC, [bytes(len(stub_dc))], stub_dc))
+    sites.append(('stub_dc_set (Dark Colony strings, music source DC)', STUB_DC,
+                  [bytes(STUB_LEN), stub_dc_v3 + bytes(STUB_LEN - len(stub_dc_v3))], stub_dc))
     sites.append(('tramp_dc_campaign (stub_dc_set; jmp 401C08)', TRAMP_DC_CAMPAIGN, [bytes(10)],
                   tramp(TRAMP_DC_CAMPAIGN, STUB_DC, CAMPAIGN_RUNNER)))
     sites.append(('tramp_dc_load (stub_dc_set; jmp 403AA4)', TRAMP_DC_LOAD, [bytes(10)],
                   tramp(TRAMP_DC_LOAD, STUB_DC, LOAD_GAME)))
-    # MULTI PLAYER WAR always in the Dark Colony mode: the Classic tables, whatever mode was last
-    sites.append(('tramp_dc_net (stub_dc_set; jmp 405C20)', TRAMP_DC_NET, [bytes(10)],
-                  tramp(TRAMP_DC_NET, STUB_DC, NETWORK_OPTIONS)))
+    # MULTI PLAYER WAR always in the Dark Colony mode: the Classic tables, whatever mode was last - but
+    # with the music source ALL (maintainer, 25 Sep 2026: "network game must be with shuffle all music set"),
+    # written after stub_dc_set's DC default: call stub_dc_set; mov byte [state+36], 2; jmp 405C20 (17 bytes)
+    tramp_net_v4 = tramp(TRAMP_DC_NET, STUB_DC, NETWORK_OPTIONS)
+    tramp_net = call(TRAMP_DC_NET, STUB_DC) + music_byte(MUSIC_SRC['net']) + jmp(TRAMP_DC_NET + 12, NETWORK_OPTIONS)
+    assert len(tramp_net) == 17
+    net_ops = [5 + 2]
+    sites.append(('tramp_dc_net (stub_dc_set; music source ALL; jmp 405C20)', TRAMP_DC_NET,
+                  [bytes(17), tramp_net_v4 + bytes(7)], tramp_net))
     sites.append(('MULTI PLAYER WAR call -> tramp_dc_net', NETWORK_CALL,
                   [call(NETWORK_CALL, NETWORK_OPTIONS)], call(NETWORK_CALL, TRAMP_DC_NET)))
     sites.append(('menu id filter: accept the button ids 6 and 7 (cmp edx,5 -> 7)', ID_FILTER_IMM,
@@ -336,7 +361,8 @@ def build(stock_mode=False):
         RELOC_PAGE_HANDLER: [(0x0DE, 0), (0x103, 0)],
         RELOC_PAGE_TAIL: [((STUB_PACK + o) & 0xFFF, 3) for o in pack_ops]
                        + [((STUB_CW + o) & 0xFFF, 3) for o in cw_ops]
-                       + [((STUB_DC + o) & 0xFFF, 3) for o in dc_ops],
+                       + [((STUB_DC + o) & 0xFFF, 3) for o in dc_ops]
+                       + [((TRAMP_DC_NET + o) & 0xFFF, 3) for o in net_ops],
     }
     if stock_mode:
         # 640x480 only: the 217-row block fills the backdrop's black band, the box goes (item 7)
@@ -437,7 +463,9 @@ STOCK_MODE_SITES = [
      0x482498, [b'intrface/bintro\0'], b'intrface/bintoz\0'),
 ]
 def resolve(data, stock_mode=False):
-    sites, relocs = build(stock_mode)
+    import patch_music                         # same folder: the module's state block, any form
+    state, _ = patch_music.music_state(bytes(data))
+    sites, relocs = build(stock_mode, state + patch_music.SRC_OFFSET)
     for va, s in zip(SLOTS, CW_STRINGS):
         off = va - DGROUP_VA_TO_FILE
         if data[off:off + 8] != s:
@@ -474,10 +502,10 @@ def resolve(data, stock_mode=False):
 def state(edits):
     kinds = {k for *_, k in edits}
     if kinds == {'done'}:
-        return 'patched (v4)'
+        return 'patched (v5)'
     if kinds == {'stock'}:
         return 'stock'
-    return 'earlier version or partial (apply upgrades to v4)'
+    return 'earlier version or partial (apply upgrades to v5)'
 
 
 def main(argv=None):
@@ -509,7 +537,7 @@ def main(argv=None):
             '%03X->%s' % (off, 'ABS' if typ == 0 else 'HIGHLOW') for off, typ in redits)))
     if a.command == 'plan':
         return 0
-    if state(edits) == 'patched (v4)' and rstate == 'patched':
+    if state(edits) == 'patched (v5)' and rstate == 'patched':
         print('nothing to do')
         return 0
 
