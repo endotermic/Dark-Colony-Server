@@ -127,12 +127,12 @@ only a stock Python 3 (no third-party packages).
   [--out DIR] [--rooms] [--images] [--pretty]`; library + CLI, no dependencies). `maps/` holds the
   output for the seven maps of the default `ROOMS` only (plus `maps/index.json`); any other map is
   generated on request with the same command (maintainer decision, 11 Sep 2026).
-- `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `engexp16new.exe`
+- `tools/patch_resolution.py` - raises the screen resolution of `dc16.exe` / `ENGEXP16.EXE`
   (verify / plan / apply, staged, byte-checked, keeps a `.bak`).
 - `tools/patch_cursor.py` - keeps the Windows mouse pointer hidden over the game window (the stock
   exe registers its window class with an uninitialised cursor handle and lets `DefWindowProc`
   restore it on every `WM_SETCURSOR`); verify / plan / apply, keeps a `.cursor.bak`.
-- `tools/patch_ozi_menu.py` - adds the "OZI MISSIONS" campaign mode to Council Wars' `engexp16new.exe`
+- `tools/patch_ozi_menu.py` - adds the "OZI MISSIONS" campaign mode to Council Wars' `ENGEXP16.EXE` (patched build `Dark Colony Ultimate.exe`)
   (the ozi_ns mission pack, 22 missions, selectable from the main menu in place of PLAY INTRO;
   verify / plan / apply, keeps a `.ozi.bak`); `tools/build_ozi_overlay.py` installs the pack's data
   (dry run / `--apply`). Section 10.13 of the display document explains both.
@@ -144,14 +144,19 @@ only a stock Python 3 (no third-party packages).
 - `tools/patch_movies.py` - makes the patched Classic exe play the Classic movies under their own
   names (`AVI/DCINTRO.AVI`; the campaign lists in `INTRF_HD/` name `DCAENDING.AVI` / `DCHENDING.AVI`)
   now that both games share the Council Wars folder (verify / plan / apply, Dark Colony only).
-- `tools/patch_wavprefix.py` - empties the Classic wave loader's leftover `exp/` prefix so `dc16new.exe`
-  plays the Classic mission briefings `MISSION/H*.WAV` / `G*.WAV` and `SOUND/WATER.WAV` instead of the
+- `tools/patch_wavprefix.py` - empties the Classic wave loader's leftover `exp/` prefix so the patched
+  Classic exe (`Dark Colony.exe`) plays the Classic mission briefings `MISSION/H*.WAV` / `G*.WAV` and `SOUND/WATER.WAV` instead of the
   Council Wars files under `exp/` that sit in the same folder (patcher fix `sounds`; verify / plan /
   apply, keeps a `.wavprefix.bak`, Dark Colony only). Section 10.21 of the display document.
 - `tools/patch_maped.py` - unlocks the greyed-out dialog controls of the map editor `maped.exe`
   (block-set buttons, team colour and allies, the Healer row; what the Polish ozi_ns editor did, minus
   the translation; verify / plan / apply `--fix ID|all`). `tools/gen_apply_script.py` generates
   `Apply-DarkColonyPatches.ps1` for the game repository from all patch tools (three builds).
+- `tools/make_dc_icon.py` - renders the high-resolution icon `DC - Council wars/DC_HD.ICO` (16 to 256
+  pixels) from the geometry of the game's 32x32 `DC.ICO` (frame, 3-D "DC" letters, the planet Mars);
+  `tools/patch_icon.py` puts it into all three patched exes as a new `.dcicon` resource section
+  (patcher fix `icon`, always last; verify / plan / apply, keeps a `.icon.bak`). Section 10.38 of the
+  display document.
 - `tools/hud_layout.py` - redraws the in-game HUD frame for the new resolution (region geometry,
   tracing layers, the `MAINE` widget transform).
 - `tools/pad_background.py` - letterboxes the interface screens into a larger framebuffer (plan /
@@ -161,11 +166,11 @@ only a stock Python 3 (no third-party packages).
   `.SPR` sprite codec they share.
 
 ```bash
-python tools/patch_cursor.py verify "../Dark-Colony/DC - Council wars/dc16new.exe"
-python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
-python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
-python tools/patch_pool.py verify "../Dark-Colony/DC - Council wars/dc16new.exe"
-python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/engexp16new.exe"
+python tools/patch_cursor.py verify "../Dark-Colony/DC - Council wars/Dark Colony.exe"
+python tools/patch_resolution.py verify "../Dark-Colony/DC - Council wars/Dark Colony Ultimate.exe"
+python tools/patch_ozi_menu.py verify "../Dark-Colony/DC - Council wars/Dark Colony Ultimate.exe"
+python tools/patch_pool.py verify "../Dark-Colony/DC - Council wars/Dark Colony.exe"
+python tools/patch_speed.py verify "../Dark-Colony/DC - Council wars/Dark Colony Ultimate.exe"
 python tools/build_ozi_overlay.py "../Dark-Colony/DC - Council wars"          # dry run
 node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER" --rooms --out maps   # regenerate maps/ (default rooms)
 node tools/map2json.js "../Dark-Colony/DC - Council wars/SCENARIO/MPLAYER/D4PLAY01.SCN" > four_corners.json   # any other map, on request

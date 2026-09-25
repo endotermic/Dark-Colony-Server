@@ -1,7 +1,8 @@
 """Generate Apply-DarkColonyPatches.ps1 - the self-documenting PowerShell patcher that lives in the ROOT of
 the Dark-Colony game repository (next to "DC - Classic" and "DC - Council wars", maintainer decision 14 Sep 2026).
 
-The PowerShell script lets a player rebuild the patched dc16new.exe / engexp16new.exe from the
+The PowerShell script lets a player rebuild the patched "Dark Colony.exe" / "Dark Colony Ultimate.exe" (until
+25 Sep 2026 dc16new.exe / engexp16new.exe) and the map editor from the
 untouched originals committed in the Dark-Colony repository, one patch at a time, with every changed
 byte listed and explained.  This generator produces it by *replaying* the Python patch tools of this
 folder on copies of the originals, diffing after each step (so every byte is attributed to
@@ -11,17 +12,20 @@ exactly one patch) and taking the per-edit descriptions from the tools' `plan` o
 
 Needs: DC - Council wars/dc16.exe (the untouched Classic build of 7 Jan 1998; since 15 Sep 2026 both
 games live in that one folder, the Classic original keeps its stock name and the patched result is
-dc16new.exe) and DC - Council wars/ENGEXP16.EXE in the game repository, and the
+"Dark Colony.exe", until 25 Sep 2026 dc16new.exe), DC - Council wars/ENGEXP16.EXE, Dark Colony - Map
+editor/maped.exe and DC - Council wars/DC_HD.ICO (the icon of fix `icon`) in the game repository, and the
 patch_*.py tools beside this file.  The generated script is validated here:
 the sum of the per-patch edits must reproduce every intermediate exe, and the end result is
 hashed into the script as the reference for "all patches applied".  Re-run after adding a patch
 (add it to PATCHES/BUILDS below, with a block parser for its plan output).  The OZI patch is
-kept last because its 16-byte .reloc insert shifts every later relocation entry.  The CD fix is
+kept last among the fixes that edit in place because its 16-byte .reloc insert shifts every later
+relocation entry; since 25 Sep 2026 the icon fix follows it in every build, because it APPENDS a
+section and so grows the file (emitted as an `Append` edit with the bytes in Base64).  The CD fix is
 ONE patch, `nocd` (patch_nocd.py; maintainer requirement 18 Sep 2026): it carries the three
 hand-patched 2025 bytes (formerly `cdcheck`) and the removal of the whole CD path; it goes first,
 and patch_resolution.py accepts the resulting exe by size (its MD5 table only knows the 2025 state).
 """
-import re, struct, hashlib, sys, os, shutil, subprocess, tempfile
+import re, struct, hashlib, sys, os, shutil, subprocess, tempfile, base64
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 GAME = sys.argv[1]
@@ -151,6 +155,9 @@ def ozi_data(g, mode=None):
     return files
 
 
+# the icon every patched exe gets (fix `icon`, 25 Sep 2026): made by make_dc_icon.py from DC.ICO's geometry
+ICON_FILE = os.path.join(GAME, 'DC - Council wars', 'DC_HD.ICO')
+
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
@@ -159,14 +166,17 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
-           'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe'])}
+           'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe']),
+           # the high-resolution icon, last in every build (it appends a section); the .ico is in the game folder
+           'icon': ('patch_icon.py', ['--ico', ICON_FILE])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
            'music': 'music',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
-           'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped'}
-PLAN_ARGS = {'maped': ['--fix', 'all']}      # plan-time arguments per plan name (default: none)
+           'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
+           'icon': 'icon'}
+PLAN_ARGS = {'maped': ['--fix', 'all'], 'icon': ['--ico', ICON_FILE]}      # plan-time arguments per plan name (default: none)
 _plans = {}
 
 def tool_of(step):
@@ -376,6 +386,21 @@ def blocks_maped(fix):
         assert out, fix
         return out
     return blocks
+
+def blocks_icon(g):
+    """The four header edits of patch_icon.py (the appended section is taken from the replay, see attribute())."""
+    t = plan(g, 'icon'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2})\s*$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip(), old, new))
+    assert len(out) == 4, (g, len(out))
+    m = re.search(r'^\s+append at file 0x([0-9a-f]+) (\d+) bytes sha256 ([0-9a-f]{64}): (.+)$', t, re.M)
+    assert m, t
+    ICON_APPEND[g] = dict(at=int(m.group(1), 16), n=int(m.group(2)), sha=m.group(3), note=m.group(4).strip())
+    return out
+
+ICON_APPEND = {}
 
 def blocks_hdpaths(g):
     t = plan(g, 'hd_paths'); out = []
@@ -770,18 +795,48 @@ knows the healing units (GAMESTAT.TXT rows 49 and 50).  Two single-byte edits cl
       desc='''Cosmetic, taken over from the ozi_ns editor: the Troop Attributes dialog's frame style changes from
 WS_THICKFRAME (a sizing border, useless for a fixed layout) to WS_SYSMENU (a title-bar close box).
 One byte in the DIALOG template's style dword.'''),
+ # ---- every build, always last
+ dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut)', date='25 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.38', blocks=blocks_icon,
+      desc='''The exes carry at most the game's 32x32, 16-colour icon (dc16.exe and ENGEXP16.EXE; the map
+editor none at all), which Windows blows up into a blur on the desktop, in Explorer and on the
+taskbar.  This fix gives the exe every image of DC_HD.ICO (in the "DC - Council wars" folder): the
+same design - grey frame, "DC", the planet Mars - re-drawn from the original's geometry by
+tools/make_dc_icon.py, at 16, 20, 24, 32, 40, 48, 64 (bitmaps), 96 and 256 pixels (PNG).
+
+How, without moving anything that is already in the file:
+  * a NEW SECTION ".dcicon" is appended at the end of the file; it holds a complete resource
+    directory plus the icon images.  The exe's other resources (the map editor's dialogs, menus and
+    strings) stay where they are - the new directory points at them - so the other fixes are
+    untouched; only the old 32x32 icon entries are left out
+  * four header edits: the number of sections, the new section's 40-byte header in the zero bytes
+    after the section table, SizeOfImage, and the resource directory entry of the optional header
+  * the games keep their icon group "DC16" and get the same group under id 101 as well - the id the
+    game's own window asks for (LoadIconA(hInstance, 101) in create_window); the original has no
+    such group, so the game window had the default icon
+
+No code changes.  The file grows by the new section (about 75 KB), which is why this fix is always
+applied last.  The appended bytes are written below in Base64 (they are the icon images and the
+directory that lists them); their SHA-256 is checked like every other edit.'''),
 ]
 
+# Names of the patched builds and their desktop shortcuts since 25 Sep 2026 (maintainer: "resulting files and
+# shortcuts names must be: 'Dark Colony map editor 1.2', 'Dark Colony', 'Dark Colony Ultimate'"); before that
+# dc16new.exe, engexp16new.exe (DCEXP16.EXE 10-15 Sep 2026) and maped_ozi_ns_v1.2.exe.  `orig_path` is where the
+# window finds the untouched original, relative to the repository root = the folder of the script.
 BUILDS = [
- dict(id='Classic', g='classic', exe='dc16new.exe', orig_name='dc16.exe',
-      title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: dc16new.exe)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'movies', 'sounds']),
- dict(id='CouncilWars', g='cw', exe='engexp16new.exe', orig_name='ENGEXP16.EXE',
-      title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: engexp16new.exe; called DCEXP16.EXE 10-15 Sep 2026)',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'ozi']),
- dict(id='MapEditor', g='maped', exe='maped_ozi_ns_v1.2.exe', orig_name='maped.exe',
-      title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: maped_ozi_ns_v1.2.exe)',
-      steps=['blocksets', 'teams', 'healer', 'troopsframe']),
+ dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
+      title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe)',
+      source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'movies', 'sounds', 'icon']),
+ dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
+      title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
+      source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'ozi', 'icon']),
+ dict(id='MapEditor', g='maped', exe='Dark Colony map editor 1.2.exe', product='Dark Colony map editor 1.2', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
+      title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony map editor 1.2.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
+      source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
+      steps=['blocksets', 'teams', 'healer', 'troopsframe', 'icon']),
 ]
 
 def hexs(b):
@@ -840,7 +895,14 @@ def attribute(g, step, cur, nxt, mode):
                 assert (old, new) == (blk_[3], blk_[4]), (g, step, hex(off), note, old.hex(), blk_[3].hex())
             assert old != new or n == 0, (g, step, hex(off), note)
             edits.append(('bytes', off, old, new, note)); covered.update(range(off, off + n))
-        leftover = [(o, n) for o, n in runs_of(cur, nxt) if not any(i in covered for i in range(o, o + n))]
+        if step == 'icon':
+            # model: four header edits + the new section appended at the end of the file
+            ap = ICON_APPEND[g]
+            assert ap['at'] == len(cur) and len(nxt) == len(cur) + ap['n'], (g, ap['at'], len(cur), len(nxt))
+            tail = nxt[len(cur):]
+            assert hashlib.sha256(tail).hexdigest() == ap['sha'], g
+            special = dict(kind='append', offset=len(cur), bytes=tail, sha=ap['sha'], note=ap['note'])
+        leftover = [(o, n) for o, n in runs_of(cur, nxt[:len(cur)]) if not any(i in covered for i in range(o, o + n))]
         for o, n in leftover:
             if step == 'ozi':
                 words = struct.unpack(f'<{n//2}H', cur[o:o + n])
@@ -860,12 +922,14 @@ def attribute(g, step, cur, nxt, mode):
         for _, off, old, new, _ in edits:
             assert bytes(t[off:off + len(old)]) == old
             t[off:off + len(new)] = new
-        if special:
+        if special and special.get('kind') == 'append':
+            t = bytearray(bytes(t) + special['bytes'])
+        elif special:
             e = special['section_end']; i = special['offset']
             t = bytearray(bytes(t[:i]) + special['bytes'] + bytes(t[i:e - len(special['bytes'])]) + bytes(t[e:]))
         assert bytes(t) == nxt, (g, step)
         edits.sort(key=lambda e: e[1])
-        pd = dict(P=P, edits=edits, special=special, nbytes=sum(1 for i in range(len(cur)) if cur[i] != nxt[i]), leftover=len(leftover), mode=None)
+        pd = dict(P=P, edits=edits, special=special, nbytes=sum(1 for i in range(len(cur)) if cur[i] != nxt[i]) + (len(nxt) - len(cur)), leftover=len(leftover), mode=None)
         print(f'{g:8s} {step:11s} {(mode or "-"):9s} {len(edits):4d} edits ({len(leftover)} unannotated runs), {pd["nbytes"]} bytes, insert={bool(special)}')
         return pd
 
@@ -936,8 +1000,11 @@ W(r'''<#
     hand-modified exe cannot be signed and looks suspicious to antivirus heuristics, this script
     makes the modification fully transparent and reproducible:
 
-      * run without arguments it opens a window: pick the original, tick the fixes you want (the first
-        box selects all of them), press Apply - or drive it from the command line, see the examples
+      * run without arguments it opens a window: the three originals beside this script (Dark Colony,
+        Council Wars, the map editor) are found and ticked with all their fixes, and one press of
+        "Patch selected executables" writes "Dark Colony.exe", "Dark Colony Ultimate.exe" and
+        "Dark Colony map editor 1.2.exe" with a shortcut of the same name on the desktop; untick what
+        you do not want - or drive it from the command line, see the examples
       * it never touches the input file; it writes a new file
       * every patch is a list of (file offset, old bytes, new bytes, reason) in plain text below
       * a byte is only written if the file still holds the documented old bytes at that offset
@@ -966,12 +1033,14 @@ W(r'''<#
 
     The originals, both in the "DC - Council wars" folder (since 15 Sep 2026 the one folder both games
     run from): "dc16.exe" (the untouched Dark Colony exe of the January 1998 update, 6 sections, entry
-    point 0x4528DE; its patched build is written as "dc16new.exe") and "ENGEXP16.EXE"
-    (ENGEXP16.EXE from the Council Wars CD; patched build "engexp16new.exe").  Both are committed untouched
-    in the repository.  The third build is the map editor "Dark Colony - Map editor\maped.exe" (the
-    original from the Dark Colony CD): its fixes clear the "disabled" flag on dialog controls the
-    original greyed out - the functional part of the ozi_ns editor, without the Polish translation -
-    and write "maped_ozi_ns_v1.2.exe".
+    point 0x4528DE; its patched build is written as "Dark Colony.exe") and "ENGEXP16.EXE"
+    (ENGEXP16.EXE from the Council Wars CD; patched build "Dark Colony Ultimate.exe" - Council Wars
+    plus the Dark Colony, OZI and Academy campaigns).  Both are committed untouched in the repository.
+    The third build is the map editor "Dark Colony - Map editor\maped.exe" (the original from the Dark
+    Colony CD): its fixes clear the "disabled" flag on dialog controls the original greyed out - the
+    functional part of the ozi_ns editor, without the Polish translation - and write
+    "Dark Colony map editor 1.2.exe".  (Until 25 Sep 2026 the three were dc16new.exe, engexp16new.exe
+    and maped_ozi_ns_v1.2.exe.)
 
     The script is complete in itself: it uses nothing but the .NET classes that ship with Windows
     PowerShell 5.1 / PowerShell 7 (System.IO.File, System.Security.Cryptography.SHA256, Windows Forms).
@@ -987,10 +1056,12 @@ W(r'''<#
 
 .PARAMETER Original
     Path of the untouched original executable (dc16.exe, ENGEXP16.EXE or the map editor's maped.exe).
+    With -All and no -Original all three originals beside this script are patched, one after the
+    other, each into its own output name.
 
 .PARAMETER Output
-    Where to write the patched copy.  Default: dc16new.exe / engexp16new.exe / maped_ozi_ns_v1.2.exe
-    next to the original.
+    Where to write the patched copy (only together with -Original).  Default: "Dark Colony.exe" /
+    "Dark Colony Ultimate.exe" / "Dark Colony map editor 1.2.exe" next to the original.
     An existing file is not overwritten unless -Overwrite is given.
 
 .PARAMETER Resolution
@@ -1014,24 +1085,36 @@ W(r'''<#
     failure would look like a bug of the patch.  Each fix's Requires / Data lists say what it
     needs; -List prints them.
 
+.PARAMETER DesktopShortcut
+    After a successful write, put a shortcut to the patched exe on the desktop ("Dark Colony",
+    "Dark Colony - Council Wars" or "Dark Colony map editor"; start folder = the game folder, which
+    the game needs to find its data).  An existing shortcut of that name is replaced.  The window
+    does the same with its "Desktop shortcut" checkbox (ticked by default).
+
 .PARAMETER Verify
     Instead of patching, inspect an existing exe: which build it is and which patches it carries.
 
 .EXAMPLE
     .\Apply-DarkColonyPatches.ps1                               # the window
+    .\Apply-DarkColonyPatches.ps1 -All -DesktopShortcut           # all three executables, as the window does
     .\Apply-DarkColonyPatches.ps1 -List
     .\Apply-DarkColonyPatches.ps1 -List -Detail                 # every single byte edit
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All
-        (run from the root of the Dark-Colony repository, where this file lives; writes dc16new.exe)
+        (run from the root of the Dark-Colony repository, where this file lives; writes "Dark Colony.exe")
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches nocd,resolution,hdpaths,pool
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All -DesktopShortcut
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All -Resolution 1280x800
-    .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> maped_ozi_ns_v1.2.exe)
-    .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\dc16new.exe"
+    .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> "Dark Colony map editor 1.2.exe")
+    .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\Dark Colony.exe"
 
 .NOTES
-    If Windows refuses to run the script ("running scripts is disabled"), start it once with
+    Double-click INSTALL.CMD beside this file: it starts this script with Windows
+    PowerShell 5.1 and -ExecutionPolicy Bypass for that one run (Windows' own "Run with PowerShell"
+    obeys the execution policy, which refuses a script from a downloaded ZIP), and passes any
+    command-line options on.  Without it, if Windows refuses to run the script ("running scripts is
+    disabled"), start it with
         powershell -ExecutionPolicy Bypass -File .\Apply-DarkColonyPatches.ps1
+    Relative paths are taken from PowerShell's current location.
     Offsets are 0-based file offsets, written as PowerShell hex literals (0x431F).  Bytes are
     upper-case hex separated by spaces.  Code addresses quoted in the comments are virtual
     addresses (VA) inside the loaded image: VA = file offset + 0x400C00 for code, DGROUP data
@@ -1047,6 +1130,7 @@ param(
     [Parameter(ParameterSetName = 'Apply')] [switch] $Overwrite,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Force,
     [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreMissingData,
+    [Parameter(ParameterSetName = 'Apply')] [switch] $DesktopShortcut,
     [Parameter(ParameterSetName = 'List')] [switch] $List,
     [Parameter(ParameterSetName = 'List')] [switch] $Detail,
     [Parameter(ParameterSetName = 'Verify')] [string] $Verify
@@ -1061,6 +1145,8 @@ $ErrorActionPreference = 'Stop'
 #  One special edit kind (OZI patch only): @{ Insert = <offset>; Bytes = '<16 bytes>'; Before = '<the
 #  16 bytes found there before>'; SectionEnd = <offset>; Note = ... } - inserts Bytes at Insert and
 #  drops the 16 zero bytes just before SectionEnd, so the file size does not change.
+#  And one that grows the file (icon patch only, always the last fix): @{ Append = <offset = the file's
+#  length before>; Sha256 = '<of the appended bytes>'; Length = <n>; Base64 = '<the appended bytes>' }.
 # =================================================================================================
 $Builds = @(
 ''')
@@ -1076,6 +1162,11 @@ for bd in build_data:
         Title          = {ps_str(B['title'])}
         OriginalName   = {ps_str(B['orig_name'])}
         OutputName     = {ps_str(B['exe'])}
+        ProductName    = {ps_str(B['product'])}      # the desktop shortcut's name
+        OriginalPath   = {ps_str(B['orig_path'])}      # where the window looks for the original, relative to this script
+        # where a player gets the original when theirs is missing or not the original (the window's red box)
+        RepoUrl        = {ps_str('https://github.com/endotermic/Dark-Colony/blob/main/' + B['orig_path'].replace(chr(92), '/').replace(' ', '%20'))}
+        SourceNote     = {ps_str(B['source'])}
         Size           = {bd['size']}
         OriginalSha256 = {ps_str(bd['orig_sha'])}   # untouched original
         PatchedSha256  = {ps_str(bd['final_sha'])}   # every patch applied in the default resolution = the exe in the repository
@@ -1135,7 +1226,13 @@ for bd in build_data:
                 pass
             W(f'                    # {note}')
             W(f'                    @{{ Offset = 0x{off:X}; Old = {ps_str(hexs(old))}; New = {ps_str(hexs(new))} }}')
-        if pd['special']:
+        if pd['special'] and pd['special'].get('kind') == 'append':
+            sp = pd['special']
+            W(f'                    # {sp["note"]}')
+            W(f'                    # (Base64 of the {len(sp["bytes"])} appended bytes; decode it to see them - it is the resource directory and the images of DC_HD.ICO)')
+            W(f'                    @{{ Append = 0x{sp["offset"]:X}; Sha256 = {ps_str(sp["sha"])}; Length = {len(sp["bytes"])}')
+            W(f'                       Base64 = {ps_str(base64.b64encode(sp["bytes"]).decode())} }}')
+        elif pd['special']:
             sp = pd['special']
             W(f'                    # {sp["note"]}')
             W(f'                    @{{ Insert = 0x{sp["offset"]:X}; Bytes = {ps_str(hexs(sp["bytes"]))}; Before = {ps_str(hexs(sp["before"]))}; SectionEnd = 0x{sp["section_end"]:X} }}')
@@ -1160,6 +1257,14 @@ function Get-Sha256Hex([byte[]] $Data) {
     finally { $sha.Dispose() }
 }
 
+# Absolute path against PowerShell's current location.  .NET calls ([IO.File], [IO.Path]::GetFullPath)
+# resolve a relative path against the PROCESS directory, which Set-Location does not move, while
+# Test-Path / Resolve-Path use $PWD; every path is normalised once here so both agree.  The file does
+# not have to exist yet.
+function Get-AbsolutePath([string] $Path) {
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 function Test-BytesAt([byte[]] $Data, [int] $Offset, [byte[]] $Expected) {
     if ($Offset + $Expected.Length -gt $Data.Length) { return $false }
     for ($i = 0; $i -lt $Expected.Length; $i++) { if ($Data[$Offset + $i] -ne $Expected[$i]) { return $false } }
@@ -1168,6 +1273,17 @@ function Test-BytesAt([byte[]] $Data, [int] $Offset, [byte[]] $Expected) {
 
 # 'old' = the file still holds the documented original bytes, 'new' = the patched bytes, 'other' = neither.
 function Get-EditState([byte[]] $Data, $Edit) {
+    if ($Edit.ContainsKey('Append')) {
+        # the file must end exactly where the section is appended ('old'), or carry it ('new', by SHA-256)
+        if ($Data.Length -eq $Edit.Append) { return 'old' }
+        if ($Data.Length -eq $Edit.Append + $Edit.Length) {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try { $h = ([BitConverter]::ToString($sha.ComputeHash($Data, $Edit.Append, $Edit.Length)) -replace '-', '').ToLower() }
+            finally { $sha.Dispose() }
+            if ($h -eq $Edit.Sha256) { return 'new' }
+        }
+        return 'other'
+    }
     if ($Edit.ContainsKey('Insert')) {
         if (Test-BytesAt $Data $Edit.Insert (ConvertFrom-HexString $Edit.Bytes))  { return 'new' }
         if (Test-BytesAt $Data $Edit.Insert (ConvertFrom-HexString $Edit.Before)) { return 'old' }
@@ -1184,14 +1300,16 @@ function Invoke-Patch([byte[]] $Data, $Patch) {
     foreach ($e in $Patch.Edits) {
         $state = Get-EditState $Data $e
         if ($state -ne 'old') {
-            $where = if ($e.ContainsKey('Insert')) { '0x{0:X}' -f $e.Insert } else { '0x{0:X}' -f $e.Offset }
+            $where = if ($e.ContainsKey('Insert')) { '0x{0:X}' -f $e.Insert } elseif ($e.ContainsKey('Append')) { '0x{0:X} (the end of the file)' -f $e.Append } else { '0x{0:X}' -f $e.Offset }
             $why = if ($state -eq 'new') { 'already patched - this file already carries the fix' } else { 'not the documented original bytes' }
             throw ("fix '{0}': the bytes at file offset {1} are {2}. The fixes apply to the untouched original exe of the repository " +
                    "(dc16.exe / ENGEXP16.EXE in 'DC - Council wars', maped.exe in the editor folder), not to an already patched build.") -f $Patch.Id, $where, $why
         }
     }
     $out = [byte[]] $Data.Clone()
+    $append = $null
     foreach ($e in $Patch.Edits) {
+        if ($e.ContainsKey('Append')) { $append = $e; continue }      # grows the file: done after the in-place edits
         if ($e.ContainsKey('Insert')) {
             [byte[]] $ins = ConvertFrom-HexString $e.Bytes
             $end = $e.SectionEnd
@@ -1205,6 +1323,14 @@ function Invoke-Patch([byte[]] $Data, $Patch) {
             [byte[]] $new = ConvertFrom-HexString $e.New
             [Array]::Copy($new, 0, $out, $e.Offset, $new.Length)
         }
+    }
+    if ($append) {
+        [byte[]] $tail = [Convert]::FromBase64String($append.Base64)
+        if ($tail.Length -ne $append.Length -or (Get-Sha256Hex $tail) -ne $append.Sha256) { throw "fix '$($Patch.Id)': the appended bytes in this script do not match their SHA-256 (the file was edited?)" }
+        $grown = New-Object byte[] ($out.Length + $tail.Length)
+        [Array]::Copy($out, $grown, $out.Length)
+        [Array]::Copy($tail, 0, $grown, $out.Length, $tail.Length)
+        $out = $grown
     }
     return ,$out
 }
@@ -1292,7 +1418,10 @@ function Find-BuildBySha([string] $Sha) { foreach ($b in $Builds) { if ($b.Origi
 # Guess the build of an arbitrary exe from its size and the state of the first patch's edits (nocd).
 function Find-BuildByContent([byte[]] $Data) {
     foreach ($b in $Builds) {
-        if ($Data.Length -ne $b.Size) { continue }
+        # the original size, or the size with the icon section appended (fix icon grows the file)
+        $sizes = @($b.Size)
+        foreach ($p in $b.Patches) { foreach ($e in $p.Edits) { if ($e.ContainsKey('Append')) { $sizes += $e.Append + $e.Length } } }
+        if ($sizes -notcontains $Data.Length) { continue }
         $ok = $true
         foreach ($e in $b.Patches[0].Edits) { if ((Get-EditState $Data $e) -eq 'other') { $ok = $false } }
         if ($ok) { return $b }
@@ -1306,6 +1435,8 @@ function Get-EditLines($Patch) {
     foreach ($e in $Patch.Edits) {
         if ($e.ContainsKey('Insert')) {
             $lines += ('insert @0x{0:X6}  {1}   (16 zero bytes dropped before 0x{2:X})' -f $e.Insert, $e.Bytes, $e.SectionEnd)
+        } elseif ($e.ContainsKey('Append')) {
+            $lines += ('append @0x{0:X6}  {1} bytes, SHA-256 {2}  (the Base64 text in this script; see the fix description)' -f $e.Append, $e.Length, $e.Sha256)
         } else {
             $lines += ('@0x{0:X6}  {1}  ->  {2}' -f $e.Offset, $e.Old, $e.New)
         }
@@ -2201,6 +2332,32 @@ function Write-StockOziMenu([string] $GameDir) {
     return $lines
 }
 
+# Desktop shortcut to a patched exe (the window's "Desktop shortcut" checkbox, -DesktopShortcut on the
+# command line).  The game opens its data files relative to its working folder, so the shortcut's
+# "Start in" is the game folder - a COPY of the exe on the desktop would not find anything.  Made with
+# the WScript.Shell COM object that is part of Windows; an existing shortcut of the same name is
+# replaced.  $script:DesktopFolder lets a test write somewhere else than the real desktop.
+$script:DesktopFolder = $null
+function New-GameShortcut([string] $ExePath, $Build) {
+    $name = $Build.ProductName          # "Dark Colony", "Dark Colony Ultimate", "Dark Colony map editor 1.2"
+    $desktop = if ($script:DesktopFolder) { $script:DesktopFolder } else { [Environment]::GetFolderPath('Desktop') }
+    if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) { throw 'this user has no desktop folder' }
+    $exe = Get-AbsolutePath $ExePath
+    $lnkPath = Join-Path $desktop ($name + '.lnk')
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $lnk = $shell.CreateShortcut($lnkPath)
+        $lnk.TargetPath = $exe
+        $lnk.WorkingDirectory = Split-Path -Parent $exe
+        $lnk.IconLocation = "$exe,0"
+        $lnk.Description = "$name - patched exe written by Apply-DarkColonyPatches.ps1"
+        $lnk.Save()
+    } finally {
+        [void] [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+    return $lnkPath
+}
+
 # Applies the chosen patches (canonical order) to the bytes of $OriginalPath and writes $OutputPath.
 # Returns a small result object; throws on any check failure.
 # $Progress (optional): a script block called with one line of text before each step - the window
@@ -2357,144 +2514,356 @@ function Write-PatchList([switch] $WithEdits) {
 # =================================================================================================
 #  WINDOW - the checkbox front end (Windows Forms, part of every Windows PowerShell)
 # =================================================================================================
+# The screen resolution the window applies to a build: the drop-down's choice for the two games, '' for
+# the map editor (it has none).  Script level, because the window's event handlers run outside
+# Show-PatcherWindow and cannot see functions defined inside it.
+function Get-GuiMode($Build) {
+    if (@($Build.Modes).Count -gt 0 -and $script:gui.Mode) { return $script:gui.Mode }
+    if (@($Build.Modes).Count -gt 0) { return $Build.DefaultMode }
+    return ''
+}
+
+# The fixes of one window item that will be applied: every fix of its resolution that is available in
+# the output folder and was not unticked.
+function Get-GuiChosen($Item) {
+    $out = @()
+    foreach ($p in @(Get-BuildPatches $Item.Build (Get-GuiMode $Item.Build))) {
+        if ($Item.Unavailable.ContainsKey($p.Id) -or $Item.Unticked.ContainsKey($p.Id)) { continue }
+        $out += $p
+    }
+    return $out
+}
+
 function Show-PatcherWindow([string] $PreloadPath) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
-    $script:gui = @{ Path = $null; Data = $null; Build = $null; IsOriginal = $false; Syncing = $false; Unavailable = @{}
-                     Mode = ''; ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize)
-                     Here = $PSScriptRoot }     # the folder this script sits in = the repository root; the Browse dialog starts in its game folder
+    # A classical installer (25 Sep 2026, maintainer: "let's do the classical installer way for patch region
+    # instead of tabs. on opening there is a greeting message and button forward. second screen contains
+    # options for patching DC, third screen for patching CW and fourth for patching maped"): Welcome ->
+    # Dark Colony -> Dark Colony Ultimate -> map editor -> (Patch) -> Finished, with Back / Next / Cancel.
+    # One item per build; the three untouched originals beside this script are found and ticked, each
+    # page keeps its own fix choices (Unticked) and the fixes whose resources are missing.
+    $items = @()
+    foreach ($b in $Builds) {
+        $items += @{ Build = $b; Path = $null; Data = $null; IsOriginal = $false; Out = $null; Checked = $false; Patches = @()
+                     Status = 'not found - press Browse to pick it'; Color = 'Firebrick'; Unticked = @{}; Unavailable = @{}; Error = $null }
+    }
+    $script:gui = @{ Items = $items; Sel = -1; Step = 0; Syncing = $false; Mode = ''; ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize)
+                     Here = $PSScriptRoot; Results = $null }     # Here = the folder this script sits in = the repository root
+    foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $script:gui.ModeList = @($b.Modes); break } }
     $mono = New-Object System.Drawing.Font('Consolas', 9)
+    $bold = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'Dark Colony patcher - rebuild the patched exe from the original, fix by fix'
-    $form.Size = New-Object System.Drawing.Size(1000, 680)
-    $form.MinimumSize = New-Object System.Drawing.Size(820, 560)
+    $form.Text = 'Dark Colony patcher'
+    $form.ClientSize = New-Object System.Drawing.Size(984, 700)
+    $form.FormBorderStyle = 'FixedDialog'; $form.MaximizeBox = $false
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
-    # --- row 1: original exe
-    $lblIn = New-Object System.Windows.Forms.Label
-    $lblIn.Text = 'Original exe:'; $lblIn.Location = '12,15'; $lblIn.AutoSize = $true
-    $txtIn = New-Object System.Windows.Forms.TextBox
-    $txtIn.Location = '110,12'; $txtIn.Size = '760,23'; $txtIn.Anchor = 'Top,Left,Right'; $txtIn.ReadOnly = $true
-    $btnBrowse = New-Object System.Windows.Forms.Button
-    $btnBrowse.Text = 'Browse...'; $btnBrowse.Location = '880,10'; $btnBrowse.Size = '92,26'; $btnBrowse.Anchor = 'Top,Right'
+    # --- header band: title and subtitle of the current step
+    $header = New-Object System.Windows.Forms.Panel
+    $header.Location = '0,0'; $header.Size = '984,64'; $header.BackColor = [System.Drawing.Color]::White
+    $lblTitle = New-Object System.Windows.Forms.Label
+    $lblTitle.Location = '20,10'; $lblTitle.Size = '940,24'; $lblTitle.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
+    $lblSub = New-Object System.Windows.Forms.Label
+    $lblSub.Location = '34,36'; $lblSub.Size = '930,20'
+    $header.Controls.AddRange(@($lblTitle, $lblSub))
+    $sepTop = New-Object System.Windows.Forms.Label
+    $sepTop.Location = '0,64'; $sepTop.Size = '984,2'; $sepTop.BorderStyle = 'Fixed3D'
 
-    $lblStatus = New-Object System.Windows.Forms.Label
-    $lblStatus.Location = '110,40'; $lblStatus.Size = '860,36'; $lblStatus.Anchor = 'Top,Left,Right'
-    $lblStatus.Text = 'Pick dc16.exe (Dark Colony) or ENGEXP16.EXE (Council Wars) from the "DC - Council wars" folder, or maped.exe from "Dark Colony - Map editor" - all three are in the repository, untouched.'
-    if ($PSScriptRoot) { $lblStatus.Text += "`r`nThis script is in $PSScriptRoot - Browse starts in its game folder; the result is written next to the exe you pick." }
-
-    # --- left: the fixes
-    $grpFix = New-Object System.Windows.Forms.GroupBox
-    $grpFix.Text = 'Fixes to apply (always applied in this order)'; $grpFix.Location = '12,82'; $grpFix.Size = '450,470'
-    $grpFix.Anchor = 'Top,Bottom,Left'
-    # the resolution drop-down: "WIDTHxHEIGHT (aspect) recommended" - recommended = your monitor's aspect ratio
-    $lblRes = New-Object System.Windows.Forms.Label
-    $lblRes.Text = 'Screen resolution:'; $lblRes.Location = '12,25'; $lblRes.AutoSize = $true
-    $cmbRes = New-Object System.Windows.Forms.ComboBox
-    $cmbRes.Location = '130,21'; $cmbRes.Size = '300,23'; $cmbRes.DropDownStyle = 'DropDownList'; $cmbRes.Enabled = $false
-    $chkAll = New-Object System.Windows.Forms.CheckBox
-    $chkAll.Text = 'Select all fixes  (result = the reference build for the chosen resolution)'
-    $chkAll.Location = '12,52'; $chkAll.AutoSize = $true; $chkAll.Enabled = $false
-    $chkAll.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-    $lst = New-Object System.Windows.Forms.CheckedListBox
-    $lst.Location = '12,80'; $lst.Size = '426,378'; $lst.Anchor = 'Top,Bottom,Left,Right'
-    $lst.CheckOnClick = $true; $lst.IntegralHeight = $false; $lst.Enabled = $false
-    $lst.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-    $grpFix.Controls.AddRange(@($lblRes, $cmbRes, $chkAll, $lst))
-
-    # --- right: description of the highlighted fix
-    $grpInfo = New-Object System.Windows.Forms.GroupBox
-    $grpInfo.Text = 'What the highlighted fix changes'; $grpInfo.Location = '474,82'; $grpInfo.Size = '498,470'
-    $grpInfo.Anchor = 'Top,Bottom,Left,Right'
-    $txtInfo = New-Object System.Windows.Forms.TextBox
-    $txtInfo.Location = '12,24'; $txtInfo.Size = '474,434'; $txtInfo.Anchor = 'Top,Bottom,Left,Right'
-    $txtInfo.Multiline = $true; $txtInfo.ReadOnly = $true; $txtInfo.ScrollBars = 'Vertical'; $txtInfo.WordWrap = $true
-    $txtInfo.Font = $mono; $txtInfo.BackColor = [System.Drawing.SystemColors]::Window
-    $txtInfo.Text = @(
-        'This window rebuilds the patched game executable from the untouched original,',
-        'one fix at a time.  Every fix is a list of byte edits written out in this .ps1 file:',
+    # --- page 0: welcome
+    $pWelcome = New-Object System.Windows.Forms.Panel
+    $pWelcome.Location = '0,66'; $pWelcome.Size = '984,580'
+    $lblHello = New-Object System.Windows.Forms.Label
+    $lblHello.Location = '24,16'; $lblHello.Size = '936,184'
+    $lblHello.Text = @(
+        'Welcome!  This installer builds the patched Dark Colony executables on your own PC, from the untouched',
+        'original executables of this folder:',
         '',
-        '    @{ Offset = 0x431F; Old = ''75''; New = ''EB'' }   # jne -> jmp after the CD check',
+        '    Dark Colony                  dc16.exe      ->  Dark Colony.exe',
+        '    Dark Colony Ultimate         ENGEXP16.EXE  ->  Dark Colony Ultimate.exe   (Council Wars plus the Dark Colony,',
+        '                                                                               OZI and Academy campaigns)',
+        '    Dark Colony map editor 1.2   maped.exe     ->  Dark Colony map editor 1.2.exe',
         '',
-        'A byte is written only if the file still holds the documented old bytes, the input',
-        'file is never modified, and the result is a new file whose SHA-256 is shown here.',
-        'With every fix selected the result is byte-identical to the exe in the repository.',
-        '',
-        'Open this file in a text editor to read all of it - it uses nothing but the .NET',
-        'classes that ship with Windows (File, SHA256, Windows Forms).',
-        '',
-        'Click a fix on the left to read what it does and see its byte edits.'
+        'The next three pages show the fixes of each executable - all of them are selected; you only have to',
+        'press Next three times and then Patch.  Nothing is downloaded, the originals are never changed, and every',
+        'byte this script writes is listed, with its reason, in Apply-DarkColonyPatches.ps1 (open it in Notepad).'
     ) -join "`r`n"
-    $grpInfo.Controls.Add($txtInfo)
+    $lblHello.Font = New-Object System.Drawing.Font('Consolas', 9.5)
+    $lblFound = New-Object System.Windows.Forms.Label
+    $lblFound.Location = '24,214'; $lblFound.Size = '936,76'; $lblFound.Font = $mono
+    $chkLnk = New-Object System.Windows.Forms.CheckBox
+    $chkLnk.Text = 'Put a shortcut to each patched executable on the desktop'; $chkLnk.Location = '24,306'; $chkLnk.AutoSize = $true
+    $chkLnk.Checked = $true; $chkLnk.Font = $bold
+    $lblLnk = New-Object System.Windows.Forms.Label
+    $lblLnk.Location = '44,330'; $lblLnk.Size = '900,36'
+    $lblLnk.Text = 'Named "Dark Colony", "Dark Colony Ultimate" and "Dark Colony map editor 1.2"; each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
+    $lblNext = New-Object System.Windows.Forms.Label
+    $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = 'Press Next to continue.'
+    # a missing or wrong original: a big red banner here, the details and the remedies on its page
+    $lblProblem = New-Object System.Windows.Forms.Label
+    $lblProblem.Location = '24,374'; $lblProblem.Size = '936,160'; $lblProblem.Visible = $false
+    $lblProblem.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $lblProblem.ForeColor = [System.Drawing.Color]::White
+    $lblProblem.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold); $lblProblem.Padding = '12,8,12,8'
+    $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $lblNext, $lblProblem))
 
-    # --- bottom: output + buttons + log
-    $lblOut = New-Object System.Windows.Forms.Label
-    # The output is not selectable (22 Sep 2026, maintainer request "disable resulting path and filename
-    # selection"): the patched exe is always written under the build's name beside the original
-    # (dc16new.exe / engexp16new.exe / maped_ozi_ns_v1.2.exe), because that is where its data files are
-    # and what the READMEs, the server tests and the players' shortcuts expect.  The box only shows it.
-    $lblOut.Text = 'Written to:'; $lblOut.Location = '12,565'; $lblOut.AutoSize = $true; $lblOut.Anchor = 'Bottom,Left'
-    $txtOut = New-Object System.Windows.Forms.TextBox
-    $txtOut.Location = '110,562'; $txtOut.Size = '862,23'; $txtOut.Anchor = 'Bottom,Left,Right'; $txtOut.ReadOnly = $true
-    $txtOut.TabStop = $false
-    $btnApply = New-Object System.Windows.Forms.Button
-    $btnApply.Text = 'Apply selected fixes'; $btnApply.Location = '110,596'; $btnApply.Size = '170,30'; $btnApply.Anchor = 'Bottom,Left'
-    $btnApply.Enabled = $false
+    # --- pages 1..3: one per executable (the page's controls carry the executable's index in .Tag,
+    # because the handlers run outside this function)
+    $tip = New-Object System.Windows.Forms.ToolTip
+    $pages = @()
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $b = $items[$i].Build
+        $pnl = New-Object System.Windows.Forms.Panel
+        $pnl.Location = '0,66'; $pnl.Size = '984,580'; $pnl.Visible = $false
+        $inc = New-Object System.Windows.Forms.CheckBox
+        $inc.Text = "Patch $($b.ProductName)  (writes $($b.OutputName))"; $inc.Location = '20,12'; $inc.AutoSize = $true; $inc.Font = $bold; $inc.Tag = $i
+        $lo = New-Object System.Windows.Forms.Label
+        $lo.Text = 'Original:'; $lo.Location = '20,43'; $lo.AutoSize = $true
+        $path = New-Object System.Windows.Forms.TextBox
+        $path.Location = '100,40'; $path.Size = '752,23'; $path.ReadOnly = $true; $path.TabStop = $false
+        $brw = New-Object System.Windows.Forms.Button
+        $brw.Text = 'Browse...'; $brw.Location = '860,38'; $brw.Size = '104,27'; $brw.Tag = $i
+        $tip.SetToolTip($brw, "Pick the untouched original $($b.OriginalName) (another copy than the one found beside this script).")
+        $det = New-Object System.Windows.Forms.Label
+        $det.Location = '100,68'; $det.Size = '864,34'
+        $res = $null
+        if (@($b.Modes).Count -gt 0) {
+            $lr = New-Object System.Windows.Forms.Label
+            $lr.Text = 'Screen resolution:'; $lr.Location = '20,112'; $lr.AutoSize = $true
+            $res = New-Object System.Windows.Forms.ComboBox
+            $res.Location = '140,108'; $res.Size = '300,23'; $res.DropDownStyle = 'DropDownList'; $res.Tag = $i
+            $ln = New-Object System.Windows.Forms.Label
+            $ln.Text = 'the same for both games - they share the INTRF_HD interface folder'; $ln.Location = '450,112'; $ln.AutoSize = $true
+            $ln.ForeColor = [System.Drawing.Color]::DimGray
+            $pnl.Controls.AddRange(@($lr, $res, $ln))
+        } else {
+            $lr = $null
+            $ln = New-Object System.Windows.Forms.Label
+            $ln.Text = 'The map editor has no screen resolution to choose.'; $ln.Location = '20,112'; $ln.AutoSize = $true
+            $ln.ForeColor = [System.Drawing.Color]::DimGray
+            $pnl.Controls.Add($ln)
+        }
+        $all = New-Object System.Windows.Forms.CheckBox
+        $all.Text = 'Select all fixes  (result = the reference build)'; $all.Location = '20,142'; $all.AutoSize = $true
+        $all.Font = $bold; $all.Enabled = $false; $all.Tag = $i
+        $lst = New-Object System.Windows.Forms.CheckedListBox
+        $lst.Location = '20,168'; $lst.Size = '452,368'; $lst.CheckOnClick = $true; $lst.IntegralHeight = $false; $lst.Enabled = $false; $lst.Tag = $i
+        $lst.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+        $li = New-Object System.Windows.Forms.Label
+        $li.Text = 'What the highlighted fix changes (always applied in the order of the list):'; $li.Location = '484,144'; $li.AutoSize = $true
+        $inf = New-Object System.Windows.Forms.TextBox
+        $inf.Location = '484,168'; $inf.Size = '480,368'; $inf.Multiline = $true; $inf.ReadOnly = $true; $inf.ScrollBars = 'Vertical'
+        $inf.WordWrap = $true; $inf.Font = $mono; $inf.BackColor = [System.Drawing.SystemColors]::Window
+        $lw = New-Object System.Windows.Forms.Label
+        $lw.Text = 'Written to:'; $lw.Location = '20,549'; $lw.AutoSize = $true
+        $out = New-Object System.Windows.Forms.TextBox
+        $out.Location = '100,546'; $out.Size = '864,23'; $out.ReadOnly = $true; $out.TabStop = $false
+        # the big red error in front of the checklist when this original is missing or not the original
+        # (maintainer, 25 Sep 2026: "if original of one of files are not originals, then bring in front a big
+        # red error and offer to select a correct file or to download it from original discs or our repo")
+        $err = New-Object System.Windows.Forms.Panel
+        $err.Location = '20,104'; $err.Size = '944,436'; $err.Visible = $false
+        $err.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0)
+        $errTitle = New-Object System.Windows.Forms.Label
+        $errTitle.Location = '18,14'; $errTitle.Size = '908,34'; $errTitle.ForeColor = [System.Drawing.Color]::White
+        $errTitle.Font = New-Object System.Drawing.Font('Segoe UI', 16, [System.Drawing.FontStyle]::Bold)
+        $errBody = New-Object System.Windows.Forms.Label
+        $errBody.Location = '20,56'; $errBody.Size = '906,320'; $errBody.ForeColor = [System.Drawing.Color]::White
+        $errBody.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+        $errPick = New-Object System.Windows.Forms.Button
+        $errPick.Text = 'Select the correct file...'; $errPick.Location = '20,388'; $errPick.Size = '240,34'; $errPick.Tag = $i
+        $errPick.BackColor = [System.Drawing.Color]::White; $errPick.Font = $bold
+        $errGet = New-Object System.Windows.Forms.Button
+        $errGet.Text = 'Download from our repository'; $errGet.Location = '272,388'; $errGet.Size = '260,34'; $errGet.Tag = $i
+        $errGet.BackColor = [System.Drawing.Color]::White; $errGet.Font = $bold
+        $tip.SetToolTip($errGet, "Opens $($b.RepoUrl) in your browser; this script itself downloads nothing.")
+        $err.Controls.AddRange(@($errTitle, $errBody, $errPick, $errGet))
+        $pnl.Controls.AddRange(@($inc, $lo, $path, $brw, $det, $all, $lst, $li, $inf, $lw, $out, $err))
+        $err.BringToFront()
+        $items[$i].UI = @{ Page = $pnl; Check = $inc; Path = $path; Browse = $brw; Status = $det; Res = $res; All = $all; List = $lst; Info = $inf; Out = $out
+                           Error = $err; ErrorTitle = $errTitle; ErrorBody = $errBody; ErrorPick = $errPick; ErrorGet = $errGet
+                           # hidden while the red box is shown, so it is in front whatever the drawing order
+                           Behind = @(@($lr, $res, $ln, $all, $lst, $li, $inf) | Where-Object { $_ }) }
+        $pages += $pnl
+    }
+
+    # --- page 4: finished
+    $pDone = New-Object System.Windows.Forms.Panel
+    $pDone.Location = '0,66'; $pDone.Size = '984,580'; $pDone.Visible = $false
+    $txtDone = New-Object System.Windows.Forms.TextBox
+    $txtDone.Location = '20,16'; $txtDone.Size = '944,520'; $txtDone.Multiline = $true; $txtDone.ReadOnly = $true
+    $txtDone.ScrollBars = 'Vertical'; $txtDone.Font = $mono; $txtDone.BackColor = [System.Drawing.SystemColors]::Window
+    $lblDone = New-Object System.Windows.Forms.Label
+    $lblDone.Location = '20,546'; $lblDone.Size = '944,24'
+    $pDone.Controls.AddRange(@($txtDone, $lblDone))
+
+    # --- navigation bar
+    $sepBot = New-Object System.Windows.Forms.Label
+    $sepBot.Location = '0,646'; $sepBot.Size = '984,2'; $sepBot.BorderStyle = 'Fixed3D'
     $btnVerify = New-Object System.Windows.Forms.Button
-    $btnVerify.Text = 'Inspect an exe...'; $btnVerify.Location = '290,596'; $btnVerify.Size = '140,30'; $btnVerify.Anchor = 'Bottom,Left'
+    $btnVerify.Text = 'Inspect an exe...'; $btnVerify.Location = '12,658'; $btnVerify.Size = '122,30'
+    $tip.SetToolTip($btnVerify, 'Check any Dark Colony executable: which build it is and which fixes it carries.')
     $lblLog = New-Object System.Windows.Forms.Label
-    $lblLog.Location = '440,596'; $lblLog.Size = '532,40'; $lblLog.Anchor = 'Bottom,Left,Right'; $lblLog.Font = $mono
+    $lblLog.Location = '142,654'; $lblLog.Size = '470,40'; $lblLog.Font = $mono
+    $btnBack = New-Object System.Windows.Forms.Button
+    $btnBack.Text = '< Back'; $btnBack.Location = '628,658'; $btnBack.Size = '104,30'
+    $btnNext = New-Object System.Windows.Forms.Button
+    $btnNext.Text = 'Next >'; $btnNext.Location = '740,658'; $btnNext.Size = '112,30'; $btnNext.Font = $bold
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = 'Cancel'; $btnCancel.Location = '864,658'; $btnCancel.Size = '104,30'
+    $form.AcceptButton = $btnNext; $form.CancelButton = $btnCancel
 
-    $form.Controls.AddRange(@($lblIn, $txtIn, $btnBrowse, $lblStatus, $grpFix, $grpInfo, $lblOut, $txtOut, $btnApply, $btnVerify, $lblLog))
-    $script:gui.Controls = @{ Form = $form; In = $txtIn; Status = $lblStatus; All = $chkAll; List = $lst; Info = $txtInfo; Out = $txtOut; Apply = $btnApply; Log = $lblLog; Browse = $btnBrowse; Verify = $btnVerify; Res = $cmbRes }
+    $form.Controls.AddRange(@($header, $sepTop, $pWelcome) + $pages + @($pDone, $sepBot, $btnVerify, $lblLog, $btnBack, $btnNext, $btnCancel))
+    # All / List / Info / Out are re-pointed to the current page's controls by Select
+    $script:gui.Controls = @{ Form = $form; Title = $lblTitle; Sub = $lblSub; Welcome = $pWelcome; Found = $lblFound; Problem = $lblProblem; Done = $pDone; DoneText = $txtDone
+                              DoneNote = $lblDone; Shortcut = $chkLnk; Back = $btnBack; Next = $btnNext; Cancel = $btnCancel; Apply = $btnNext
+                              Verify = $btnVerify; Log = $lblLog; All = $items[0].UI.All; List = $items[0].UI.List; Info = $items[0].UI.Info
+                              Out = $items[0].UI.Out; Status = $items[0].UI.Status; Res = $items[0].UI.Res }
     $c = $script:gui.Controls   # event handlers run outside this function's scope, so they reach the controls through this table
 
+    # the resolution drop-downs of the two game pages, the largest size with your monitor's aspect preselected
+    $script:gui.Syncing = $true
+    if ($script:gui.ModeList.Count -gt 0) {
+        $first = $null; foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $first = $b; break } }
+        $sel = [Math]::Max(0, [Array]::IndexOf($script:gui.ModeList, (Get-PreferredMode $first $script:gui.Monitor)))
+        $script:gui.Mode = $script:gui.ModeList[$sel]
+        foreach ($it in $items) {
+            if (-not $it.UI.Res) { continue }
+            foreach ($m in $script:gui.ModeList) { [void] $it.UI.Res.Items.Add((Format-ModeLabel $m $script:gui.Monitor)) }
+            $it.UI.Res.SelectedIndex = $sel
+        }
+    }
+    $script:gui.Syncing = $false
+
     # --- behaviour
+    # Repaints an executable's page header lines and the welcome page's list of originals.
+    $script:gui.ShowRow = {
+        param($it)
+        $g = $script:gui
+        $u = $it.UI
+        $g.Syncing = $true
+        $u.Path.Text = if ($it.Path) { $it.Path } else { '(not found beside this script: ' + $it.Build.OriginalPath + ')' }
+        $u.Status.Text = if ($it.ContainsKey('Detail')) { $it.Detail } else { "$($it.Build.OriginalName) was not found at $($it.Build.OriginalPath) beside this script. Press Browse to pick it." }
+        $u.Status.ForeColor = [System.Drawing.Color]::FromName($it.Color)
+        $u.Check.Checked = [bool] $it.Checked
+        $u.Check.Enabled = -not $it.Error
+        $u.Out.Text = if ($it.Out) { $it.Out } else { '' }
+        $u.Error.Visible = [bool] $it.Error
+        foreach ($x in $u.Behind) { $x.Visible = -not $it.Error }
+        if ($it.Error) { $u.ErrorTitle.Text = $it.Error.Title; $u.ErrorBody.Text = $it.Error.Body; $u.Error.BringToFront() }
+        $g.Syncing = $false
+        $bad = @($g.Items | Where-Object { $_.Error })
+        $g.Controls.Problem.Visible = ($bad.Count -gt 0)
+        if ($bad.Count -gt 0) {
+            $g.Controls.Problem.Text = (@('PROBLEM - these originals cannot be used as they are:', '') +
+                @($bad | ForEach-Object { '    ' + $_.Build.ProductName + ':  ' + $_.Error.Title }) +
+                @('', 'Press Next: the page of each one explains what is wrong and offers to select the correct file or to download it.')) -join "`r`n"
+        }
+        $lines = @('Found:')
+        foreach ($x in $g.Items) {
+            $mark = if ($x.Data -and $x.IsOriginal) { 'OK ' } elseif ($x.Error) { '!! ' } else { '-- ' }
+            $shown = $x.Path
+            # beside this script (the normal case): the path relative to the repository folder, which fits the line
+            $sep = [System.IO.Path]::DirectorySeparatorChar
+            $root = if ($g.Here) { $g.Here.TrimEnd($sep) + $sep } else { $null }
+            if ($shown -and $root -and $shown.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $shown = $shown.Substring($root.Length) }
+            elseif ($shown -and $shown.Length -gt 48) { $parts = $shown.Split($sep); if ($parts.Count -gt 2) { $shown = '...' + $sep + $parts[-2] + $sep + $parts[-1] } }
+            $lines += ('  {0} {1,-28} {2}' -f $mark, $x.Build.ProductName, $(if ($shown) { "$shown  ($($x.Status))" } else { "not found ($($x.Build.OriginalPath)) - you can pick it on its page" }))
+        }
+        $g.Controls.Found.Text = $lines -join "`r`n"
+    }
+
+    # Re-checks the resources of an item's fixes against the folder its exe will be written to: fixes whose
+    # files are missing (or which need such a fix) get "RESOURCES NOT FOUND" and are left out.
+    $script:gui.Recheck = {
+        param($it)
+        $it.Unavailable = @{}
+        if ($it.Out) { $it.Unavailable = Get-UnavailableFixes $it.Build (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build) }
+    }
+
+    # Puts an item into the error state: nothing to patch, the include box locked, the big red panel on
+    # its page with what was found, what is expected and the three ways to get the right file.
+    # $kind: missing | unreadable | unknown | patched | modified.
+    $script:gui.SetError = {
+        param($it, [string] $path, $data, [string] $kind, [string] $why)
+        $b = $it.Build
+        $name = if ($path) { [System.IO.Path]::GetFileName($path) } else { $b.OriginalName }
+        $it.Path = $path; $it.Data = $null; $it.IsOriginal = $false; $it.Checked = $false; $it.Out = $null; $it.Color = 'Firebrick'
+        switch ($kind) {
+            'missing'    { $title = "$($b.OriginalName) NOT FOUND"; $status = 'NOT FOUND'
+                           $found = "nothing at $path" }
+            'unreadable' { $title = "$name CANNOT BE READ"; $status = 'cannot be read'
+                           $found = "$path`r`n            $why" }
+            'unknown'    { $title = "$name IS NOT $($b.OriginalName.ToUpper()) - NOT A DARK COLONY EXECUTABLE"; $status = 'NOT the original - unknown file'
+                           $found = "$path`r`n            $($data.Length) bytes, SHA-256 $(Get-Sha256Hex $data)" }
+            'patched'    { $title = "$name IS ALREADY PATCHED - NOT THE ORIGINAL"; $status = 'NOT the original - already patched'
+                           $found = "$path`r`n            $($data.Length) bytes, SHA-256 $(Get-Sha256Hex $data) (the fixes are already in it)" }
+            default      { $title = "$name IS NOT THE UNTOUCHED ORIGINAL"; $status = 'NOT the original - modified copy'
+                           $found = "$path`r`n            $($data.Length) bytes, SHA-256 $(Get-Sha256Hex $data)" }
+        }
+        $it.Status = $status
+        $it.Detail = "$title - see the red box below."
+        $it.Error = @{
+            Title = $title
+            Body  = (@(
+                "Found:      $found",
+                "Expected:   $($b.OriginalName), $($b.Size) bytes, SHA-256 $($b.OriginalSha256)",
+                '',
+                "The fixes are written for exactly this original, byte by byte, so $($b.ProductName) cannot be patched until the right file is chosen.  What to do:",
+                '',
+                "  1.  Select the correct file:  press ""Select the correct file..."" below and pick an untouched $($b.OriginalName).",
+                "  2.  Download it from our repository:  press ""Download from our repository"" - the file's page opens in your browser.  Download it, save it as ""$($b.OriginalPath)"" in this folder, then press ""Select the correct file..."".",
+                "  3.  Take it from the original disc:  $($b.SourceNote)"
+            ) -join "`r`n")
+        }
+    }
+
+    # Loads an exe into the item of its build (the build is recognised from the file, not from the page).
+    # $target = the page it was picked on: a file that is no known build puts THAT page into the error state.
     $loadOriginal = {
-        param([string] $path)
+        param([string] $path, [bool] $select = $true, [int] $target = -1)
         $c = $script:gui.Controls
         $g = $script:gui
-        $g.Path = $null; $g.Data = $null; $g.Build = $null; $g.IsOriginal = $false
-        $c.List.Items.Clear(); $c.All.Checked = $false
         try {
+            $path = Get-AbsolutePath $path
             $data = [System.IO.File]::ReadAllBytes($path)
         } catch {
-            $c.Status.ForeColor = 'Firebrick'; $c.Status.Text = "cannot read: $($_.Exception.Message)"; return
+            if ($target -ge 0) {
+                $t = $g.Items[$target]; & $g.SetError $t $path $null 'unreadable' $_.Exception.Message
+                & $g.Recheck $t; & $g.ShowRow $t; & $g.FillItem $t
+            } else { $c.Log.ForeColor = 'Firebrick'; $c.Log.Text = "cannot read: $($_.Exception.Message)" }
+            return
         }
         $sha = Get-Sha256Hex $data
         $build = Find-BuildBySha $sha
         $isOriginal = ($null -ne $build)
         if (-not $build) { $build = Find-BuildByContent $data }
-        $c.In.Text = $path
         if (-not $build) {
-            $c.Status.ForeColor = 'Firebrick'
-            $c.Status.Text = "Not a build this script knows ($($data.Length) bytes). Use dc16.exe or ENGEXP16.EXE from the repository's DC - Council wars folder, or maped.exe from Dark Colony - Map editor."
-            $c.List.Enabled = $false; $c.All.Enabled = $false; $c.Apply.Enabled = $false; $c.Res.Enabled = $false
+            if ($target -ge 0) {
+                $t = $g.Items[$target]; & $g.SetError $t $path $data 'unknown'
+                & $g.Recheck $t; & $g.ShowRow $t; & $g.FillItem $t
+                if ($select -and $g.Step -eq $target + 1) { & $g.Select $target }
+            } else {
+                $c.Log.ForeColor = 'Firebrick'
+                $c.Log.Text = "$([System.IO.Path]::GetFileName($path)): not a build this script knows ($($data.Length) bytes)."
+            }
             return
         }
-        $g.Path = $path; $g.Data = $data; $g.Build = $build; $g.IsOriginal = $isOriginal
-        $redirectOut = $null
-        # the resolutions of this build; the default one preselected
-        $g.Syncing = $true
-        $c.Res.Items.Clear(); $g.ModeList = @($build.Modes)
-        foreach ($m in $g.ModeList) { [void] $c.Res.Items.Add((Format-ModeLabel $m $g.Monitor)) }
-        $c.Res.Enabled = ($g.ModeList.Count -gt 0)
-        if ($g.ModeList.Count -gt 0) { $c.Res.SelectedIndex = [Math]::Max(0, [Array]::IndexOf($g.ModeList, (Get-PreferredMode $build $g.Monitor))) }
-        $g.Syncing = $false
-        if ($isOriginal) {
-            $c.Status.ForeColor = 'DarkGreen'
-            $c.Status.Text = "$($build.Title)`r`nSHA-256 $sha = the untouched original."
-        } else {
+        $it = $null; foreach ($x in $g.Items) { if ($x.Build.Id -eq $build.Id) { $it = $x } }
+        $it.Error = $null
+        $it.Path = $path; $it.Data = $data; $it.IsOriginal = $isOriginal; $it.Out = Join-Path (Split-Path $path) $build.OutputName
+        $it.Checked = $true; $it.Color = 'DarkGreen'; $it.Status = 'untouched original'
+        $it.Detail = "$($build.Title)`r`nSHA-256 $sha = the untouched original."
+        if (-not $isOriginal) {
             # a known build, but not the untouched original: an already patched build (players pick the
-            # game exe they play, dc16new.exe, as the "original" - report of 21 Sep 2026), or another copy
+            # game exe they play as the "original" - report of 21 Sep 2026), or another copy
             $patched = $false
             foreach ($e in $build.Patches[0].Edits) { if ((Get-EditState $data $e) -eq 'new') { $patched = $true } }
+            $name = [System.IO.Path]::GetFileName($path)
             if ($patched) {
-                $name = [System.IO.Path]::GetFileName($path)
                 $origBeside = Join-Path (Split-Path $path) $build.OriginalName
                 $origData = $null
                 if (Test-Path -LiteralPath $origBeside) {
@@ -2503,139 +2872,146 @@ function Show-PatcherWindow([string] $PreloadPath) {
                 }
                 if ($origData) {
                     # the untouched original sits beside it: that is the input, the picked file is the output
-                    $g.Path = $origBeside; $g.Data = $origData; $g.IsOriginal = $true
-                    $c.In.Text = $origBeside
-                    $redirectOut = $path
-                    $c.Status.ForeColor = 'DarkOrange'
-                    $c.Status.Text = "$name is already a patched build, not the untouched original.`r`nUsing $($build.OriginalName) beside it as the input (its SHA-256 is the untouched original); the result replaces $name."
+                    $it.Path = $origBeside; $it.Data = $origData; $it.IsOriginal = $true; $it.Out = $path
+                    $it.Color = 'DarkOrange'; $it.Status = "$name is patched - using $($build.OriginalName) beside it"
+                    $it.Detail = "$name is already a patched build, not the untouched original.`r`nUsing $($build.OriginalName) beside it as the input (its SHA-256 is the untouched original); the result replaces $name."
                 } else {
-                    $c.Status.ForeColor = 'Firebrick'
-                    $c.Status.Text = "$name is already a patched build (fix $($build.Patches[0].Id) applied), not the untouched original - the fixes apply to the original only.`r`nBrowse to $($build.OriginalName) from the repository's game folder (https://github.com/endotermic/Dark-Colony), or put it beside this file and browse again."
-                    $c.List.Enabled = $false; $c.All.Enabled = $false; $c.Apply.Enabled = $false; $c.Res.Enabled = $false
-                    $g.Path = $null; $g.Data = $null; $g.Build = $null
-                    return
+                    & $g.SetError $it $path $data 'patched'
                 }
             } else {
-                $c.Status.ForeColor = 'DarkOrange'
-                $c.Status.Text = "$($build.Title)`r`nSHA-256 does not match the untouched original (another copy?). Every byte is still checked before it is written."
+                # a known layout with another SHA-256: modified or damaged - not patched from here (the command
+                # line's -Force still allows it, with every edit byte-checked)
+                & $g.SetError $it $path $data 'modified'
             }
         }
-        $c.List.Enabled = $true; $c.All.Enabled = $true; $c.Apply.Enabled = $true
-        # TextChanged -> Refresh (the list is not filled yet: no-op)
-        $c.Out.Text = if ($redirectOut) { $redirectOut } else { Join-Path (Split-Path $path) $build.OutputName }
-        & $script:gui.FillList
-        $c.Log.Text = ''
+        & $g.Recheck $it
+        & $g.ShowRow $it
+        & $g.FillItem $it
+        if ($select -and $g.Step -ge 1 -and $g.Items[$g.Step - 1] -eq $it) { & $g.Select ($g.Step - 1) }
     }
     $script:gui.Load = $loadOriginal
 
-    # (Re)fills the fix list for the resolution chosen in the drop-down: the fixes of every resolution
-    # plus the chosen resolution's variants of 'resolution' and 'clock' (none for 640x480).
-    $script:gui.FillList = {
-        $c = $script:gui.Controls
+    # (Re)fills one executable's page for the chosen resolution: its fixes, ticked unless unticked by the
+    # player or unavailable (resources not found).
+    $script:gui.FillItem = {
+        param($it)
         $g = $script:gui
-        if (-not $g.Build) { return }
-        $g.Mode = if ($g.ModeList.Count -gt 0 -and $c.Res.SelectedIndex -ge 0) { $g.ModeList[$c.Res.SelectedIndex] } else { '' }
-        $g.Patches = @(Get-BuildPatches $g.Build $g.Mode)
+        $t = $it.UI
         $g.Syncing = $true
-        $c.List.Items.Clear(); $c.All.Checked = $false
-        foreach ($p in $g.Patches) { [void] $c.List.Items.Add(('{0}   ({1})' -f $p.Name, $p.Date), $false) }
-        $g.Syncing = $false
-        & $script:gui.Refresh
-        if ($c.List.Items.Count -gt 0) { $c.List.SelectedIndex = 0 }
-        if ($g.Mode -eq '640x480') { $c.Log.ForeColor = 'Black'; $c.Log.Text = '640x480 = the stock screen size: the display fixes (resolution, INTRF_HD paths, clock) are not offered.' }
-    }
-    $c.Res.Add_SelectedIndexChanged({ if (-not $script:gui.Syncing) { & $script:gui.FillList } })
-
-    # Re-checks the resources of every fix against the folder the exe will be written to: fixes whose
-    # files are missing (or which need such a fix) get "RESOURCES NOT FOUND" in their label, are
-    # unticked and cannot be ticked.  Runs at load and whenever the output path changes.
-    $script:gui.Refresh = {
-        $c = $script:gui.Controls
-        $g = $script:gui
-        if (-not $g.Build) { return }
-        $dir = $null
-        try { $t = $c.Out.Text.Trim(); if ($t) { $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($t)) } } catch { $dir = $null }
-        $g.Unavailable = Get-UnavailableFixes $g.Build $dir $g.Mode
-        $g.Syncing = $true
-        for ($i = 0; $i -lt $c.List.Items.Count; $i++) {
-            $p = $g.Patches[$i]
-            $was = $c.List.GetItemChecked($i)
-            $text = '{0}   ({1})' -f $p.Name, $p.Date
-            if ($g.Unavailable.ContainsKey($p.Id)) { $text = '[RESOURCES NOT FOUND]  ' + $text; $was = $false }
-            $c.List.Items[$i] = $text
-            $c.List.SetItemChecked($i, $was)
+        $t.List.Items.Clear(); $t.All.Checked = $false
+        $it.Patches = @()
+        if ($it.Data) {
+            $it.Patches = @(Get-BuildPatches $it.Build (Get-GuiMode $it.Build))
+            $all = $true
+            foreach ($p in $it.Patches) {
+                $text = '{0}   ({1})' -f $p.Name, $p.Date
+                $on = $true
+                if ($it.Unavailable.ContainsKey($p.Id)) { $text = '[RESOURCES NOT FOUND]  ' + $text; $on = $false }
+                elseif ($it.Unticked.ContainsKey($p.Id)) { $on = $false; $all = $false }
+                [void] $t.List.Items.Add($text, $on)
+            }
+            $t.All.Checked = $all
         }
         $g.Syncing = $false
-        $n = 0; foreach ($k in $g.Unavailable.Keys) { $n++ }
-        if ($n -gt 0) {
-            $c.Log.ForeColor = 'DarkOrange'
-            $c.Log.Text = "$n fix(es) cannot be applied into this folder - resources not found (see the label; click the fix for details)."
-        }
+        $t.List.Enabled = [bool] $it.Data; $t.All.Enabled = [bool] $it.Data
+        if ($g.Sel -ge 0 -and $g.Items[$g.Sel] -eq $it) { $g.Patches = $it.Patches }
     }
-    $c.Out.Add_TextChanged({ & $script:gui.Refresh })
 
-    $c.Browse.Add_Click({
-        $c = $script:gui.Controls
-        $dlg = New-Object System.Windows.Forms.OpenFileDialog
-        $dlg.Title = 'Pick the untouched original executable'
-        $dlg.Filter = 'Dark Colony executables (*.exe)|*.exe|All files (*.*)|*.*'
-        # Start in the folder of the exe already loaded, else in the game folder BESIDE THIS SCRIPT: without this
-        # the dialog opens in the folder Windows last used for PowerShell's file dialogs - with two copies of the
-        # repository (a git clone in Documents, a ZIP in Downloads) a player picks the other copy's exe without
-        # noticing and the result lands there (22 Sep 2026: "the fresh copy isn't widescreen" - it was never patched)
-        if ($script:gui.Path) { $dlg.InitialDirectory = Split-Path $script:gui.Path }
-        elseif ($script:gui.Here) {
-            $game = Join-Path $script:gui.Here 'DC - Council wars'
-            $dlg.InitialDirectory = if (Test-Path -LiteralPath $game) { $game } else { $script:gui.Here }
-        }
-        if ($dlg.ShowDialog($c.Form) -eq 'OK') { & $script:gui.Load $dlg.FileName }
-    })
-
-    # "Select all" <-> individual boxes, without the two events feeding each other; fixes whose
-    # resources are not found stay unticked in both directions
-    $c.All.Add_CheckedChanged({
-        $c = $script:gui.Controls
+    # the "Patch <name>" box decides whether the executable is patched; Browse loads an original for it
+    $rowCheck = {
+        param($sender, $e)
         $g = $script:gui
         if ($g.Syncing) { return }
+        $it = $g.Items[[int] $sender.Tag]
+        if ($sender.Checked -and -not $it.Data) {
+            $g.Syncing = $true; $sender.Checked = $false; $g.Syncing = $false
+            $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = "$($it.Build.ProductName): no usable original - press Browse to pick $($it.Build.OriginalName)."
+        } else {
+            $it.Checked = $sender.Checked
+            & $g.ShowRow $it
+        }
+    }
+    $rowBrowse = {
+        param($sender, $e)
+        $c = $script:gui.Controls
+        $g = $script:gui
+        $it = $g.Items[[int] $sender.Tag]
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = "Pick the untouched original $($it.Build.OriginalName) for $($it.Build.ProductName)"
+        $dlg.Filter = "$($it.Build.OriginalName)|$($it.Build.OriginalName)|Executables (*.exe)|*.exe|All files (*.*)|*.*"
+        # Start in the folder of this page's exe, else in its folder BESIDE THIS SCRIPT: without this the dialog
+        # opens where Windows last used PowerShell's file dialogs - with two copies of the repository a player
+        # picks the other copy's exe without noticing (22 Sep 2026: "the fresh copy isn't widescreen")
+        if ($it.Path) { $dlg.InitialDirectory = Split-Path $it.Path }
+        elseif ($g.Here) {
+            $dir = Join-Path $g.Here (Split-Path $it.Build.OriginalPath)
+            $dlg.InitialDirectory = if (Test-Path -LiteralPath $dir) { $dir } else { $g.Here }
+        }
+        if ($dlg.ShowDialog($c.Form) -ne 'OK') { return }
+        & $g.Load $dlg.FileName $true ([int] $sender.Tag)
+        # the file decides the page: say so when it belongs to another one
+        $data = $null; try { $data = [System.IO.File]::ReadAllBytes($dlg.FileName) } catch { }
+        if ($data) {
+            $b = Find-BuildBySha (Get-Sha256Hex $data); if (-not $b) { $b = Find-BuildByContent $data }
+            if ($b -and $b.Id -ne $it.Build.Id) {
+                $c.Log.ForeColor = 'DarkOrange'
+                $c.Log.Text = "$([System.IO.Path]::GetFileName($dlg.FileName)) is the original of $($b.ProductName), not of $($it.Build.ProductName) - loaded on its own page."
+            }
+        }
+    }
+    # "Select all" <-> individual boxes of the same page, without the two events feeding each other; fixes
+    # whose resources are not found stay unticked in both directions.  The page's controls carry the
+    # executable's index in .Tag.
+    $tabAll = {
+        param($sender, $e)
+        $g = $script:gui
+        if ($g.Syncing) { return }
+        $it = $g.Items[[int] $sender.Tag]
         $g.Syncing = $true
-        for ($i = 0; $i -lt $c.List.Items.Count; $i++) {
-            $avail = -not $g.Unavailable.ContainsKey($g.Patches[$i].Id)
-            $c.List.SetItemChecked($i, ($c.All.Checked -and $avail))
+        for ($i = 0; $i -lt $it.UI.List.Items.Count; $i++) {
+            $id = $it.Patches[$i].Id
+            $avail = -not $it.Unavailable.ContainsKey($id)
+            $it.UI.List.SetItemChecked($i, ($sender.Checked -and $avail))
+            if ($sender.Checked) { $it.Unticked.Remove($id) } else { $it.Unticked[$id] = $true }
         }
         $g.Syncing = $false
-    })
-    $c.List.Add_ItemCheck({
+    }
+    $tabCheck = {
         param($sender, $e)
         $c = $script:gui.Controls
         $g = $script:gui
         if ($g.Syncing) { return }
-        if ($e.NewValue -eq 'Checked' -and $g.Unavailable.ContainsKey($g.Patches[$e.Index].Id)) {
+        $it = $g.Items[[int] $sender.Tag]
+        $id = $it.Patches[$e.Index].Id
+        if ($e.NewValue -eq 'Checked' -and $it.Unavailable.ContainsKey($id)) {
             $e.NewValue = 'Unchecked'   # cannot be ticked: resources not found
             $c.Log.ForeColor = 'Firebrick'
-            $c.Log.Text = 'Resources not found for this fix in the output folder: ' + $g.Unavailable[$g.Patches[$e.Index].Id]
+            $c.Log.Text = 'Resources not found for this fix in the output folder: ' + $it.Unavailable[$id]
         }
+        if ($e.NewValue -eq 'Checked') { $it.Unticked.Remove($id) } else { $it.Unticked[$id] = $true }
         # "Select all" mirrors "every available fix is ticked"
         $all = $true
-        for ($i = 0; $i -lt $c.List.Items.Count; $i++) {
-            if ($g.Unavailable.ContainsKey($g.Patches[$i].Id)) { continue }
-            $checked = if ($i -eq $e.Index) { $e.NewValue -eq 'Checked' } else { $c.List.GetItemChecked($i) }
+        for ($i = 0; $i -lt $sender.Items.Count; $i++) {
+            if ($it.Unavailable.ContainsKey($it.Patches[$i].Id)) { continue }
+            $checked = if ($i -eq $e.Index) { $e.NewValue -eq 'Checked' } else { $sender.GetItemChecked($i) }
             if (-not $checked) { $all = $false }
         }
-        $g.Syncing = $true; $c.All.Checked = $all; $g.Syncing = $false
-    })
-
-    $c.List.Add_SelectedIndexChanged({
+        $g.Syncing = $true; $it.UI.All.Checked = $all; $g.Syncing = $false
+    }
+    # the page's description box: what its highlighted fix changes
+    $script:gui.ShowFix = {
+        param($it)
         $c = $script:gui.Controls
-        $g = $script:gui
-        if (-not $g.Build -or $c.List.SelectedIndex -lt 0 -or $c.List.SelectedIndex -ge $g.Patches.Count) { return }
-        $p = $g.Patches[$c.List.SelectedIndex]
+        $idx = $it.UI.List.SelectedIndex
+        if ($idx -lt 0 -or $idx -ge $it.Patches.Count) { return }
+        $p = $it.Patches[$idx]
         $lines = @()
-        if ($g.Unavailable.ContainsKey($p.Id)) {
-            $lines += @('RESOURCES NOT FOUND - this fix cannot be applied into the output folder:', ('  ' + $g.Unavailable[$p.Id]),
+        if ($it.Unavailable.ContainsKey($p.Id)) {
+            $lines += @('RESOURCES NOT FOUND - this fix cannot be applied into the output folder:', ('  ' + $it.Unavailable[$p.Id]),
                         '  Copy the game folder from the repository (https://github.com/endotermic/Dark-Colony), or write', '  the exe into it.', '')
         }
         $lines += @(
-            $p.Name, ('=' * $p.Name.Length),
+            ('{0}: {1}' -f $it.Build.ProductName, $p.Name), ('=' * ($it.Build.ProductName.Length + 2 + $p.Name.Length)),
             ('id {0}   added {1}   {2} byte edits' -f $p.Id, $p.Date, (Get-EditCount $p)),
             ('made with {0}' -f $p.Tool), ('documented in {0}' -f $p.Doc), ''
         )
@@ -2646,31 +3022,63 @@ function Show-PatcherWindow([string] $PreloadPath) {
             else { $para = if ($para) { "$para $l" } else { $l } }
         }
         if ($para) { $lines += $para }
-        $reqLines = @(Get-RequirementLines $g.Build $p)
+        $reqLines = @(Get-RequirementLines $it.Build $p)
         if ($reqLines.Count -gt 0) {
             $lines += @('', 'Prerequisites (checked before anything is written):')
             foreach ($l in $reqLines) { $lines += ('  * ' + $l) }
         }
         $lines += @('', 'Byte edits (file offset: old bytes -> new bytes):', '') + (Get-EditLines $p)
-        $c.Info.Text = $lines -join "`r`n"
-        $c.Info.SelectionStart = 0; $c.Info.SelectionLength = 0; $c.Info.ScrollToCaret()
-    })
+        $it.UI.Info.Text = $lines -join "`r`n"
+        $it.UI.Info.SelectionStart = 0; $it.UI.Info.SelectionLength = 0; $it.UI.Info.ScrollToCaret()
+    }
+    $tabSelect = {
+        param($sender, $e)
+        $g = $script:gui
+        & $g.ShowFix $g.Items[[int] $sender.Tag]
+    }
+
+    # the controls of every executable page
+    $resChange = {
+        param($sender, $e)
+        $g = $script:gui
+        if ($g.Syncing -or $sender.SelectedIndex -lt 0) { return }
+        $g.Mode = $g.ModeList[$sender.SelectedIndex]
+        # both games share the INTRF_HD folder: one resolution, shown on both pages
+        $g.Syncing = $true
+        foreach ($x in $g.Items) { if ($x.UI.Res -and $x.UI.Res -ne $sender) { $x.UI.Res.SelectedIndex = $sender.SelectedIndex } }
+        $g.Syncing = $false
+        foreach ($x in $g.Items) { & $g.Recheck $x; & $g.FillItem $x }
+        if ($g.Sel -ge 0) { & $g.Select $g.Sel }
+    }
+    foreach ($it in $script:gui.Items) {
+        $u = $it.UI
+        $u.Check.Add_CheckedChanged($rowCheck)
+        $u.Browse.Add_Click($rowBrowse)
+        $u.ErrorPick.Add_Click($rowBrowse)
+        $u.ErrorGet.Add_Click({ param($sender, $e) Start-Process $script:gui.Items[[int] $sender.Tag].Build.RepoUrl })
+        $u.All.Add_CheckedChanged($tabAll)
+        $u.List.Add_ItemCheck($tabCheck)
+        $u.List.Add_SelectedIndexChanged($tabSelect)
+        if ($u.Res) { $u.Res.Add_SelectedIndexChanged($resChange) }
+    }
 
     # Popups (22 Sep 2026, maintainer request "show a popup when patching is in progress and when it
     # succeeds and when it fails"): while the bytes and the interface set are written a small owned
     # "Patching in progress" box names the current step (the run is synchronous on the UI thread, so
     # the box is repainted by hand between the steps and the main window is disabled meanwhile), and
-    # the outcome - written and byte-identical, written with a warning, refused, failed - is one
-    # message box.  Every box goes through $script:gui.Notify so a headless test can replace it
-    # with a recorder; the button passes $interactive = $true, a test may pass $false for silence.
+    # the outcome of all executables is one message box.  Every box goes through $script:gui.Notify so a
+    # headless test can replace it with a recorder; the button passes $interactive = $true, a test may
+    # pass $false for silence.
     $script:gui.Notify = {
         param([string] $text, [string] $title, [string] $icon)
         [System.Windows.Forms.MessageBox]::Show($script:gui.Controls.Form, $text, $title, 'OK', $icon) | Out-Null
     }
     $script:gui.Busy = $null
+    $script:gui.StepPrefix = ''
     $script:gui.Progress = {
         param([string] $step)
         $c = $script:gui.Controls
+        $step = $script:gui.StepPrefix + $step
         $c.Log.ForeColor = 'Black'; $c.Log.Text = $step
         $b = $script:gui.Busy
         if ($b) {
@@ -2679,35 +3087,44 @@ function Show-PatcherWindow([string] $PreloadPath) {
             [System.Windows.Forms.Application]::DoEvents()
         }
     }
+
+    # Patches every ticked executable.  Returns one result per executable:
+    # @{ Item; R (Invoke-PatchRun's result or $null); Error; Shortcut; Kind = ok|warning|error; Line }.
     $script:gui.Apply = {
         param([bool] $interactive)
         $c = $script:gui.Controls
         $g = $script:gui
-        if (-not $g.Build) { return $null }
-        $chosen = @()
-        for ($i = 0; $i -lt $c.List.Items.Count; $i++) { if ($c.List.GetItemChecked($i)) { $chosen += $g.Patches[$i] } }
-        $outPath = $c.Out.Text.Trim()
+        $todo = @($g.Items | Where-Object { $_.Checked -and $_.Data })
         $refused = $null
-        if ($chosen.Count -eq 0) { $refused = 'No fix selected - tick at least one fix.' }
-        elseif (-not $outPath) { $refused = 'No output path - pick the original exe again.' }
-        elseif ([System.IO.Path]::GetFullPath($outPath) -eq [System.IO.Path]::GetFullPath($g.Path)) { $refused = 'The output must not be the original file - the original is never written over.' }
+        if ($todo.Count -eq 0) { $refused = 'No executable ticked - tick at least one (its original must be found).' }
+        foreach ($it in $todo) {
+            if ($refused) { break }
+            if (@(Get-GuiChosen $it).Count -eq 0) { $refused = "$($it.Build.ProductName): no fix selected - tick at least one fix, or untick the executable." }
+            elseif ([System.IO.Path]::GetFullPath($it.Out) -eq [System.IO.Path]::GetFullPath($it.Path)) { $refused = "$($it.Build.ProductName): the output must not be the original file - the original is never written over." }
+        }
         if ($refused) {
             $c.Log.ForeColor = 'Firebrick'; $c.Log.Text = $refused
             if ($interactive) { & $g.Notify $refused 'Nothing to do' 'Warning' }
             return $null
         }
-        if ((Test-Path $outPath) -and $interactive) {
-            $answer = [System.Windows.Forms.MessageBox]::Show($c.Form, "$outPath exists.`r`nReplace it?", 'Replace file?', 'YesNo', 'Question')
-            if ($answer -ne 'Yes') { return $null }
+        $problems = @()
+        foreach ($it in $todo) {
+            foreach ($pr in @(Get-DataProblems $it.Build @(Get-GuiChosen $it) (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build))) {
+                $problems += ('* {0}: {1}' -f $it.Build.ProductName, $pr)
+            }
         }
-        $problems = @(Get-DataProblems $g.Build $chosen (Split-Path -Parent ([System.IO.Path]::GetFullPath($outPath))) $g.Mode)
         if ($problems.Count -gt 0) {
             $c.Log.ForeColor = 'Firebrick'; $c.Log.Text = 'Nothing written: data files or dependent fixes are missing (see the message).'
-            & $g.Notify ((($problems | ForEach-Object { '* ' + $_ }) -join "`r`n`r`n") +
+            & $g.Notify (($problems -join "`r`n`r`n") +
                 "`r`n`r`nAn exe written without them fails at start-up or draws garbage, which would look like a bug of the fix. " +
-                "Write the exe into the game folder from the repository, or run the script from the command line with -IgnoreMissingData.") `
+                "Write the exes into the game folders from the repository, or run the script from the command line with -IgnoreMissingData.") `
                 'Prerequisites missing - nothing written' 'Warning'
             return $null
+        }
+        $existing = @($todo | Where-Object { Test-Path -LiteralPath $_.Out } | ForEach-Object { $_.Out })
+        if ($existing.Count -gt 0 -and $interactive) {
+            $answer = [System.Windows.Forms.MessageBox]::Show($c.Form, ("These files exist and will be replaced:`r`n`r`n" + ($existing -join "`r`n") + "`r`n`r`nReplace them?"), 'Replace files?', 'YesNo', 'Question')
+            if ($answer -ne 'Yes') { return $null }
         }
         # the "in progress" box: an owned, unclosable form with the current step and a marquee bar
         if ($interactive) {
@@ -2719,7 +3136,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
             $busy.Font = $c.Form.Font
             $busyLabel = New-Object System.Windows.Forms.Label
             $busyLabel.Location = '16,16'; $busyLabel.Size = '512,96'
-            $busyLabel.Text = "Patching in progress - please wait.`r`n`r`nApplying $($chosen.Count) fixes to $(Split-Path -Leaf $g.Path), writing $(Split-Path -Leaf $outPath)..."
+            $busyLabel.Text = "Patching in progress - please wait.`r`n`r`nPatching $($todo.Count) executable(s)..."
             $busyBar = New-Object System.Windows.Forms.ProgressBar
             $busyBar.Location = '16,120'; $busyBar.Size = '512,20'; $busyBar.Style = 'Marquee'; $busyBar.MarqueeAnimationSpeed = 30
             $busy.Controls.AddRange(@($busyLabel, $busyBar))
@@ -2728,67 +3145,161 @@ function Show-PatcherWindow([string] $PreloadPath) {
             $g.Busy = @{ Form = $busy; Label = $busyLabel }
             $busy.Refresh(); [System.Windows.Forms.Application]::DoEvents()
         }
+        $results = @()
         try {
-            $r = Invoke-PatchRun $g.Path $g.Build $chosen $outPath $g.Mode $g.Progress
-        } catch {
-            $c.Log.ForeColor = 'Firebrick'; $c.Log.Text = 'Patching failed - nothing written.'
-            & $g.Notify ("Patching failed:`r`n`r`n$($_.Exception.Message)`r`n`r`nNothing was written to $outPath.") 'Patching failed' 'Error'
-            return $null
+            $k = 0
+            foreach ($it in $todo) {
+                $k++
+                $g.StepPrefix = "[$k/$($todo.Count)] $($it.Build.ProductName): "
+                $mode = Get-GuiMode $it.Build
+                $res = @{ Item = $it; R = $null; Error = $null; Shortcut = $null; Kind = 'ok'; Line = '' }
+                try {
+                    $res.R = Invoke-PatchRun $it.Path $it.Build @(Get-GuiChosen $it) $it.Out $mode $g.Progress
+                } catch {
+                    $res.Error = $_.Exception.Message
+                }
+                $r = $res.R
+                $name = $it.Build.ProductName
+                $modeText = if ($mode) { " for $mode" } else { '' }
+                if ($res.Error) {
+                    $res.Kind = 'error'; $res.Line = "$name - FAILED, nothing written:`r`n    $($res.Error)"
+                } else {
+                    $notWritten = @($r.Generated | Where-Object { $_ -match 'NOT WRITTEN|NOT written' })
+                    if ($notWritten.Count -gt 0) {
+                        $res.Kind = 'error'
+                        $res.Line = "$name - the exe was written, but the data files it needs were NOT:`r`n    " + ($notWritten -join "`r`n    ") + "`r`n    The game would fail at start-up with it; fix the cause (a read-only or locked folder?) and patch again."
+                    } elseif ($r.Complete -and $r.Published) {
+                        $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, byte-identical to the exe published in the repository"
+                    } elseif ($r.Complete -and $r.Matches) {
+                        $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, byte-identical to the reference build for $mode"
+                    } elseif ($r.Complete) {
+                        $res.Kind = 'warning'
+                        $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, but the SHA-256 differs from the reference build (please report it)"
+                    } else {
+                        $res.Line = "$name - $($r.Applied.Count) of $(@(Get-BuildPatches $it.Build $mode).Count) fixes$modeText (" + (($r.Applied | ForEach-Object { $_.Id }) -join ', ') + ')'
+                    }
+                    $res.Line += "`r`n    $($it.Out)`r`n    $($r.Size) bytes, SHA-256 $($r.Sha256)"
+                    if ($r.Generated.Count -gt 0 -and $res.Kind -ne 'error') { $res.Line += "`r`n    " + ($r.Generated -join '; ') }
+                    # the desktop shortcut, unless the exe is unusable because its data files were not written
+                    if ($res.Kind -ne 'error' -and $c.Shortcut.Checked) {
+                        try {
+                            $res.Shortcut = New-GameShortcut $it.Out $it.Build
+                            $res.Line += "`r`n    desktop shortcut: $([System.IO.Path]::GetFileName($res.Shortcut))"
+                        } catch {
+                            $res.Line += "`r`n    the desktop shortcut could not be created: $($_.Exception.Message)"
+                            if ($res.Kind -eq 'ok') { $res.Kind = 'warning' }
+                        }
+                    }
+                }
+                $results += $res
+            }
         } finally {
+            $g.StepPrefix = ''
             if ($g.Busy) {
                 $g.Busy.Form.Close(); $g.Busy.Form.Dispose(); $g.Busy = $null
                 $c.Form.Enabled = $true; $c.Form.UseWaitCursor = $false
             }
         }
-        $ids = ($r.Applied | ForEach-Object { $_.Id }) -join ', '
-        $modeText = if ($r.Mode) { " for $($r.Mode)" } else { '' }
-        if ($r.Generated.Count -gt 0) { $modeText += ' (' + ($r.Generated -join '; ') + ')' }
-        $notWritten = @($r.Generated | Where-Object { $_ -match 'NOT WRITTEN|NOT written' })
-        $where = "Written: $outPath"
-        if ($notWritten.Count -gt 0) {
-            $c.Log.ForeColor = 'Firebrick'
-            $c.Log.Text = "The exe was written, but not its data files - see the message.`r`n$($notWritten -join '; ')"
-            $title = 'Patching failed - data files not written'; $icon = 'Error'
-            $text = "$where`r`n`r`nbut the data files it needs were NOT written:`r`n`r`n" + (($notWritten | ForEach-Object { '* ' + $_ }) -join "`r`n") +
-                "`r`n`r`nThe game would fail at start-up with this exe. Fix the cause (a read-only or locked game folder?) and patch again."
-        } elseif ($r.Complete -and $r.Published) {
-            $c.Log.ForeColor = 'DarkGreen'
-            $c.Log.Text = "Written: $($r.Size) bytes, all $($r.Applied.Count) fixes$modeText.`r`nSHA-256 $($r.Sha256) = byte-identical to the exe published in the repository."
-            $title = 'Patching succeeded'; $icon = 'Information'
-            $text = "$where`r`n`r`n$($r.Size) bytes, all $($r.Applied.Count) fixes$modeText.`r`n`r`nSHA-256 $($r.Sha256)`r`n= byte-identical to the exe published in the repository.`r`n`r`nStart the game with this file."
-        } elseif ($r.Complete -and $r.Matches) {
-            $c.Log.ForeColor = 'DarkGreen'
-            $c.Log.Text = "Written: $($r.Size) bytes, all $($r.Applied.Count) fixes$modeText.`r`nSHA-256 $($r.Sha256) = byte-identical to the reference build for $($r.Mode)."
-            $title = 'Patching succeeded'; $icon = 'Information'
-            $text = "$where`r`n`r`n$($r.Size) bytes, all $($r.Applied.Count) fixes$modeText.`r`n`r`nSHA-256 $($r.Sha256)`r`n= byte-identical to the reference build for $($r.Mode).`r`n`r`nStart the game with this file."
-        } elseif ($r.Complete) {
-            $c.Log.ForeColor = 'Firebrick'
-            $c.Log.Text = "Written, but the SHA-256 differs from the reference build$modeText - please report this.`r`n$($r.Sha256)"
-            $title = 'Patched, but the result differs from the reference build'; $icon = 'Warning'
-            $text = "$where`r`n`r`n$($r.Size) bytes, all $($r.Applied.Count) fixes$modeText, but the SHA-256 differs from the reference build:`r`n`r`n$($r.Sha256)`r`n`r`nThe file may still work - please report this together with the name and SHA-256 of your original."
-        } else {
-            $c.Log.ForeColor = 'Black'
-            $c.Log.Text = "Written: $($r.Size) bytes with $($r.Applied.Count) of $($g.Patches.Count) fixes$modeText ($ids).`r`nSHA-256 $($r.Sha256)"
-            $title = 'Patching succeeded'; $icon = 'Information'
-            $text = "$where`r`n`r`n$($r.Size) bytes with $($r.Applied.Count) of $($g.Patches.Count) fixes${modeText}:`r`n$ids`r`n`r`nSHA-256 $($r.Sha256)`r`n`r`nStart the game with this file."
-        }
+        $errors = @($results | Where-Object { $_.Kind -eq 'error' }).Count
+        $warnings = @($results | Where-Object { $_.Kind -eq 'warning' }).Count
+        if ($errors -eq $results.Count) { $title = 'Patching failed'; $icon = 'Error'; $c.Log.ForeColor = 'Firebrick' }
+        elseif ($errors -gt 0) { $title = 'Patching finished with errors'; $icon = 'Error'; $c.Log.ForeColor = 'Firebrick' }
+        elseif ($warnings -gt 0) { $title = 'Patched, with warnings'; $icon = 'Warning'; $c.Log.ForeColor = 'DarkOrange' }
+        else { $title = 'Patching succeeded'; $icon = 'Information'; $c.Log.ForeColor = 'DarkGreen' }
+        $ok = $results.Count - $errors
+        $c.Log.Text = "$ok of $($results.Count) executable(s) patched" + $(if ($errors) { ", $errors failed" } else { '' }) + ' - see the message for details.'
+        $text = ($results | ForEach-Object { $_.Line }) -join "`r`n`r`n"
+        if ($ok -gt 0) { $text += "`r`n`r`nStart the games with the desktop shortcuts or the files above." }
         if ($interactive) { & $g.Notify $text $title $icon }
-        return $r
+        return $results
     }
-    $c.Apply.Add_Click({ & $script:gui.Apply $true | Out-Null })
+
+    # Makes executable $index the current one: the aliases All / List / Info / Out / Status / Res point at its
+    # page's controls, and the description shows its highlighted fix.
+    $script:gui.Select = {
+        param([int] $index)
+        $c = $script:gui.Controls
+        $g = $script:gui
+        $g.Sel = $index
+        if ($index -lt 0) { return }
+        $it = $g.Items[$index]
+        $u = $it.UI
+        $c.All = $u.All; $c.List = $u.List; $c.Info = $u.Info; $c.Out = $u.Out; $c.Status = $u.Status; $c.Res = $u.Res
+        $g.Patches = $it.Patches
+        $n = 0; foreach ($k in $it.Unavailable.Keys) { $n++ }
+        if ($n -gt 0) { $c.Log.ForeColor = 'DarkOrange'; $c.Log.Text = "$($it.Build.ProductName): $n fix(es) cannot be applied into its folder - resources not found." }
+        elseif ((Get-GuiMode $it.Build) -eq '640x480' -and @($it.Build.Modes).Count -gt 0) { $c.Log.ForeColor = 'Black'; $c.Log.Text = '640x480 = the stock screen size: the display fixes (resolution, INTRF_HD paths, clock) are not offered.' }
+        else { $c.Log.Text = '' }
+        if ($u.List.SelectedIndex -lt 0 -and $u.List.Items.Count -gt 0) { $u.List.SelectedIndex = 0 }
+        else { & $g.ShowFix $it }
+    }
+
+    # Shows wizard step $step: 0 welcome, 1..n the executables, n+1 finished.
+    $script:gui.GoTo = {
+        param([int] $step)
+        $c = $script:gui.Controls
+        $g = $script:gui
+        $n = $g.Items.Count
+        $g.Step = $step
+        $c.Welcome.Visible = ($step -eq 0)
+        for ($i = 0; $i -lt $n; $i++) { $g.Items[$i].UI.Page.Visible = ($step -eq $i + 1) }
+        $c.Done.Visible = ($step -eq $n + 1)
+        if ($step -eq 0) {
+            $c.Title.Text = 'Welcome to the Dark Colony patcher'
+            $c.Sub.Text = 'Builds Dark Colony, Dark Colony Ultimate and the map editor 1.2 from the untouched originals in this folder.'
+        } elseif ($step -le $n) {
+            $b = $g.Items[$step - 1].Build
+            $c.Title.Text = "Step $step of ${n}: $($b.ProductName)"
+            $c.Sub.Text = "$($b.OriginalName) -> $($b.OutputName).  All fixes are selected; untick what you do not want, or untick the executable to leave it alone."
+            & $g.Select ($step - 1)
+        } else {
+            $r = @($g.Results)
+            $errors = @($r | Where-Object { $_.Kind -eq 'error' }).Count
+            $c.Title.Text = if ($errors -eq 0) { 'Finished' } elseif ($errors -lt $r.Count) { 'Finished, with errors' } else { 'Patching failed' }
+            $c.Sub.Text = '{0} of {1} executable(s) patched.' -f ($r.Count - $errors), $r.Count
+            $c.DoneText.Text = ($r | ForEach-Object { $_.Line }) -join "`r`n`r`n"
+            $c.DoneNote.Text = if ($errors -lt $r.Count) { 'Start the games with the desktop shortcuts or the files above.  Press Close to leave.' } else { 'Nothing usable was written - see above.  Press Close to leave.' }
+            $c.Log.Text = ''
+        }
+        $c.Back.Enabled = ($step -gt 0 -and $step -le $n)
+        $c.Next.Text = if ($step -eq $n) { 'Patch' } elseif ($step -eq $n + 1) { 'Close' } else { 'Next >' }
+        $c.Cancel.Enabled = ($step -le $n)
+    }
+    $c.Next.Add_Click({
+        $g = $script:gui
+        $n = $g.Items.Count
+        if ($g.Step -lt $n) { & $g.GoTo ($g.Step + 1); return }
+        if ($g.Step -eq $n) {
+            $r = & $g.Apply $true
+            if ($r) { $g.Results = $r; & $g.GoTo ($n + 1) }
+            return
+        }
+        $g.Controls.Form.Close()
+    })
+    $c.Back.Add_Click({ $g = $script:gui; if ($g.Step -gt 0) { & $g.GoTo ($g.Step - 1) } })
+    $c.Cancel.Add_Click({ $script:gui.Controls.Form.Close() })
 
     $c.Verify.Add_Click({
         $c = $script:gui.Controls
+        $g = $script:gui
         $dlg = New-Object System.Windows.Forms.OpenFileDialog
         $dlg.Title = 'Inspect an executable: which fixes does it carry?'
         $dlg.Filter = 'Dark Colony executables (*.exe)|*.exe|All files (*.*)|*.*'
         if ($dlg.ShowDialog($c.Form) -eq 'OK') {
-            $c.Info.Text = (Get-VerifyReport $dlg.FileName) -join "`r`n"
-            $c.List.ClearSelected()
+            $report = (Get-VerifyReport $dlg.FileName) -join "`r`n"
+            if ($g.Step -ge 1 -and $g.Step -le $g.Items.Count) { $c.Info.Text = $report; $c.List.ClearSelected() }
+            else { & $g.Notify $report 'Inspect an exe' 'Information' }
         }
     })
 
-    if ($PreloadPath) { & $loadOriginal ((Resolve-Path $PreloadPath).Path) }
+    # the three originals beside this script, all ticked; then the exe given with -Original, if any
+    foreach ($it in $script:gui.Items) {
+        $p = if ($script:gui.Here) { Join-Path $script:gui.Here $it.Build.OriginalPath } else { $null }
+        if ($p -and (Test-Path -LiteralPath $p)) { & $loadOriginal $p $false ([Array]::IndexOf($script:gui.Items, $it)) }
+        else { & $script:gui.SetError $it $p $null 'missing'; & $script:gui.ShowRow $it; & $script:gui.FillItem $it }
+    }
+    if ($PreloadPath) { & $loadOriginal ((Resolve-Path $PreloadPath).Path) $false }
+    & $script:gui.GoTo 0
     return $form
 }
 
@@ -2799,90 +3310,115 @@ if ($PSCmdlet.ParameterSetName -eq 'List') { Write-PatchList -WithEdits:$Detail;
 
 if ($PSCmdlet.ParameterSetName -eq 'Verify') { Get-VerifyReport $Verify | ForEach-Object { Write-Host $_ }; return }
 
-# No -All / -Patches: open the window (double-click, "Run with PowerShell", or just `.\Apply-DarkColonyPatches.ps1`)
+# No -All / -Patches: open the window (INSTALL.CMD, "Run with PowerShell", or just `.\Apply-DarkColonyPatches.ps1`)
 if (-not $All -and -not $Patches) {
     $form = Show-PatcherWindow $Original
     [void] $form.ShowDialog()
     return
 }
 
-# --- command-line apply
-if (-not $Original) { throw 'give -Original <exe> together with -All or -Patches' }
-$origPath = (Resolve-Path $Original).Path
-$data = [System.IO.File]::ReadAllBytes($origPath)
-$sha = Get-Sha256Hex $data
-Write-Host ("input : {0}" -f $origPath)
-Write-Host ("        {0} bytes, SHA-256 {1}" -f $data.Length, $sha)
+# --- command-line apply: one original (-Original), or - with -All and no -Original - all three originals
+# beside this script, each written under its own name (25 Sep 2026: "installer patches all in one shot")
+function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
+    $origPath = (Resolve-Path $OriginalFile).Path
+    $data = [System.IO.File]::ReadAllBytes($origPath)
+    $sha = Get-Sha256Hex $data
+    Write-Host ("input : {0}" -f $origPath)
+    Write-Host ("        {0} bytes, SHA-256 {1}" -f $data.Length, $sha)
 
-$build = Find-BuildBySha $sha
-if (-not $build) {
-    $build = Find-BuildByContent $data
-    if (-not $build) { throw "This is not one of the three known original executables (size / layout mismatch)." }
-    if (-not $Force) {
-        throw ("The SHA-256 is not that of the untouched {0} original. Start from {1} (in the repository), " +
-               "or pass -Force to rely on the per-byte checks alone.") -f $build.Id, $build.OriginalName
+    $build = Find-BuildBySha $sha
+    if (-not $build) {
+        $build = Find-BuildByContent $data
+        if (-not $build) { throw "This is not one of the three known original executables (size / layout mismatch)." }
+        if (-not $Force) {
+            throw ("The SHA-256 is not that of the untouched {0} original. Start from {1} (in the repository), " +
+                   "or pass -Force to rely on the per-byte checks alone.") -f $build.Id, $build.OriginalName
+        }
+        Write-Warning "SHA-256 does not match the untouched original; continuing because -Force was given (every edit is still byte-checked)."
     }
-    Write-Warning "SHA-256 does not match the untouched original; continuing because -Force was given (every edit is still byte-checked)."
-}
-Write-Host ("build : {0}" -f $build.Title)
-$mode = Resolve-Mode $build $Resolution
-if ($mode) { Write-Host ("screen: {0}" -f (Format-ModeLabel $mode (Get-MonitorSize))) }
+    Write-Host ("build : {0}" -f $build.Title)
+    $mode = Resolve-Mode $build $Resolution
+    if ($mode) { Write-Host ("screen: {0}" -f (Format-ModeLabel $mode (Get-MonitorSize))) }
 
-$available = @(Get-BuildPatches $build $mode)
-if (-not $Output) { $Output = Join-Path (Split-Path $origPath) $build.OutputName }
-$gameDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($Output))
-$unavailable = Get-UnavailableFixes $build $gameDir $mode
-if ($All) {
-    # every fix whose resources are in the target folder; the others are skipped and reported
-    $chosen = @()
-    foreach ($p in $available) {
-        if ($unavailable.ContainsKey($p.Id) -and -not $IgnoreMissingData) {
-            Write-Host ("skipping [{0,-10}] {1,-45} RESOURCES NOT FOUND: {2}" -f $p.Id, $p.Name, $unavailable[$p.Id]) -ForegroundColor DarkYellow
-        } else {
+    $available = @(Get-BuildPatches $build $mode)
+    if (-not $OutputFile) { $OutputFile = Join-Path (Split-Path $origPath) $build.OutputName }
+    $OutputFile = Get-AbsolutePath $OutputFile
+    $gameDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputFile))
+    $unavailable = Get-UnavailableFixes $build $gameDir $mode
+    if ($All) {
+        # every fix whose resources are in the target folder; the others are skipped and reported
+        $chosen = @()
+        foreach ($p in $available) {
+            if ($unavailable.ContainsKey($p.Id) -and -not $IgnoreMissingData) {
+                Write-Host ("skipping [{0,-10}] {1,-45} RESOURCES NOT FOUND: {2}" -f $p.Id, $p.Name, $unavailable[$p.Id]) -ForegroundColor DarkYellow
+            } else {
+                $chosen += $p
+            }
+        }
+        if ($chosen.Count -eq 0) { throw 'nothing to apply: no fix has its resources in the target folder' }
+    } else {
+        # accept -Patches a,b,c from a PowerShell prompt (array) as well as "a,b,c" / "a b c" from cmd / -File (one string)
+        $chosen = @()
+        foreach ($id in @($Patches | ForEach-Object { $_ -split '[\s,]+' } | Where-Object { $_ })) {
+            $p = $available | Where-Object { $_.Id -eq $id }
+            if (-not $p) { throw "unknown patch id '$id' for $($build.Id); valid: $(($available | ForEach-Object { $_.Id }) -join ', ')" }
             $chosen += $p
         }
     }
-    if ($chosen.Count -eq 0) { throw 'nothing to apply: no fix has its resources in the target folder' }
-} else {
-    # accept -Patches a,b,c from a PowerShell prompt (array) as well as "a,b,c" / "a b c" from cmd / -File (one string)
-    $chosen = @()
-    foreach ($id in @($Patches | ForEach-Object { $_ -split '[\s,]+' } | Where-Object { $_ })) {
-        $p = $available | Where-Object { $_.Id -eq $id }
-        if (-not $p) { throw "unknown patch id '$id' for $($build.Id); valid: $(($available | ForEach-Object { $_.Id }) -join ', ')" }
-        $chosen += $p
-    }
-}
-if ((Test-Path $Output) -and -not $Overwrite) { throw "output '$Output' exists; pass -Overwrite to replace it" }
-if ((Test-Path $Output) -and ((Resolve-Path $Output).Path -eq $origPath)) { throw 'refusing to overwrite the original' }
+    if ((Test-Path $OutputFile) -and -not $Overwrite) { throw "output '$OutputFile' exists; pass -Overwrite to replace it" }
+    if ((Test-Path $OutputFile) -and ((Resolve-Path $OutputFile).Path -eq $origPath)) { throw 'refusing to overwrite the original' }
 
-$problems = @(Get-DataProblems $build $chosen $gameDir $mode)
-if ($problems.Count -gt 0) {
-    foreach ($pr in $problems) { Write-Warning $pr }
-    if (-not $IgnoreMissingData) {
-        throw ("nothing written: the chosen fixes need data files or other fixes that are not there (see the warnings above). " +
-               "An exe written anyway fails at start-up or draws garbage. Write it into the game folder from the repository, " +
-               "or pass -IgnoreMissingData if you know what you are doing.")
+    $problems = @(Get-DataProblems $build $chosen $gameDir $mode)
+    if ($problems.Count -gt 0) {
+        foreach ($pr in $problems) { Write-Warning $pr }
+        if (-not $IgnoreMissingData) {
+            throw ("nothing written: the chosen fixes need data files or other fixes that are not there (see the warnings above). " +
+                   "An exe written anyway fails at start-up or draws garbage. Write it into the game folder from the repository, " +
+                   "or pass -IgnoreMissingData if you know what you are doing.")
+        }
+        Write-Warning 'continuing because -IgnoreMissingData was given.'
     }
-    Write-Warning 'continuing because -IgnoreMissingData was given.'
+    Write-Host ''
+    foreach ($p in @($available | Where-Object { $p = $_; ($chosen | Where-Object { $_.Id -eq $p.Id }) })) {
+        Write-Host ("applying [{0,-10}] {1,-52} {2,3} edits" -f $p.Id, $p.Name, (Get-EditCount $p))
+    }
+    $r = Invoke-PatchRun $origPath $build $chosen $OutputFile $mode
+    Write-Host ''
+    Write-Host ("output: {0}" -f $OutputFile)
+    Write-Host ("        {0} bytes, SHA-256 {1}" -f $r.Size, $r.Sha256)
+    foreach ($gl in @($r.Generated)) { Write-Host ("        " + $gl) }
+    if ($r.Complete) {
+        if ($r.Published) { Write-Host '        byte-identical to the executable published in the repository.' -ForegroundColor Green }
+        elseif ($r.Matches) { Write-Host ("        byte-identical to the reference build for {0} (every fix of that resolution)." -f $mode) -ForegroundColor Green }
+        else { Write-Warning 'all patches applied but the SHA-256 differs from the reference build - report this.' }
+    } else {
+        Write-Host ("        {0} of {1} patches applied ({2}); a partial build has no published reference hash." -f $r.Applied.Count, $available.Count, (($r.Applied | ForEach-Object { $_.Id }) -join ', '))
+        $skipped = @($available | Where-Object { $p = $_; -not ($r.Applied | Where-Object { $_.Id -eq $p.Id }) -and $unavailable.ContainsKey($p.Id) } | ForEach-Object { $_.Id })
+        if ($skipped.Count -gt 0) { Write-Host ("        not applied, resources not found: {0}" -f ($skipped -join ', ')) -ForegroundColor DarkYellow }
+    }
+    if ($DesktopShortcut) {
+        if (@($r.Generated | Where-Object { $_ -match 'NOT WRITTEN|NOT written' }).Count -gt 0) {
+            Write-Warning 'no desktop shortcut: the data files this exe needs were not written (see above).'
+        } else {
+            Write-Host ("shortcut: {0}" -f (New-GameShortcut $OutputFile $build))
+        }
+    }
+}
+
+if ($Original) { Invoke-CliBuild $Original $Output; return }
+if ($Patches) { throw 'give -Original <exe> together with -Patches (the fix ids differ per executable)' }
+if ($Output) { throw '-Output needs -Original (with -All alone each executable is written under its own name beside its original)' }
+$failed = 0; $done = 0
+foreach ($b in $Builds) {
+    $p = Join-Path $PSScriptRoot $b.OriginalPath
+    Write-Host ''
+    Write-Host ('=== {0}  ({1} -> {2})' -f $b.ProductName, $b.OriginalPath, $b.OutputName) -ForegroundColor Cyan
+    if (-not (Test-Path -LiteralPath $p)) { Write-Warning ('{0} not found at {1} - skipped' -f $b.OriginalName, $p); continue }
+    try { Invoke-CliBuild $p $null; $done++ } catch { Write-Warning ('{0}: {1}' -f $b.ProductName, $_.Exception.Message); $failed++ }
 }
 Write-Host ''
-foreach ($p in @($available | Where-Object { $p = $_; ($chosen | Where-Object { $_.Id -eq $p.Id }) })) {
-    Write-Host ("applying [{0,-10}] {1,-52} {2,3} edits" -f $p.Id, $p.Name, (Get-EditCount $p))
-}
-$r = Invoke-PatchRun $origPath $build $chosen $Output $mode
-Write-Host ''
-Write-Host ("output: {0}" -f $Output)
-Write-Host ("        {0} bytes, SHA-256 {1}" -f $r.Size, $r.Sha256)
-foreach ($gl in @($r.Generated)) { Write-Host ("        " + $gl) }
-if ($r.Complete) {
-    if ($r.Published) { Write-Host '        byte-identical to the executable published in the repository.' -ForegroundColor Green }
-    elseif ($r.Matches) { Write-Host ("        byte-identical to the reference build for {0} (every fix of that resolution)." -f $mode) -ForegroundColor Green }
-    else { Write-Warning 'all patches applied but the SHA-256 differs from the reference build - report this.' }
-} else {
-    Write-Host ("        {0} of {1} patches applied ({2}); a partial build has no published reference hash." -f $r.Applied.Count, $available.Count, (($r.Applied | ForEach-Object { $_.Id }) -join ', '))
-    $skipped = @($available | Where-Object { $p = $_; -not ($r.Applied | Where-Object { $_.Id -eq $p.Id }) -and $unavailable.ContainsKey($p.Id) } | ForEach-Object { $_.Id })
-    if ($skipped.Count -gt 0) { Write-Host ("        not applied, resources not found: {0}" -f ($skipped -join ', ')) -ForegroundColor DarkYellow }
-}
+Write-Host ('{0} executable(s) patched, {1} failed.' -f $done, $failed)
+if ($failed -gt 0 -or $done -eq 0) { exit 1 }
 ''')
 
 open(OUT, 'w', encoding='utf-8', newline='\r\n').write('\n'.join(out))
