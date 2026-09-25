@@ -3336,6 +3336,21 @@ on (14 s sampled, `error.log` empty); both builds re-verified byte-exact through
 patcher (published 1024x768 exes Classic `71b570fa…`, CW `d4ca8555…`; old published + tool =
 the same bytes). Not fixed and not affected: the Watcom runtime's own `MAX_PATH` (260) limit.
 
+**Fifth edit, 25 Sep 2026 (after the Linux/Wine report of §10.42): the sound table's name loses its backslash.**
+`sound\sound2.dat` (DGROUP Classic `0x485BA0` = file `0x833A0`, CW `0x485BA8` = file `0x835A8`; opened by the
+sound module's table loader `0x4309C8` through the prefix helper at start-up) is the only path string in
+either exe written with a backslash separator - every other file name uses `/`. The byte at +5 becomes `/`
+(`5c` -> `2f`, one data byte, no code, no `.reloc`; Windows treats both separators alike). `patch_longpath.py`
+locates the string in DGROUP in either form, identifies the build by the AUTO section's raw size so that the
+published exes with the appended `.dcicon` section (742912 / 743424 bytes) are accepted, and `apply` upgrades
+an exe that carries the four code edits without the byte (the 22-25 Sep 2026 builds) by that one edit. The
+generator's `blocks_longpath` takes 5 edits (lengths 20/14/22/4/1). Published 1024x768 builds since then:
+Classic **`89744c45…`** (was `e9cc0561…`), Ultimate **`2da5c86a…`** (was `d1a9b518…`) - the tool-upgraded
+exes and the regenerated patcher's `-All -Resolution 1024x768` rebuild from the originals are byte-identical
+under PowerShell 5.1 and 7 (scratch copy of the repository, the map editor build unchanged `c72dd205…`).
+Not run in the game (a data byte in a name that Windows resolves either way); not tested under Wine (no Linux
+machine here) - it removes the one difference, whether it was the cause on the player's machine is open.
+
 #### 10.30 The patcher window's popups: in progress, succeeded, failed **(22 Sep 2026, maintainer request "in patcher gui - show a popup when patching is in progress and when it succeeds and when it fails"; `gen_apply_script.py` → `Apply-DarkColonyPatches.ps1`, window only, the command line is unchanged)**
 
 Until now *Apply selected fixes* only changed the two-line log label at the bottom of the window, and
@@ -4272,6 +4287,40 @@ Classic client's for the relay's checksums (§4.2 of the merge document), 10 mor
 **Done 25 Sep 2026** (`tramp_dc_net` at `0x47F3B0`, together with a data fix for the Gray
 commander's deploy animation - see §10.39).
 
+**Which balance tables the DARK COLONY mode plays with (25 Sep 2026, maintainer question
+"investigate if 'dark colony' missions in ultimate version use calibration data for that set of
+missions?"; investigation only, nothing changed).** Classic's own. The six tables
+`gamestat/gamestat.txt`, `weapstat.txt`, `boomstat.txt`, `mbullet.txt`, `unitid.txt`, `depend.txt`
+(DGROUP strings `0x4867D0`, `0x486680`, `0x48662C`, `0x486564`, `0x4863F4`, `0x486344`) are read
+by six loaders (`0x43BBE0`, `0x43B74C`, `0x43B484`, `0x43B1B0`, `0x438778`, `0x437A20`) that
+`load_tables` `0x43C4AC` calls in a row (`eax` = the table object `gs+0x7D38`). Its only caller is
+the game-state initialiser `0x41BB50` (call at `0x41BBFE`), which runs at every battle start (from
+the battle function `0x40122C`, entered from all eight game-start sites of the menus) and on every
+save load (`0x40DD0E`, right after the save-magic `0x21340000` check). The global arrays
+(`object_types` `0x50FCF8` and the rest) are rewritten each time; nothing survives from the previous
+mode. Every loader opens through `0x406474` = the prefix helper `0x4063E4` with the required flag:
+`<prefix>` + name first, the bare name in the game root second. DARK COLONY, LOAD DC GAME and
+ACADEMY put `dc/` into the slot; the `dc/` overlay holds no `gamestat/` (only `intrf_hd/bintroe`,
+`intrf_hd/lopte`, `intrface/credits.txt`), so all six fall through to root `GAMESTAT/` = the
+Classic set (106 types), the very files `Dark Colony.exe` reads (its helper has no prefix). The
+mission files fall through the same way (`exp/scenario` holds only `council` and `aerogen`). The
+COUNCIL WARS mode would give the same numbers for the shared units anyway: `exp/gamestat/gamestat.txt`
+is root plus the 12 appended types 106-117 (only the count line differs otherwise), and the expansion
+ships no weapstat, boomstat, mbullet, unitid or depend of its own; `exp/gamestat/gxmestat.txt` (a
+106-type copy) is dead - no string in the exe names it. The OZI mode's `ozi_ns/gamestat/` is the only
+re-balanced set (against root: 85 changed lines in gamestat, 11 in weapstat, 18 in boomstat, 10 in
+unitid, 27 in mbullet) and is reached only under `ozi_ns/`; the DC buttons reset the prefix before
+every game, so it never bleeds into a Dark Colony mission. Saves agree with this: a save writes the
+type count `0x518B34` plus 16 bytes per type (`0x43C4E4`, fields `+0x30`/`+0x38` of each
+`object_types` row), the load `0x43C558` returns -1 on a count mismatch, so a 106-type DC save loads
+only after LOAD DC GAME has set `dc/`. **Not per mode** - loaded once at start-up under `exp/` and
+therefore shared by every mode: the 200-entry sound table `exp/sound/sound2.dat` (12 entries name
+other files than root `SOUND/SOUND2.DAT` - ambience slots 19, 20, 23, 25, 26, 57-60, 180, 181 and
+slot 169: whale→cow, click→mosq, dchirp2→birds, dchirp3→dog, daychirp→dog2, birdcall→r2bird,
+bug→frog, chiggers→frogs, nightbug→cricket, rnatwea→cobra, owl→wolf, monk→seagull; audio only, the
+rest of the table is identical apart from the `.\` path prefix), the animation list `exp/animozi.dat`
+(simulation-identical to Classic since §10.39) and the sprite banks.
+
 
 #### 10.37 The Jupiter mod 0.3 as a fifth menu mode: built, confirmed in game, and DROPPED **(23-24 Sep 2026, maintainer instruction "mod specific files must go under 'jupiter' folder next to 'exp' folder of 'Council wars' and must be added to main menu as 'JUPITER MISSIONS' and 'LOAD JUP GAME' as last in the left column ...", then, once it was clear that the mod has no missions of its own - "jupiter missions are the same as DARK COLONY missions. is that right?" - "drop it but save findings in documentation". Nothing of it is in the exes, the data, the tools or the patcher; this section is the record of what was learnt.)**
 
@@ -4674,6 +4723,87 @@ SPEED 100 → 110 %, SOUND 5 → 6). Main menu: COUNCIL WARS → `src 1`, OZI MI
 which re-seeds and re-opens the first track of the then-current source, silently, as before).
 `error.log` empty throughout. Not run: the 640x480 build, the end-of-track transitions, the volume
 slider on the new module (code unchanged), a save/load round trip.
+
+#### 10.42 A Linux/Wine player's report: `safefunc.c` line 290 on `sound\sound2.dat`, silent music, a `ddraw.dll` for 32:9 **(25 Sep 2026, player report forwarded by the maintainer, "Investigate this. Linux + wine = several errors"; investigation, then one data byte per exe as the fifth edit of `longpath`, §10.29)**
+
+The report (Wine + gamescope): a box "0, file safefunc.c, line 290" when running at 32:9, which
+went away after "throwing ddraw.dll into game folder"; no music; `error.log` (the player wrote
+"Error.log") holding two lines:
+
+```
+FILE Error opening file sound\sound2.dat with error num 1
+assert failure, file safefunc.c line 290 (0)
+```
+
+**1. The two lines = a required start-up file could not be opened, before the display existed.**
+They come from safefunc.c's generic open helper (CW `0x4061BC`, body `0x4062C1..0x406366`; Classic
+has the same code at its own offsets - safefunc.c is not +0x60, see §10.19): the open failed, the
+file is *required* (`bl`), and the display object `0x488E20` is still NULL (or `0x488E1C` is set), so
+instead of the CD-prompt slot (`+0x4C`, since §10.19 edit 9 the FILE NOT FOUND box) it runs
+`fprintf(error.log, "FILE Error opening file %s with error num %d\n", name, errno)` at `0x406301`
+and `assert(0)` at `0x406323` (line `0x122` = 290) - the assert box the player saw. `error num` is
+the Watcom C runtime's `errno`, whose **`ENOENT` is 1** (Watcom numbers its errno list from `EZERO`
+0; `fopen` -> `CreateFileA`, `ERROR_FILE_NOT_FOUND`/`ERROR_PATH_NOT_FOUND` -> 1). **Reproduced on
+Windows 25 Sep 2026:** a scratch copy of the game folder (`subst W:`) with both `SOUND\SOUND2.DAT`
+and `exp\sound\sound2.dat` renamed away writes exactly these two lines and sits behind the
+full-screen surface with a `#32770` message box until killed. The file is opened by the sound
+module's table loader `0x4309C8` (CW; `mov eax, 0x485BA8 "sound\sound2.dat"`, mode `"rt"`) through the
+prefix helper `0x406474`: `exp/sound\sound2.dat` optional, then `sound\sound2.dat` required. The sound
+module is initialised from display slot `+0xFC` (`0x42E814`) **inside the display constructor**
+(`0x42C654` -> window -> the created-callback `0x42E6C8` -> `0x405264` game init -> ... -> sound
+init), and `set_display` `0x405E00` stores the object only when the constructor returns - which is
+why any missing start-up file gives the assert form, not the FILE NOT FOUND box.
+
+**What that run had already loaded:** `error.log` itself (mode `"w"` - the file is truncated at every
+start, so the quoted lines are the LAST run before the player looked), `exp/animozi.dat`, and the
+~180 banks of that list as `animate/<x>.fin` + `sprites/<x>.spr` - only 16 FIN / 13 SPR of them
+live in `exp/`, the rest come from the root `ANIMATE/` and `SPRITES/`, uppercase on disk, asked
+for in lowercase with forward slashes. So the working directory WAS the game folder and the file
+lookups WERE case-insensitive; the only failure is the `sound2.dat` pair, and `sound\sound2.dat`
+(Classic DGROUP `0x485BA0` = file `0x833A0`, CW `0x485BA8` = file `0x835A8`) is **the only path string
+in either exe written with a backslash separator** (DGROUP scanned for `x\y` patterns; every other
+path uses `/`; the `%c:\dc\` CD path is zeroed by `nocd`). Under a stock Wine a backslash in a
+relative path is an ordinary separator and both files are in every copy of the repository, so
+the cause on the player's machine is **undetermined** from the log: either the two files were
+absent in that run (partial copy / copy in progress) or the file layer mishandled the backslash.
+The reported cure - a `ddraw.dll` - has no mechanism connecting it: DirectDraw init sits between
+the data load and the sound init but touches no path. Decisive tests for the player, in the game
+folder: `ls -la SOUND/SOUND2.DAT exp/sound/sound2.dat`, and a fresh failing run with
+`WINEDEBUG=+file wine "Dark Colony Ultimate.exe" 2>&1 | grep -i sound2` (ntdll prints the Unix
+path it resolved for the name and the status). Applied the same day as the fifth edit of `longpath` (maintainer: "apply the backslash fix to both exes
+and update patcher"): the one `\` is now `/` (file `0x833A5` Classic / `0x835AD` CW, one data byte, harmless
+on Windows; §10.29, published builds `89744c45…` / `2da5c86a…`). Side note: the repository tracks
+`DC - Council wars/ERROR.LOG`; on Linux Wine writes the game's `error.log` into it by the
+case-insensitive match, which is what the player found.
+
+**2. Music under Wine.** The `music` fix (§10.31/§10.41) plays MP3 through MCI `mpegvideo` =
+`mciqtz32.dll` = DirectShow. Wine's `dlls/mciqtz32/mciqtz.c` (read 25 Sep 2026) covers everything
+the module sends: `MCI_OPEN` needs `MCI_OPEN_ELEMENT` (the module sends `0x2202` = ELEMENT | TYPE |
+WAIT), `MCI_PLAY` is asynchronous (flags 0), `MCI_STATUS` with `MCI_STATUS_MODE` answers
+`MCI_MODE_STOP` (`0x20D`, the module's next-track trigger) after `EC_COMPLETE` because the notify
+thread stops the graph, `MCI_SETAUDIO` with `MCI_DGV_SETAUDIO_ITEM | MCI_DGV_SETAUDIO_VALUE` /
+`MCI_DGV_SETAUDIO_VOLUME` takes 0..1000 (the module sends level x 100, level 0..10). The one step
+that fails without extra software is `IGraphBuilder::RenderFile` -> `MCIERR_INTERNAL`: Wine's
+quartz decodes through winegstreamer, so the prefix needs a GStreamer MP3 decoder
+(`mpegaudioparse` + `mpg123audiodec` or `avdec_mp3`; 32-bit plugins for a 32-bit prefix unless the
+Wine build uses the new WoW64 mode - Debian/Ubuntu `gstreamer1.0-plugins-good:i386`
+`gstreamer1.0-libav:i386`, Arch `lib32-gst-plugins-good lib32-gst-libav`; Proton bundles its
+own). A failed open at battle start sets the game's "no CD audio" flag (`0x489748`, §10.31) and
+the module is never called again that session - silence for good, no retry. Diagnostic:
+`WINEDEBUG=+mci,+mciqtz,+quartz` and look for `MCIQTZ_mciOpen` / "Cannot render file". Nothing to
+change on our side; a DirectShow-free fallback would be a new decoder module (WAV would be
+~600 MB).
+
+**3. 32:9 under Wine.** The exe asks for an exclusive 3840x1080 / 5120x1440 DirectDraw mode; under
+Wine that is wined3d + winex11/gamescope. Our own Windows rig needed dgVoodoo for 32:9 as well
+(§10.32), so a wrapper `ddraw.dll` is the expected route; on Wine a native `ddraw.dll` beside the
+exe is loaded only with `WINEDLLOVERRIDES="ddraw=n,b"`, and the Windows-only ghosting proxy of
+§10.32 is unnecessary (Wine has no window ghosting). Which `ddraw.dll` the player used is not
+known.
+
+**Open:** the actual cause of the `sound2.dat` failure on that machine (needs the `ls` and the
+`+file` trace); whether the MP3 module plays under Wine once a decoder is present (never run - no
+Linux machine here).
 
 ## 11. Risks
 

@@ -308,9 +308,9 @@ def blocks_longpath(g):
     t = plan(g, 'longpath'); out = []
     for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
-        assert len(old) == len(new) == int(m.group(3)) and len(old) in (20, 14, 22, 4)
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (20, 14, 22, 4, 1)
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
-    assert len(out) == 4, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand
+    assert len(out) == 5, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand, the name byte
     return out
 
 def blocks_widemap(g):
@@ -665,7 +665,13 @@ handle is what the loader's seek, read and close calls take.  The error message 
 file that was tried.  Register-relative operands and a call through the import thunk only;
 nothing moves, no relocation entry changes; the same four edits at +0x60 in Council Wars.
 Verified 22 Sep 2026: from a 161-character game folder path the unfixed Council Wars exe fails
-at 5 s, the fixed one plays on with an empty error.log.'''),
+at 5 s, the fixed one plays on with an empty error.log.  Fifth edit (25 Sep 2026): the name of
+the sound table, "sound\\sound2.dat", is the only file name in the whole game written with a
+backslash - every other path uses a forward slash.  A Linux player running the game under Wine
+reported a start-up assert on exactly this file ("FILE Error opening file sound\\sound2.dat with
+error num 1", safefunc.c line 290) while every file before it had loaded; the one backslash
+becomes a forward slash (one data byte, no code), so this file is asked for the same way as all
+the others.  Windows treats both separators alike.'''),
  dict(id='music', name='Original CD soundtrack from MP3 files (MUSIC\\TRACK02-05.MP3 / exp\\music\\track02-05.mp3)', date='22 Sep 2026',
       tool='tools/patch_music.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.31', blocks=blocks_music, data=music_data,
       desc='''The soundtrack of both games was never a file: the CDs are mixed-mode discs with the music as

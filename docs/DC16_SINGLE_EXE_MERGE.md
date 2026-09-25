@@ -208,8 +208,16 @@ which is present and identical to Classic's (apart from the 1024x768 `%label` sh
 both). The mission files it names (`SCENARIO/HUMAN`, `SCENARIO/ALIEN`, training `SCENARIO/TEST`,
 `HTRAIN.BTS`) are in the Council Wars root and identical to Classic's, with one exception (§5.4).
 
-Balance in that campaign would come from `exp/gamestat/gamestat.txt` (118 types, first 106 identical),
-which only matters for the AI's unit choice; a Classic-mode prefix (§5.2) avoids even that.
+Balance in that campaign **(verified 25 Sep 2026)**: all six tables (gamestat, weapstat, boomstat,
+mbullet, unitid, depend) are loaded per battle - and again on every save load - by the game-state
+initialiser (`0x41BB50` → `load_tables 0x43C4AC`) through the prefix helper `0x4063E4`. With the
+`exp/` prefix `gamestat.txt` would be `exp/gamestat/gamestat.txt` (118 types, first 106 identical)
+and the other five root's, because the expansion ships none of its own; with the `dc/` prefix of the
+DARK COLONY mode (§5.2, built 23 Sep 2026) all six are root's Classic set, byte for byte the files
+`Dark Colony.exe` reads. Only `ozi_ns/gamestat/` is re-balanced, and only under the `ozi_ns/`
+prefix. What no mode can switch is the start-up data loaded under `exp/` before any button is
+pressed: `exp/sound/sound2.dat` (12 ambience entries differ from root, audio only), `exp/animozi.dat`
+and the sprite banks. Details in `DC16_DISPLAY_AND_RESOLUTION.md` §10.36.
 
 ### 5.2 A "Classic mode" via the existing slot mechanism **(inferred)**
 

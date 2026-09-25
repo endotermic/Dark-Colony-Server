@@ -32,7 +32,14 @@ the linker's import thunks only):
      value the loader's `cmp eax,-1` tests already expect, and its handle is what `_llseek`, `ReadFile`
      and `_lclose` (the loader's other calls) take;
   4. the error exit's `lea eax,[ebp-40Eh]` (the CD buffer) -> `lea eax,[ebp-80Eh]`, so error.log and the
-     box name the file that was tried (`prefix+name`).
+     box name the file that was tried (`prefix+name`);
+  5. (25 Sep 2026, after a Linux/Wine player's `FILE Error opening file sound\\sound2.dat with error num 1`
+     + `assert failure, file safefunc.c line 290`, DC16_DISPLAY_AND_RESOLUTION.md section 10.42) the DGROUP
+     string `sound\\sound2.dat` (Classic `0x00485BA0`, Council Wars `0x00485BA8`; the sound table opened by
+     `0x004309C8` at start-up through the prefix helper) is the ONLY path in either exe written with a
+     backslash separator - every other path uses `/`.  Its one `\\` becomes `/`: one data byte, no code,
+     no .reloc change, harmless on Windows, and the same form as every other file the game opens.
+     An exe carrying the four code edits without this byte (builds of 22-25 Sep 2026) is upgraded by `apply`.
 Requires fix `nocd` (the `E9` form of the second open's exit is checked - the stub region must be dead).
 Council Wars offsets are Classic + 0x60, found by pattern.  The OFSTRUCT at `[ebp-0Eh]` is no longer
 written; nothing reads it.  `OpenFile` also searched the exe folder, the current folder, the Windows
@@ -51,6 +58,7 @@ import struct
 import sys
 
 SIZE_OF = {659456: 'classic', 659968: 'cw'}
+AUTO_SIZE_OF = {0x7E200: 'classic', 0x7E400: 'cw'}     # raw size of the code section, same in the `.dcicon` builds
 IMAGE_BASE = 0x400000
 
 # wave loader, first live open (prefix+name):  push 0 ; lea eax,[ebp-0Eh] ; push eax ; lea eax,[ebp-80Eh] ; push eax ;
@@ -71,6 +79,10 @@ ERR_SITE = b'\x8D\x85\xF2\xFB\xFF\xFF\x50\x68????\x8B\x15????\x52\xE8'
 ERR_SITE_NEW = b'\x8D\x85\xF2\xF7\xFF\xFF\x50\x68????\x8B\x15????\x52\xE8'
 BUF1 = b'\xF2\xF7\xFF\xFF'        # [ebp-0x80E]  prefix+name
 BUF2 = b'\xF2\xFB\xFF\xFF'        # [ebp-0x40E]  CD path buffer (never filled since nocd)
+# the sound table's name in DGROUP, the only backslash-separated path string in the exe (edit 5)
+STR_OLD = b'sound\\sound2.dat\0'
+STR_NEW = b'sound/sound2.dat\0'
+STR_SEP = 5                        # offset of the separator inside the string
 
 
 def sections(data):
@@ -160,13 +172,18 @@ def stub_bytes(stub_va, createfile_thunk_va):
 
 
 def analyse(data):
-    game = SIZE_OF.get(len(data))
-    if game is None:
-        raise SystemExit('%d bytes: neither the Classic (659456) nor the Council Wars (659968) build' % len(data))
     secs, pe = sections(data)
     ava, arsize, arptr = secs['AUTO']
+    # identify the build by the code section, so that a published exe with the appended `.dcicon`
+    # section of fix `icon` (742912 / 743424 bytes) is recognised as well as the bare 659456 / 659968-byte forms
+    game = AUTO_SIZE_OF.get(arsize)
+    if game is None or (len(data) not in SIZE_OF and '.dcicon' not in secs):
+        raise SystemExit('%d bytes, AUTO %#x: neither the Classic (659456) nor the Council Wars (659968) build' % (len(data), arsize))
 
     def va_of(off):
+        for va, rsize, rptr in secs.values():
+            if rptr <= off < rptr + rsize:
+                return off - rptr + va
         return off - arptr + ava
 
     slot_open = import_slot(data, secs, pe, 'KERNEL32.dll', 'OpenFile')
@@ -214,6 +231,18 @@ def analyse(data):
     err_pat = ERR_SITE if state == 'stock' else ERR_SITE_NEW
     err_off = unique(data, err_pat, 'wave-loader error exit', stub_off, stub_off + 0x120)
 
+    # edit 5: the sound table's name string in DGROUP, stock form or already rewritten
+    dva, drsize, drptr = secs['DGROUP']
+    str_hits = find_all(data, STR_OLD, drptr, drptr + drsize)
+    str_state = 'stock'
+    if not str_hits:
+        str_hits = find_all(data, STR_NEW, drptr, drptr + drsize)
+        str_state = 'patched'
+    if len(str_hits) != 1:
+        raise SystemExit('expected exactly one sound-table name string in DGROUP, found %d' % len(str_hits))
+    str_off = str_hits[0] + STR_SEP
+    str_va = str_hits[0] - drptr + dva
+
     a_va, b_va = va_of(a_off), va_of(b_off)
     new_a = b'\x8D\x85' + BUF1 + b'\xE8' + rel32(a_va + 6, stub_va) + b'\x90' * 9
     new_b = b'\x89\xD8\xE8' + rel32(b_va + 2, stub_va) + b'\x90' * 7
@@ -226,9 +255,13 @@ def analyse(data):
          'stub open_read over the dead first CD attempt: push 0,0,OPEN_EXISTING,0,FILE_SHARE_READ,GENERIC_READ,eax; call CreateFileA thunk %#010x (IAT slot %#010x); ret - returns the handle or -1 like OpenFile did' % (thunk_va, slot_create)),
         (err_off + 2, BUF2 if state == 'stock' else BUF1, BUF1,
          'error exit fprintf/MessageBox name: lea eax,[ebp-40Eh] (CD buffer, empty since nocd) -> lea eax,[ebp-80Eh] (prefix+name)'),
+        (str_off, b'\\' if str_state == 'stock' else b'/', b'/',
+         'sound table name in DGROUP %#010x, the only backslash-separated path string in the exe: "sound\\sound2.dat" -> "sound/sound2.dat", '
+         'the separator every other path uses (one data byte; a Linux/Wine player\'s start-up assert on exactly this file, 25 Sep 2026)' % str_va),
     ]
-    return dict(game=game, state=state, nocd=nocd, func_va=a_va, a_va=a_va, b_va=b_va, stub_va=stub_va, thunk_va=thunk_va,
-                slot_create=slot_create, slot_open=slot_open, err_va=va_of(err_off), edits=edits, va_of=va_of)
+    return dict(game=game, state=state, str_state=str_state, nocd=nocd, func_va=a_va, a_va=a_va, b_va=b_va, stub_va=stub_va,
+                thunk_va=thunk_va, slot_create=slot_create, slot_open=slot_open, err_va=va_of(err_off), str_va=str_va,
+                edits=edits, va_of=va_of)
 
 
 def main(argv=None):
@@ -238,9 +271,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     data = bytearray(open(a.exe, 'rb').read())
     r = analyse(data)
-    print('%s: %s build, %s, fix nocd %s; wave loader opens at VA 0x%08X / 0x%08X, stub VA 0x%08X (first CD attempt, dead with nocd), CreateFileA thunk 0x%08X (IAT slot 0x%08X), OpenFile slot 0x%08X, error exit 0x%08X'
-          % (a.exe, 'Classic' if r['game'] == 'classic' else 'Council Wars', r['state'], 'applied' if r['nocd'] else 'NOT applied',
-             r['a_va'], r['b_va'], r['stub_va'], r['thunk_va'], r['slot_create'], r['slot_open'], r['err_va']))
+    print('%s: %s build, code %s, sound-table name %s, fix nocd %s; wave loader opens at VA 0x%08X / 0x%08X, stub VA 0x%08X (first CD attempt, dead with nocd), CreateFileA thunk 0x%08X (IAT slot 0x%08X), OpenFile slot 0x%08X, error exit 0x%08X, name string 0x%08X'
+          % (a.exe, 'Classic' if r['game'] == 'classic' else 'Council Wars', r['state'], r['str_state'], 'applied' if r['nocd'] else 'NOT applied',
+             r['a_va'], r['b_va'], r['stub_va'], r['thunk_va'], r['slot_create'], r['slot_open'], r['err_va'], r['str_va']))
     if a.command == 'verify':
         return 0
     for off, old, new, note in r['edits']:
@@ -252,15 +285,20 @@ def main(argv=None):
         if not r['nocd']:
             raise SystemExit('refusing to apply: fix nocd is not applied (the second open still falls into the CD attempt '
                              'that hosts the stub) - apply patch_nocd.py first')
-        bak = a.exe + '.longpath.bak'
-        shutil.copyfile(a.exe, bak)
-        for off, old, new, note in r['edits']:
-            assert bytes(data[off:off + len(old)]) == old
-            data[off:off + len(new)] = new
-        open(a.exe, 'wb').write(data)
-        print('written %s; backup %s' % (a.exe, bak))
+        todo = r['edits']
+    elif r['str_state'] == 'stock':
+        todo = [e for e in r['edits'] if e[1] != e[2]]            # code already patched (22-25 Sep 2026 form): only the name byte
+        print('code edits already applied; upgrading the sound-table name string only')
     else:
         print('exe already patched, nothing to do')
+        return 0
+    bak = a.exe + '.longpath.bak'
+    shutil.copyfile(a.exe, bak)
+    for off, old, new, note in todo:
+        assert bytes(data[off:off + len(old)]) == old
+        data[off:off + len(new)] = new
+    open(a.exe, 'wb').write(data)
+    print('written %s (%d edits); backup %s' % (a.exe, len(todo), bak))
     return 0
 
 
