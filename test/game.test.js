@@ -150,14 +150,15 @@ test('stall at MAX_LAG, echo timeout evicts the silent client, the survivor cont
   h.tick();
   assert.ok(b.gone, 'B evicted for missing echoes');
   assert.ok(!a.gone);
-  // A now reports progress: the stall clears, the next frame carries the DISCONNECT of B
+  // A now reports progress: the stall clears; no DISCONNECT for B (its base stands idle: the game's
+  // AI must never run on a client, maintainer 27 Sep 2026)
   a.send(build.until(-1, 9));
   h.stepAfter(33); // the long idle gap would jump too far ahead: stalled once, accumulator capped
   assert.equal(a.take().length, 0);
   h.stepAfter(33);
   const cmds = cmdsOf(a.take()[0]);
   assert.equal(cmds[0].type, T.UNTIL);
-  assert.ok(cmds.some((c) => c.type === T.DISCONNECT && c.player === b.slot));
+  assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), 'no DISCONNECT in battle');
   assert.equal(h.room.game.stallSince, 0);
 });
 
@@ -183,7 +184,8 @@ test('lag eviction drops the slowest client after LAG_DROP_MS', () => {
   h.stepAfter(33); // idle gap: stalled once, accumulator capped
   h.stepAfter(33);
   const cmds = cmdsOf(a.take().at(-1));
-  assert.ok(cmds.some((c) => c.type === T.DISCONNECT && c.player === b.slot));
+  assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), 'no DISCONNECT in battle: the laggard\'s base stands idle');
+  assert.equal(h.room.clients.size, 1);
 });
 
 test('pause relays out of band and stops the clock; resume re-sends the speed', () => {
@@ -213,7 +215,7 @@ test('pause relays out of band and stops the clock; resume re-sends the speed', 
   assert.ok(cmds.some((c) => c.type === T.TICK_SPEED));
 });
 
-test('a closing socket becomes a DISCONNECT in the next frame; the last one leaving resets the room', () => {
+test('a closing socket in battle sends no DISCONNECT (the base stands idle, never the clients\' AI); the last one leaving resets the room', () => {
   const h = new Harness();
   const [a, b] = startBattle(h);
   h.stepAfter(33);
@@ -223,8 +225,7 @@ test('a closing socket becomes a DISCONNECT in the next frame; the last one leav
   assert.equal(h.room.clients.size, 1);
   h.stepAfter(33);
   const cmds = cmdsOf(b.take()[0]);
-  assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.DISCONNECT]);
-  assert.equal(cmds[1].player, a.slot);
+  assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL], 'no DISCONNECT: the game AI on the clients must never take over (maintainer, 27 Sep 2026)');
   b.sock.destroy();
   assert.equal(h.room.state, STATE.LOBBY);
   assert.equal(h.room.clients.size, 0);

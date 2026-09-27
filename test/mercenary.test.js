@@ -103,9 +103,8 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   const marauder = h.room.bots.others[0];
   assert.equal(marauder.name, 'Marauder');
   assert.ok(lines.some((l) => l.startsWith('Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
-  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host. 1000 in battle hires me for 45 s.');
-  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire on. /botcount N', 'the bot count, the brain, the hire switch and the command, one row');
-  assert.equal(h.room.lobby.greeting()[3], '/bottype, /bothire, /help for more.');
+  assert.deepEqual(h.room.lobby.greeting().slice(1), ['Mercenary: Hi! I am the AI host.', '/help lists the commands.'], 'three rows; the price is in /help (27 Sep 2026)');
+  assert.deepEqual(h.room.lobby.helpLines().map((l) => l.split(' ')[0]), ['/botcount', '/botteam', '/bottype', '/bothire'], 'the commands, nothing about the bots');
 });
 
 test('two bots, two deals: a gift to Marauder allies with it alone, the Mercenary keeps its own deal', () => {
@@ -254,13 +253,14 @@ test('a client leaving while everybody loads gets its bot when the battle starts
   assert.ok(chats(cmds).some((l) => l.startsWith(`AI Player${c.slot}: Player${c.slot} left the battle.`)), chats(cmds).join(' | '));
 });
 
-test('without the engine a leaving client is still handed to the game AI with DISCONNECT', () => {
+test('without the engine a leaving client is NOT handed to the game AI: no DISCONNECT, the base stands idle', () => {
   const { h, a, b } = battle({ SYNC_CHECK: 'off' });
   frame(h, a, b);
   a.sock.destroy();
   h.stepAfter(33);
   const cmds = cmdsOf(b.take()[0]);
-  assert.ok(cmds.some((c) => c.type === T.DISCONNECT && c.player === a.slot));
+  assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), 'bots run only on the relay (maintainer, 27 Sep 2026)');
+  assert.equal(cmds[0].type, T.UNTIL, 'the game goes on for the survivor');
   assert.equal(h.room.bots.list.filter((x) => x.takeover).length, 0);
 });
 
@@ -279,7 +279,7 @@ test('without the engine the Mercenary stays idle: no offer, gifts relayed, gree
   const h = new Harness({ SYNC_CHECK: 'off' });
   const [a, b] = startBattle(h);
   assert.ok(!h.room.mercenary.active);
-  assert.ok(h.room.lobby.greeting()[1].endsWith('My base stays idle.'));
+  assert.deepEqual(h.room.lobby.greeting().slice(1), ['Mercenary: Hi! I am the AI host.', '/help lists the commands.']);
   h.stepAfter(33);
   const cmds = cmdsOf(a.take()[0]);
   assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.TICK_SPEED]);
@@ -307,10 +307,10 @@ test('the Mercenary stands down when the engine is disabled mid-game', () => {
   a.send(build.bonus(0));
   const after = frame(h, a, b);
   assert.equal(diplo(after).length, 0, 'no more deals');
-  // with the engine gone a leaving client falls back to DISCONNECT (the game's AI takes over)
+  // with the engine gone a leaving client's base stands idle: no bot, and no DISCONNECT either
   b.sock.destroy();
   h.stepAfter(33);
-  assert.ok(cmdsOf(a.take()[0]).some((c) => c.type === T.DISCONNECT && c.player === b.slot));
+  assert.ok(!cmdsOf(a.take()[0]).some((c) => c.type === T.DISCONNECT), 'never the clients\' own AI');
   assert.equal(h.room.bots.list.filter((x) => x.takeover).length, 0);
 });
 
@@ -473,7 +473,6 @@ test('hiring off (the default): no offer at the start, a gift to a bot goes back
   const { h, a, b } = battle({ BOT_HIRE: false });
   assert.equal(h.room.botHire, false);
   assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.');
-  assert.equal(h.room.lobby.greeting()[2], 'Bots: 2 krusty, hire off. /botcount N');
   let cmds = frame(h, a, b);
   const lines = chats(cmds);
   assert.ok(lines.some((l) => l.includes('Hiring is off in this game')), lines.join(' | '));

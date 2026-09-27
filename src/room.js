@@ -47,6 +47,8 @@ export class Room {
     this.botType = config.BOT_TYPE;
     // may the bots be hired (1000 buys an alliance)? BOT_HIRE until the players change it with `/bothire`
     this.botHire = config.BOT_HIRE;
+    // team bots per real player (`/botteam N`, §19.11): allies with shared vision for the whole battle
+    this.botTeam = config.BOT_TEAM;
     this.minPlayers = this.minPlayersFor(this.botCount);
     if (this.replay) this.minPlayers = 1; // the one client in the recorded player's seat
     this.state = STATE.LOBBY;
@@ -86,34 +88,34 @@ export class Room {
 
   // ---- slots --------------------------------------------------------------------------------
 
+  /** An empty slot. Never an AI-typed one: the game's AI must not run on the players' machines (maintainer, 27 Sep 2026; `FILL_EMPTY_WITH_AI` removed). */
   emptySlot(s) {
-    const cfg = this.config;
-    // AI fill needs all eight slots to count as occupied, which only an 8-player map allows (F22)
-    const ai = cfg.FILL_EMPTY_WITH_AI && this.capacity === SLOTS;
     return {
       slot: s,
       name: '',
       race: 0,
       colour: s,
       team: s,
-      type: ai ? cfg.FILL_AI_TYPE : SLOT_TYPE.EMPTY,
+      type: SLOT_TYPE.EMPTY,
       status: 0,
       client: null,
     };
   }
 
-  fakeSlot(s, name) {
+  /** A fake human. `owner` = the lobby slot of the real player it is teamed with (`/botteam`, §19.11), -1 = a free bot. */
+  fakeSlot(s, name, owner = -1) {
     const r = this.config.MERCENARY_RACE;
     return {
       slot: s,
       name,
       race: r === 'random' ? this.random(2) : r, // a random race per bot (maintainer, 19 Sep 2026)
       colour: s,
-      team: s,
+      team: owner >= 0 ? this.slots[owner].team : s, // a team bot shares its player's lobby team: allied at game start
       type: SLOT_TYPE.HUMAN,
       status: 1, // present but not ready: holds the lobby until the start signal (F3)
       client: null,
       fake: true,
+      owner,
     };
   }
 
@@ -147,14 +149,24 @@ export class Room {
     return this.slots.filter((sl) => sl.fake);
   }
 
+  /** The free bots: fakes not teamed with a player (`/botcount` counts these). */
+  freeBots() {
+    return this.fakeSlots().filter((f) => f.owner < 0);
+  }
+
+  /** The team bots of the real player in lobby slot `owner` (`/botteam`, §19.11). */
+  teamBotsOf(owner) {
+    return this.fakeSlots().filter((f) => f.owner === owner);
+  }
+
   /** Real players needed to start with `bots` bots on this map (MIN_PLAYERS, capped by the seats left). */
   minPlayersFor(bots) {
     return Math.max(1, Math.min(this.config.MIN_PLAYERS, this.capacity - bots));
   }
 
-  /** The most bots this room can hold right now: the map's slots minus the real players present. */
+  /** The most free bots this room can hold right now: the map's slots minus the real players present and their team bots. */
   maxBots() {
-    return Math.max(1, Math.min(7, this.capacity - this.clients.size));
+    return Math.max(1, Math.min(7, this.capacity - this.clients.size - (this.fakeSlots().length - this.freeBots().length)));
   }
 
   /**
@@ -194,7 +206,7 @@ export class Room {
     const max = this.maxBots();
     if (n > max) return `at most ${max} bot${max === 1 ? '' : 's'} fit${max === 1 ? 's' : ''} on this map with ${this.clients.size} player${this.clients.size === 1 ? '' : 's'} in the room`;
     const cfg = this.config;
-    const fakes = this.fakeSlots();
+    const fakes = this.freeBots(); // the team bots of `/botteam` are counted separately
     if (n < fakes.length) {
       // the last names of the pool go first; AI Mercenary (slot MERCENARY_SLOT) stays
       const removable = fakes.filter((f) => f.slot !== cfg.MERCENARY_SLOT).sort((a, b) => cfg.FAKE_NAME_POOL.indexOf(b.name) - cfg.FAKE_NAME_POOL.indexOf(a.name));
@@ -204,7 +216,7 @@ export class Room {
         this.log.info('bot removed', { name: f.name, slot: f.slot });
       }
     } else if (n > fakes.length) {
-      const used = new Set(fakes.map((f) => f.name));
+      const used = new Set(this.fakeSlots().map((f) => f.name));
       for (let i = fakes.length; i < n; i++) {
         const free = this.seatableSlots();
         if (free.length === 0) break;
@@ -218,11 +230,81 @@ export class Room {
         this.log.info('bot added', { name, slot: s });
       }
     }
-    this.botCount = this.fakeSlots().length;
-    this.minPlayers = this.minPlayersFor(this.botCount);
+    this.botCount = this.freeBots().length;
+    this.minPlayers = this.minPlayersFor(this.fakeSlots().length);
     this.bots.reset(); // one AiPlayer per fake slot
     this.lobby.onBotsChanged();
     return null;
+  }
+
+  /**
+   * `/botteam N` (27 Sep 2026, maintainer: "sets for each client N bots which are always teamed with
+   * client with shared vision until either player looses connection or game ends"): every real
+   * player in the room gets N fake humans on its lobby team, which in battle are its allies with
+   * shared vision for good (§19.11). Applies to the players present and to later joiners. Returns
+   * null when done, else the reason why not.
+   */
+  setBotTeam(n) {
+    if (this.state !== STATE.LOBBY || this.replay) return 'only in the lobby';
+    if (!Number.isInteger(n) || n < 0 || n > 6) return 'the count must be 0..6';
+    const players = this.players();
+    const free = this.freeBots().length;
+    const room = this.capacity - free - players.length;
+    const most = players.length ? Math.floor(room / players.length) : Math.min(6, room - 1);
+    if (n > most) {
+      return `at most ${most} team bot${most === 1 ? '' : 's'} per player fit${most === 1 ? 's' : ''} on this map with ${players.length} player${players.length === 1 ? '' : 's'} and ${free} free bot${free === 1 ? '' : 's'}`;
+    }
+    this.botTeam = n;
+    for (const c of players) this.syncTeamBots(c.slot, true);
+    this.bots.reset();
+    this.lobby.onBotsChanged();
+    return null;
+  }
+
+  /**
+   * Bring the team bots of the player in slot `owner` to `botTeam`: extra ones take random free
+   * slots (names from the pool, else "Bot <slot>"), surplus ones leave with a lobby DISCONNECT.
+   * `announce` = send the added bots to everybody like a joiner's dump (false while the joiner's own
+   * dump is about to carry them). Returns { added, removed, short } (short = bots that found no slot).
+   */
+  syncTeamBots(owner, announce) {
+    const cfg = this.config;
+    const have = this.teamBotsOf(owner);
+    const want = this.state === STATE.LOBBY && !this.replay ? this.botTeam : 0;
+    let added = 0;
+    let removed = 0;
+    for (const f of have.slice(want)) {
+      this.slots[f.slot] = this.emptySlot(f.slot);
+      this.broadcast(build.disconnect(f.slot));
+      this.log.info('team bot removed', { name: f.name, slot: f.slot, owner });
+      removed++;
+    }
+    const used = new Set(this.fakeSlots().map((f) => f.name));
+    for (let i = have.length; i < want; i++) {
+      const free = this.seatableSlots();
+      if (free.length === 0) break;
+      const s = free[this.random(free.length)].slot;
+      const name = cfg.FAKE_NAME_POOL.find((x) => !used.has(x)) ?? `Bot ${s}`;
+      used.add(name);
+      const f = this.fakeSlot(s, name, owner);
+      f.colour = this.freeColour(s);
+      this.slots[s] = f;
+      if (announce) this.broadcast(Buffer.concat([build.colourSet(f.colour, s), build.name(s, f.name), build.race(f.race, s), build.type(f.type, s), build.teamSet(f.team, s), build.ready(f.status, s)]));
+      this.log.info('team bot added', { name, slot: s, owner, ownerName: this.slots[owner]?.name, team: f.team });
+      added++;
+    }
+    this.minPlayers = this.minPlayersFor(this.fakeSlots().length);
+    return { added, removed, short: Math.max(0, want - this.teamBotsOf(owner).length) };
+  }
+
+  /** The player in slot `owner` changed its lobby team: its team bots follow (equal teams are allied at game start). */
+  followTeam(owner) {
+    const team = this.slots[owner]?.team;
+    for (const f of this.teamBotsOf(owner)) {
+      if (f.team === team) continue;
+      f.team = team;
+      this.broadcast(build.teamSet(team, f.slot));
+    }
   }
 
   freeSlots() {
@@ -262,7 +344,7 @@ export class Room {
     if (free.length === 0) return false;
     const t = free[this.random(free.length)].slot;
     const f = this.slots[s];
-    this.slots[t] = { ...f, slot: t, colour: t, team: t };
+    this.slots[t] = { ...f, slot: t, colour: t, team: f.owner >= 0 ? f.team : t }; // a team bot keeps its player's team
     this.slots[s] = this.emptySlot(s);
     this.log.debug('fake moved', { name: f.name, from: s, to: t });
     return true;
@@ -336,7 +418,11 @@ export class Room {
       players: this.clients.size,
       fakeSlots: this.fakeSlots().map((f) => f.slot),
     });
+    // `/botteam`: the newcomer's team bots are seated before its dump goes out, so the dump carries them
+    const teamed = this.botTeam > 0 && !this.replay ? this.syncTeamBots(s, false) : null;
+    if (teamed?.added) this.bots.reset();
     this.lobby.onJoin(client, handshake);
+    if (teamed?.short) this.say(`${slot.name} gets ${this.botTeam - teamed.short} team bot${this.botTeam - teamed.short === 1 ? '' : 's'}: no more slots free.`);
   }
 
   /** Colour for a newcomer in slot `s`: its slot number unless an occupied slot already shows it (F4). */
@@ -491,16 +577,28 @@ export class Room {
         if (wasReady) this.broadcast(build.ready(0, s)); // release the colour lock first (F20)
         this.broadcast(build.disconnect(s));
         this.say(`${name} left the lobby (${reason})`);
+        if (this.teamBotsOf(s).length) {
+          // its team bots go with it (a lobby DISCONNECT only empties a slot, R14)
+          for (const f of this.teamBotsOf(s)) {
+            this.slots[f.slot] = this.emptySlot(f.slot);
+            this.broadcast(build.disconnect(f.slot));
+            this.log.info('team bot removed', { name: f.name, slot: f.slot, owner: s });
+          }
+          this.minPlayers = this.minPlayersFor(this.fakeSlots().length);
+          this.bots.reset();
+        }
         break;
       case STATE.STARTING:
       case STATE.RUNNING: {
         this.bots.onClientLeft(client); // an alliance bought from a bot ends with the buyer
-        // the base becomes a server bot when the engine plays (§19.9); otherwise DISCONNECT hands it
-        // to the game's own AI on every client (F19)
+        // the base becomes a server bot when the engine plays (§19.9); otherwise it stands idle. NEVER
+        // a DISCONNECT here: that would hand the base to the game's own AI on every client's machine
+        // (maintainer, 27 Sep 2026: "bots must always run on relay! never allow to run them on
+        // customer machine!"); the player simply falls silent on the wire (§8.4)
         const takenOver = this.bots.takeOver(client);
         if (takenOver) client.pendingEchoes.clear();
         else this.game.onClientLeft(client);
-        this.sync.onClientLeft(client, takenOver ? `${reason}; a bot took the base over` : reason);
+        this.sync.onClientLeft(client, takenOver ? `${reason}; a bot took the base over` : `${reason}; the base stands idle`);
         break;
       }
       default:
@@ -530,6 +628,7 @@ export class Room {
     this.botCount = this.config.FAKE_PLAYERS; // a fresh lobby starts with the default (one master bot)
     this.botType = this.config.BOT_TYPE;
     this.botHire = this.config.BOT_HIRE;
+    this.botTeam = this.config.BOT_TEAM;
     this.minPlayers = this.replay ? 1 : this.minPlayersFor(this.botCount);
     this.replay?.rewind(); // every game of a replay server starts at the first recorded frame
     this.resetSlots();

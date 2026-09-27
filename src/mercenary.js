@@ -66,7 +66,7 @@ export class Bots {
 
   /** One AiPlayer per fake slot; call after Room.resetSlots(). */
   reset() {
-    this.list = this.room.fakeSlots().map((f) => new AiPlayer(this.room, f.slot, f.name));
+    this.list = this.room.fakeSlots().map((f) => new AiPlayer(this.room, f.slot, f.name, { owner: f.owner }));
     this.pendingTakeovers = [];
     this.pacts = new Map(); // "p:q" -> [botP, botQ], the alliances between bots that share an ally
   }
@@ -139,13 +139,14 @@ export class Bots {
    * pact ends with either deal.
    */
   syncPacts() {
+    // a bot's ally: the paying one (the deal) or the player it is teamed with (`/botteam` bond, §19.11)
     const want = new Map();
     const active = this.list.filter((b) => b.active);
     for (let i = 0; i < active.length; i++) {
       for (let j = i + 1; j < active.length; j++) {
         const x = active[i];
         const y = active[j];
-        if (x.ally && y.ally && x.ally.player === y.ally.player) want.set(Bots.pactKey(x, y), [x, y]);
+        if (x.alliedPlayer >= 0 && x.alliedPlayer === y.alliedPlayer) want.set(Bots.pactKey(x, y), [x, y]);
       }
     }
     for (const [key, [x, y]] of this.pacts) {
@@ -153,23 +154,23 @@ export class Bots {
       this.pacts.delete(key);
       this.room.game.queueCommands(x.relations(y.player, 0));
       // told to whoever of the two has an ally (actions go to allies only)
-      if (x.ally) x.say(`My truce with ${y.chatName} is over. I turn on it for you.`, 1 << x.ally.player);
-      if (y.ally) y.say(`My truce with ${x.chatName} is over. I turn on it for you.`, 1 << y.ally.player);
+      if (x.alliedPlayer >= 0) x.say(`My truce with ${y.chatName} is over. I turn on it for you.`, 1 << x.alliedPlayer);
+      if (y.alliedPlayer >= 0) y.say(`My truce with ${x.chatName} is over. I turn on it for you.`, 1 << y.alliedPlayer);
       this.room.log.info('bot: pact ended', { between: [x.name, y.name] });
     }
     for (const [key, [x, y]] of want) {
       if (this.pacts.has(key)) continue;
       this.pacts.set(key, [x, y]);
       this.room.game.queueCommands(x.relations(y.player, 1));
-      if (x.ally) x.say(`${y.chatName} and I both serve you now. We hold our fire on each other.`, 1 << x.ally.player);
-      this.room.log.info('bot: pact', { between: [x.name, y.name], ally: x.ally?.player ?? -1 });
+      if (x.alliedPlayer >= 0) x.say(`${y.chatName} and I both serve you now. We hold our fire on each other.`, 1 << x.alliedPlayer);
+      this.room.log.info('bot: pact', { between: [x.name, y.name], ally: x.alliedPlayer });
     }
   }
 
   /**
    * A real client left the battle (§19.9): make its base a bot. Returns false when that is not
-   * possible (bots off, engine off or gone) and the room must fall back to DISCONNECT (the game's
-   * own AI takes over on every client).
+   * possible (bots off, engine off or gone); the base then stands idle (never a DISCONNECT, which
+   * would run the game's own AI on every client: maintainer, 27 Sep 2026).
    */
   takeOver(client) {
     if (!this.configured) return false;
@@ -206,13 +207,15 @@ export class AiPlayer {
    * @param room  the Room
    * @param slot  lobby slot of the player this bot plays
    * @param name  the player's lobby name (the fake's, or the name of the client that left)
-   * @param opts  { takeover: true } for a base inherited from a real player
+   * @param opts  { takeover: true } for a base inherited from a real player; { owner: lobby slot }
+   *              for a team bot of `/botteam` (§19.11)
    */
   constructor(room, slot, name, opts = {}) {
     this.room = room;
     this.slot = slot;
     this.name = name;
     this.takeover = opts.takeover === true;
+    this.owner = opts.owner ?? -1; // lobby slot of the real player this bot is teamed with, -1 = a free bot
     // a taken-over base keeps the player's name on every screen; its chat lines say who speaks
     this.chatName = this.takeover ? `AI ${name}` : name;
     this.reset();
@@ -232,6 +235,7 @@ export class AiPlayer {
     this.brain = null; // the battle plan: a KrustyBot or a Rusher; null = deal only (the brain failed to start)
     this.kind = null; // 'krusty' | 'rusher' once the brain exists
     this.ally = null; // { player, until (engine tick), client, name }
+    this.bond = null; // { player, client, name }: the team bond of a `/botteam` bot, for the whole battle (§19.11)
     this.nextThink = 0;
     this.allyTicks = 0;
     this.thinkTicks = 32;
@@ -240,9 +244,15 @@ export class AiPlayer {
     this.deals = 0;
   }
 
-  /** Allied with game player q: the deal, or a mutual alliance the game already has (lobby team, an inherited one). */
+  /** The game player this bot serves: the paying ally of the deal, or the player it is teamed with; -1 = nobody. */
+  get alliedPlayer() {
+    return this.ally?.player ?? this.bond?.player ?? -1;
+  }
+
+  /** Allied with game player q: the deal, the team bond, or a mutual alliance the game already has (lobby team, an inherited one). */
   isAlly(q) {
     if (this.ally !== null && this.ally.player === q) return true;
+    if (this.bond !== null && this.bond.player === q) return true;
     if (this.room.bots?.arePartners(this, q)) return true;
     const G = this.room.sync.engine;
     return typeof G?.diploGet === 'function' && this.player >= 0 && q !== this.player && G.diploGet(0, this.player, q) !== 0;
@@ -287,6 +297,17 @@ export class AiPlayer {
     this.allyTicks = Math.max(1, Math.round((cfg.MERCENARY_ALLY_S * 1000) / cfg.TICK_MS));
     this.nextThink = sync.engineTime + this.thinkTicks + ((index * PHASE_STEP) % this.thinkTicks);
     const G = sync.engine;
+    if (this.owner >= 0) {
+      // a team bot (`/botteam`, §19.11): its player's ally with shared vision for the whole battle. The
+      // game allied the equal lobby teams at the start but shares vision only for AI-typed slots
+      // (0x4018BB, scenario.js), so the vision half is set here, both directions; the alliance half
+      // is repeated, which is harmless
+      const client = this.room.players().find((c) => c.slot === this.owner);
+      if (client && client.gamePlayer >= 0 && client.gamePlayer !== player) {
+        this.bond = { player: client.gamePlayer, client, name: this.nameOf(client.gamePlayer) };
+        this.room.game.queueCommands(this.relations(this.bond.player, 1));
+      } else this.log.info('team bot: its player is gone, it plays free', { name: this.name, owner: this.owner });
+    }
     if (this.takeover) {
       // the human's spending was booked but never deducted on our ledger (F44); DISCONNECT does the same
       const a = playerAddr(player) + P.MONEY;
@@ -311,6 +332,8 @@ export class AiPlayer {
     if (this.takeover) {
       const deal = hire ? `: ${ALLY_PRICE} buys my alliance for ${cfg.MERCENARY_ALLY_S} seconds.` : '.';
       this.say(`${this.name} left the battle. I run this base now${deal}${does ? ` ${does}` : ''}`);
+    } else if (this.bond) {
+      this.say(`${this.bond.name}, I fight at your side: allied, shared eyes, all battle long.${does ? ` ${does}` : ''}`, 1 << this.bond.player);
     } else if (index === 0) {
       if (hire) {
         this.say(`I ally with anyone who pays me ${ALLY_PRICE}: Diplomacy screen, give ${ALLY_PRICE}.`);
@@ -325,6 +348,8 @@ export class AiPlayer {
       slot: this.slot,
       player,
       takeover: this.takeover,
+      owner: this.owner,
+      bond: this.bond?.player ?? -1,
       hire: hire,
       ai: this.brain ? this.kind : 'deal only',
       allyTicks: this.allyTicks,
@@ -362,9 +387,16 @@ export class AiPlayer {
     this.say('I lost sight of the battle. My base is idle now.');
   }
 
-  /** A real client left the battle. */
+  /** A real client left the battle: a bought alliance ends with the buyer, a team bond with the player (§19.11). */
   onClientLeft(client) {
     if (this.active && this.ally && this.ally.client === client) this.endAlliance(`${this.ally.name} left the game`);
+    if (this.active && this.bond && this.bond.client === client) {
+      const b = this.bond;
+      this.bond = null;
+      this.room.game.queueCommands(this.relations(b.player, 0));
+      this.say(`${b.name} is gone. I fight for myself now.`);
+      this.log.info('team bot: bond ended', { name: this.name, with: b.player });
+    }
   }
 
   // ---- the deal -------------------------------------------------------------------------------
@@ -385,6 +417,13 @@ export class AiPlayer {
     if (!(giver >= 0 && giver < 8) || giver === this.player) return;
     const tick = this.room.sync.engineTime;
     const name = this.nameOf(giver);
+    if (this.bond) {
+      // a team bot is not for hire: it serves its player for the whole battle
+      this.refund(giver);
+      this.say(`${name}, I am ${this.bond.name}'s team bot for this whole battle. Your ${ALLY_PRICE} goes back.`, 1 << giver);
+      this.log.info('bot: payment returned, team bot', { name: this.name, from: giver, slot: client.slot, bond: this.bond.player, tick });
+      return;
+    }
     if (!this.room.botHire) {
       // hiring is off (`/bothire`): the 1000 goes straight back, no alliance
       this.refund(giver);
@@ -453,6 +492,8 @@ export class AiPlayer {
       slot: this.slot,
       player: this.player,
       takeover: this.takeover,
+      owner: this.owner,
+      bond: this.bond?.player ?? -1,
       ally: this.ally?.player ?? -1,
       deals: this.deals,
       refunds: this.refunds,

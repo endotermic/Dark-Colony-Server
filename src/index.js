@@ -84,7 +84,7 @@ if (isMain) {
       port: addr.port,
       hall: srv.config.HALL,
       rooms: srv.config.ROOM_LIST.map((m) => `${m.index}:${m.file} ${m.name}`),
-      marqueeMs: config.MARQUEE_MS,
+      hallRefreshMs: config.HALL_REFRESH_MS,
       tickMs: srv.config.TICK_MS,
       minPlayers: config.MIN_PLAYERS,
       fakePlayers: config.FAKE_PLAYERS,

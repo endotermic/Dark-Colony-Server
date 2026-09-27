@@ -28,12 +28,13 @@ function fastConfig(overrides = {}) {
     KEEPALIVE_TIMEOUT_MS: 1500,
     JOIN_TIMEOUT_MS: 1000,
     LAG_DROP_MS: 0,
+    SYNC_CHECK: 'off', // relay only unless a test says otherwise (the default is `send` since 27 Sep 2026)
     ...overrides,
   });
 }
 
 test('through the hall: two clients pick room 2 with /2 and READY, then play there', async () => {
-  const srv = startServer(fastConfig({ HALL: true, MARQUEE_MS: 100 }), silentLogger);
+  const srv = startServer(fastConfig({ HALL: true, HALL_REFRESH_MS: 100 }), silentLogger);
   const { port } = await srv.listening;
   const clients = [0, 1].map((i) => new FakeClient({ port, name: `Bot${i}`, room: 2, readyAfterMs: 150, loadMs: 50, tickMs: 33 }));
   try {
@@ -51,7 +52,11 @@ test('through the hall: two clients pick room 2 with /2 and READY, then play the
     const n = Math.min(...lists.map((l) => l.length));
     assert.ok(n >= 5, `expected sync frames, got ${n}`);
     for (let i = 0; i < n; i++) assert.equal(lists[1][i], lists[0][i], `frame ${i} differs`);
-    assert.ok(clients.every((c) => c.marqueeSteps >= 2), 'the room rows scrolled while waiting');
+    for (const c of clients) {
+      const rows = c.hallRows.filter((t, i) => t && i !== c.slot);
+      assert.equal(rows.length, 7, `seven room rows seen in the hall: ${rows.join('|')}`);
+      for (const t of rows) assert.match(t, /^[1-7] .{9}\(\d\/\d\)$/, `static row "${t}"`);
+    }
   } finally {
     for (const c of clients) c.close();
     await srv.close();
@@ -80,14 +85,15 @@ test('three scripted clients play in lockstep with identical sync frames; one th
     assert.ok(clients.every((c) => c.gameTime > 0));
     assert.ok(srv.room.game.stallSince === 0, 'no stall with healthy clients');
 
-    // Bot2 stops echoing: evicted within ECHO_TIMEOUT, the others learn it inside a sync frame
+    // Bot2 stops echoing: evicted within ECHO_TIMEOUT; its base stands idle, no DISCONNECT reaches the
+    // others (the game's AI must never run on a client, maintainer 27 Sep 2026)
     clients[2].behave.add('noEcho');
-    await waitFor(() => clients[0].disconnects.includes(clients[2].slot), 3000, 'DISCONNECT of Bot2');
-    await waitFor(() => clients[2].closed, 1000, 'Bot2 socket closed');
-    assert.ok(clients[1].disconnects.includes(clients[2].slot));
+    await waitFor(() => clients[2].closed, 3000, 'Bot2 socket closed');
+    await waitFor(() => srv.room.clients.size === 2, 1000, 'Bot2 evicted');
     const before = clients[0].syncPayloads.length;
     await sleep(300);
     assert.ok(clients[0].syncPayloads.length > before, 'the game keeps pacing for the survivors');
+    assert.ok(clients[0].disconnects.length === 0 && clients[1].disconnects.length === 0, 'no DISCONNECT in battle');
     assert.equal(srv.room.clients.size, 2);
   } finally {
     for (const c of clients) c.close();

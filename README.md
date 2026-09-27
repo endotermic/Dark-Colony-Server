@@ -7,8 +7,9 @@ HOWTO connect to the **online server**:
 Launch *Dark Colony* → MULTI PLAYER WAR → CONNECT TO SERVER → **dark-colony-server.fly.dev**
 
 Then, in the lobby: the player rows other than your own are the **rooms** 1 to 7, each with its
-own map; after the fixed number the row text scrolls the map name, its terrain (jungle or desert),
-the player count and whether the room is open. No room is preselected: type `/1` … `/7` in the chat and hit
+own map: `1 Plink    (0/7)` is room 1, the first word of its map name and the players in it out of
+its seats (`in battle` replaces the map name while a battle runs there); the CD icon marks the rooms
+you can join right now. No room is preselected: type `/1` … `/7` in the chat and hit
 ENTER to select one (the map line then shows it), then press **READY** to enter it. Inside the room press **READY** again when you want to fight. Your own
 row shows your name; you can type it there.
 
@@ -24,19 +25,23 @@ row shows your name; you can type it there.
   vents, the standard base, an army, guards at the vents, attack groups at the nearest contested
   zone). By default there is **one** bot, Mercenary, the host; type **`/botcount N`** (1..7) in
   the room chat and hit ENTER to get more (Marauder, Renegade, Outlaw, ...), `/botcount` to see
-  them, `/help` for the commands. Hiring is off by default; `/bothire on` in the room lets every
+  them, `/help` for the commands. **`/botteam N`** (0..6) gives every player N bots of its own:
+  on the player's team in the lobby and, in battle, its allies with shared vision until the player
+  loses the connection or the game ends (they are not for hire). Hiring is off by default; `/bothire on` in the room lets every
   bot sell an alliance: give it 1000 in the game's Diplomacy screen and it is your ally with shared
   vision for 45 seconds (the bot sets the alliance in both directions, so nothing to click). Money
   sent while it already has an ally, or while hiring is off, comes back. The bots are rivals of
   each other; two bots hired by the same player ally with each other for as long as both deals
   hold. The game itself ends a battle with Victory once every player still alive is allied, so
   buying the alliance of every remaining bot wins the game. A
-  player who leaves a battle is replaced by such a bot playing that base. In battle a bot only talks
+  player who leaves a battle is replaced by such a bot playing that base (without the engine the base
+  simply stands idle; the game's own AI never runs on a player's machine). In battle a bot only talks
   about the deal, never about its moves. `/bottype rusher` in the room chat switches the
   bots of the next game to the simpler rusher of 13 Sep 2026 (a worker, a barracks, cheap infantry
   and waves at the nearest base), `/bottype random` lets every bot draw one of the two, `/bottype
-  krusty` is the default. `FAKE_PLAYERS`, `BOT_TYPE` and `BOT_HIRE` set the defaults,
-  `SYNC_CHECK=off` leaves the bases idle. Every bot plays a random race (Human or Gray).
+  krusty` is the default. `FAKE_PLAYERS`, `BOT_TYPE` and `BOT_HIRE` set the defaults;
+  `SYNC_CHECK=off` (the engine off; it is on by default since 27 Sep 2026) leaves the bases idle.
+  Every bot plays a random race (Human or Gray).
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
   first sees the room list in the lobby screen and picks a room with a chat command and READY; the
@@ -49,8 +54,8 @@ row shows your name; you can type it there.
 - Game speed is fixed at 150 % (44 ms per tick, the single-player default of the patched exes); clients cannot change it.
 - Cheats and the `0x08` checksum command are never forwarded. Since the fake host is the lowest
   network id no client sends checksums; the server can compute them itself with its own port of the
-  game's battle engine (`SYNC_CHECK=send`, off by default while the port is being verified against
-  recorded games, see plan §18). Every battle also leaves a compact recording in the log
+  game's battle engine (`SYNC_CHECK=send`, the default since 27 Sep 2026 as on Fly since 11 Sep 2026;
+  `off` = relay only with idle bots, see plan §18). Every battle also leaves a compact recording in the log
   (`RECORD_LOG`, on Fly); `node tools/logs2replay.js --fetch dark-colony-server --replay` rebuilds
   and replays the battles of the last week from Fly's Logs API (plan §18.6). A recording also
   plays back into the real game: `REPLAY_FILE=<file.jsonl> node src/index.js`, then connect
@@ -212,7 +217,7 @@ room 2 starts a battle with the three bots (they press READY when you do).
 
 ### Configuration
 Environment variables, see `src/config.js` for the full list and defaults: `PORT`, `ROOMS`, `HALL`,
-`MARQUEE_MS`, `TICK_MS`, `MIN_PLAYERS`, `START_COUNTDOWN_S`, `FAKE_PLAYERS`, `FAKE_NAMES`,
+`HALL_REFRESH_MS`, `TICK_MS`, `MIN_PLAYERS`, `START_COUNTDOWN_S`, `FAKE_PLAYERS`, `FAKE_NAMES`,
 `ALLOW_PAUSE`, `LAG_DROP_MS`, `STRICT_SEQ`, `DEBUG_MODE`, `LOG_LEVEL`, ... The map names for `ROOMS`
 are the `SCENARIO/MPLAYER` file names (`D8PLAY01` = Armageddon); `src/maps.js` lists all 56.
 

@@ -1,7 +1,9 @@
 // The room-selection lobby ("hall", plan §17). A fresh connection lands here: it sees the normal
 // lobby screen used as a room browser. The player rows other than the client's own show the rooms
-// (up to seven), numbered 1..7 in place: the number and a space stay fixed, the map name, the
-// player count and the availability scroll through the remaining 14 characters of the name field.
+// (up to seven), numbered 1..7 in place, as a STATIC 16-character text (maintainer, 26 Sep 2026: no
+// scrolling): "<n> " + the first word of the map name (or "in battle" while a battle runs there)
+// padded to nine characters + "(<players>/<slots>)" in the last five. Availability beyond that
+// (full, slot taken) is carried by the CD icon, the map line and /rooms.
 // The map line repeats the selected room in full; until the player has typed a room number it is
 // EMPTY ('i' "", ""): no room is preselected (maintainer, 12 Sep 2026) and the client's own lobby
 // refresh disables the READY button while the scenario file name is empty (F42), so the button is
@@ -25,16 +27,26 @@ import { VERSION_SHORT } from './version.js';
 export const HALL_TITLE_PREFIX = '>'; // the map line shows the selected room; a room's own title never starts with it
 export const HALL_FILE = 'D8PLAY01.SCN'; // never loaded: no game starts from the hall
 const MAX_TITLE_NAME = 42; // F15: the name part of the title
-const SEPARATOR = '   ';
-const LABEL_WIDTH = 2; // "<n> " stays in place at the start of a room row
-const SCROLL_WIDTH = MAX_NAME - LABEL_WIDTH; // the 14 characters that scroll
+const LABEL_WIDTH = 2; // "<n> " at the start of a room row
+const COUNT_WIDTH = 5; // "(<players>/<slots>)" fills the last five characters of a room row
+const WORD_WIDTH = MAX_NAME - LABEL_WIDTH - COUNT_WIDTH; // 9: the first word of the map name, or IN_BATTLE
+export const IN_BATTLE = 'in battle'; // replaces the map name while the room is not in its lobby (exactly WORD_WIDTH)
 
-/** The `width` characters of `text` visible at scroll position `offset`; short texts do not scroll. */
-export function marquee(text, width, offset) {
-  if (text.length <= width) return text;
-  const s = text + SEPARATOR;
-  const i = offset % s.length;
-  return (s + s).slice(i, i + width);
+/** The first word of a map name, cut to WORD_WIDTH characters ("Armageddon" -> "Armageddo"). */
+export function firstWord(name) {
+  return name.trim().split(/\s+/)[0].slice(0, WORD_WIDTH);
+}
+
+/**
+ * The static text of a room row (maintainer, 26 Sep 2026): "<n> " + the first word of the map name,
+ * or "in battle", padded to nine characters + "(<players>/<slots>)" right-aligned in the last five,
+ * e.g. `1 Plink    (0/6)`, `2 Armageddo(1/6)`, `3 in battle(2/6)`. Always MAX_NAME characters.
+ */
+export function rowText(id, mapName, players, slots, inBattle) {
+  const count = `(${players}/${slots})`.padStart(COUNT_WIDTH);
+  const width = MAX_NAME - LABEL_WIDTH - count.length;
+  const word = (inBattle ? IN_BATTLE : firstWord(mapName)).padEnd(width).slice(0, width);
+  return `${id} `.padEnd(LABEL_WIDTH) + word + count;
 }
 
 export class Hall {
@@ -45,8 +57,7 @@ export class Hall {
     this.now = now;
     this.random = random;
     this.clients = new Set();
-    this.offset = 0;
-    this.lastShift = 0;
+    this.lastRefresh = 0;
   }
 
   get cfg() {
@@ -70,7 +81,7 @@ export class Hall {
     const client = new Client(socket, undefined, now);
     client.owner = this;
     client.wire();
-    if (this.clients.size === 0) this.lastShift = now; // the marquee clock starts with the first visitor
+    if (this.clients.size === 0) this.lastRefresh = now; // the refresh clock starts with the first visitor
     const slot = this.pickSlot();
     client.slot = slot;
     client.name = `Player${slot}`;
@@ -85,21 +96,16 @@ export class Hall {
   }
 
   /**
-   * The six static lines at the top of a hall client's chat (maintainer, 7 Sep 2026: none of them
-   * may scroll away). No player name: "PlayerN" is generated and means nothing. The last line names
-   * the selected room (or says that none is selected yet) and is rewritten in place on every selection.
+   * The two static lines at the top of a hall client's chat (maintainer, 27 Sep 2026: "only two lines
+   * in chat: greeting and map selected" with the hint; six lines from 7 to 27 Sep 2026, none of which
+   * was allowed to scroll away). No player name: "PlayerN" is generated and means nothing. The second
+   * line names the selected room, or says that none is selected yet and how to select one, and is
+   * rewritten in place on every selection.
    */
   headerFor(client) {
     const n = this.pool.rooms.length;
     const sel = this.pool.rooms[client.selected] ?? null;
-    return [
-      `Welcome to Dark Colony server ${VERSION_SHORT}.`,
-      `Type /1../${n} + ENTER to select a room,`,
-      'then press READY to join it.',
-      'The map line shows the selected room.',
-      'You may type your name in your row.',
-      sel ? `Room ${sel.id} (${sel.map.name}) is selected.` : `No room selected. Type /1../${n} + ENTER.`,
-    ];
+    return [`Welcome to Dark Colony server ${VERSION_SHORT}.`, sel ? `Room ${sel.id} (${sel.map.name}) is selected.` : `No room selected. Type /1../${n} + ENTER.`];
   }
 
   /**
@@ -176,30 +182,21 @@ export class Hall {
 
   /** One entry per row: what to show in the name field, the CD icon ("joinable"), type and status. */
   rowsFor(client) {
-    // "<n> " stays in place; the rest scrolls. The details are padded to a common length so that all
-    // rows scroll with the same period and wrap around together (maintainer, 7 Sep 2026)
-    const details = new Array(SLOTS).fill(null);
-    let width = 0;
-    for (let q = 0; q < SLOTS; q++) {
-      const room = this.roomAt(client, q);
-      if (!room) continue;
-      details[q] = this.detail(room, client.slot);
-      width = Math.max(width, details[q].length);
-    }
     const rows = [];
     for (let q = 0; q < SLOTS; q++) {
       if (q === client.slot) {
         rows.push({ text: client.name, flag: 1, type: SLOT_TYPE.HUMAN, status: 1 });
         continue;
       }
-      if (details[q] === null) {
+      const room = this.roomAt(client, q);
+      if (!room) {
         rows.push({ text: '', flag: 0, type: SLOT_TYPE.EMPTY, status: 0 });
         continue;
       }
-      const room = this.roomAt(client, q);
+      const s = room.summary();
       // every room row is a present-not-ready human: the client stays in the lobby (F3), no colour locks (F20)
       rows.push({
-        text: `${room.id} `.padEnd(LABEL_WIDTH) + marquee(details[q].padEnd(width), SCROLL_WIDTH, this.offset),
+        text: rowText(room.id, s.map.name, s.players, s.slots, s.state !== STATE.LOBBY),
         flag: room.canJoin(client.slot) ? 1 : 0,
         type: SLOT_TYPE.HUMAN,
         status: 1,
@@ -246,15 +243,14 @@ export class Hall {
     }
   }
 
-  /** Driven by the step timer: scroll the rows every MARQUEE_MS (this also picks up room changes). */
+  /** Driven by the step timer: every HALL_REFRESH_MS recompute rows, icons and map line from the live room states and send what changed. */
   step(now) {
     if (this.clients.size === 0) {
-      this.lastShift = now;
+      this.lastRefresh = now;
       return;
     }
-    if (now - this.lastShift < this.cfg.MARQUEE_MS) return;
-    this.lastShift = now;
-    this.offset++;
+    if (now - this.lastRefresh < this.cfg.HALL_REFRESH_MS) return;
+    this.lastRefresh = now;
     this.refresh();
   }
 
@@ -373,8 +369,8 @@ export class Hall {
     if (pick) return this.select(client, Number(pick[1]) - 1);
     if (/^\/(rooms|list)$/i.test(body)) return this.listRooms(client);
     if (/^\/help$/i.test(body)) {
-      // three lines of at most 40 characters: the hall leaves four rows for messages (§17.8)
-      return this.sayLines(client, [`/1../${n} + ENTER selects a room.`, '/rooms lists the rooms.', 'READY joins the selected room.']);
+      // three terse rows without a full stop (maintainer, 27 Sep 2026), each within 40 characters
+      return this.sayLines(client, [`/1../${n} + ENTER selects a room`, '/rooms lists the rooms', 'READY joins the selected room']);
     }
     if (body.startsWith('/')) return this.say(client, `Unknown command ${body.split(/\s+/)[0]}, try /help.`);
     if (!body) return undefined;

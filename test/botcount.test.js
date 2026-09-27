@@ -67,7 +67,8 @@ test('/botcount 1 removes the extra bots with DISCONNECT; the master bot in slot
   assert.ok(text.includes('1 bot in this game: Mercenary.'), text);
   a.send(build.lobbyChat(`Player${a.slot}: /help`));
   text = chatOf(a.takeCmds()).join(' ');
-  assert.ok(text.includes('/bottype krusty|rusher|random sets their brain') && text.includes('/bothire on|off'), text); // the first help row scrolls out of the 10-row window
+  assert.ok(text.includes('/botcount N sets the number of bots') && text.includes('/bottype krusty|rusher|random bots brain') && text.includes('/bothire on|off hire a bot for 1000'), text);
+  assert.ok(!text.includes('Bots:') && !text.includes('idle'), 'nothing about the bots\' state or default brain (maintainer, 27 Sep 2026)');
   a.send(build.lobbyChat(`Player${a.slot}: /nonsense 3`));
   text = chatOf(a.takeCmds()).join(' ');
   assert.ok(text.includes('Unknown command /nonsense'), text);
@@ -112,13 +113,16 @@ test('the pinned header shows the count with the bots configured; a room reset g
   const h = new Harness({ SYNC_CHECK: 'shadow', MIN_PLAYERS: 1 }, { engine: eng });
   const a = h.join('A');
   let lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 1 krusty, hire off. /botcount N'), lines.join('|'));
-  assert.ok(lines.some((l) => l === '/bottype, /bothire, /help for more.'), lines.join('|'));
   assert.ok(lines.some((l) => l === 'Mercenary: Hi! I am the AI host.'), lines.join('|'));
+  assert.ok(lines.some((l) => l === '/help lists the commands.'), lines.join('|'));
+  assert.ok(!lines.some((l) => l.startsWith('Bots:')), 'the bot row left the header for /help (maintainer, 27 Sep 2026)');
   a.send(build.lobbyChat(`Player${a.slot}: /botcount 3`));
+  a.take();
+  a.send(build.lobbyChat(`Player${a.slot}: /help`));
   lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 3 krusty, hire off. /botcount N'), lines.join('|'));
-  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.', 'short, no bot names, no price while hiring is off');
+  assert.ok(!lines.some((l) => l.startsWith('Bots:')), '/help names the commands only (maintainer, 27 Sep 2026)');
+  assert.equal(h.room.fakeSlots().length, 3);
+  assert.deepEqual(h.room.lobby.greeting().slice(1), ['Mercenary: Hi! I am the AI host.', '/help lists the commands.'], 'three rows: first phrase only, no bot names, no price');
   h.room.reset();
   assert.equal(h.room.botCount, 1);
   assert.deepEqual(h.room.fakeSlots().map((f) => f.slot), [0]);
@@ -176,13 +180,15 @@ test('/bottype krusty|rusher|random: per room, shown in the header, the brains f
   a.send(build.lobbyChat(`Player${a.slot}: /bottype RUSHER`));
   let lines = chatOf(a.takeCmds());
   assert.equal(h.room.botType, 'rusher');
-  assert.ok(lines.some((l) => l === 'Bots: 1 rusher, hire off. /botcount N'), lines.join('|'));
   assert.ok(lines.some((l) => l.includes('set the bots to rusher')), lines.join('|'));
   assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.');
+  a.send(build.lobbyChat(`Player${a.slot}: /bottype`));
+  lines = chatOf(a.takeCmds());
+  assert.ok(lines.some((l) => l === 'The bots play rusher.'), lines.join('|'));
   a.send(build.lobbyChat(`Player${a.slot}: /botcount 3`));
   a.send(build.lobbyChat(`Player${a.slot}: /bottype random`));
-  lines = chatOf(a.takeCmds());
-  assert.ok(lines.some((l) => l === 'Bots: 3 random, hire off. /botcount N'), lines.join('|'));
+  a.take();
+  assert.equal(h.room.botType, 'random');
   // random: the room's random() decides per bot (1 = rusher, 0 = krusty)
   h.randomSeq = [1, 0, 1];
   a.cdReport();
@@ -220,9 +226,14 @@ test('/bothire on|off: off by default, per room, shown in the header and the gre
   a.send(build.lobbyChat(`Player${a.slot}: /bothire ON`));
   const lines = chatOf(a.takeCmds());
   assert.equal(h.room.botHire, true);
-  assert.ok(lines.some((l) => l === 'Bots: 1 krusty, hire on. /botcount N'), lines.join('|'));
   assert.ok(lines.some((l) => l.includes('set hiring of the bots on')), lines.join('|'));
-  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host. 1000 in battle hires me for 45 s.');
+  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.', 'first phrase only; the price is in /help (maintainer, 27 Sep 2026)');
+  a.send(build.lobbyChat(`Player${a.slot}: /help`));
+  const help = chatOf(a.takeCmds());
+  assert.ok(!help.some((l) => l.startsWith('Bots:')), help.join('|'));
+  assert.ok(help.some((l) => l === '/bothire on|off hire a bot for 1000'), help.join('|'));
+  assert.ok(help.every((l) => l.length <= 40), 'no help row wraps');
+  assert.ok(h.room.lobby.helpLines().every((l) => !l.endsWith('.')), 'one-liners without a full stop (maintainer, 27 Sep 2026)');
   a.send(build.lobbyChat(`Player${a.slot}: /bothire off`));
   a.take();
   assert.equal(h.room.botHire, false);

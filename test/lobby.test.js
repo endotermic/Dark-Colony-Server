@@ -288,7 +288,7 @@ test('a bad MREADY evicts; a second one is a bad MREADY', () => {
   h.stepAfter(33);
   const cmds = cmdsOf(b.take()[0]);
   assert.equal(cmds[0].type, T.UNTIL);
-  assert.ok(cmds.some((c) => c.type === T.DISCONNECT && c.player === a.slot), 'DISCONNECT rides in the first sync frame');
+  assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), "no DISCONNECT in the sync stream: the evicted loader's base stands idle (maintainer, 27 Sep 2026)");
 });
 
 test('INIT_ME re-sends the dump without the version; a second INIT_ME is a strike', () => {

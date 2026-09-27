@@ -1,4 +1,4 @@
-// The room-selection lobby (plan §17): rows, marquee, chat commands, READY as "join", per-room maps.
+// The room-selection lobby (plan §17): static room rows, chat commands, READY as "join", per-room maps.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import { STATE } from '../src/constants.js';
 import { loadConfig } from '../src/config.js';
 import { packPayloads } from '../src/client.js';
 import { CHAT_ROWS } from '../src/chat.js';
-import { HALL_TITLE_PREFIX, marquee } from '../src/hall.js';
+import { HALL_TITLE_PREFIX, IN_BATTLE, firstWord, rowText } from '../src/hall.js';
 import { VERSION_SHORT } from '../src/version.js';
 
 // default rooms: 1 Plink - O (jungle), 2 Armageddon, 3 Black Widow, 4 Circle of Friends, 5 Olympus Mons (desert),
@@ -22,15 +22,14 @@ const windowOf = (cmds) => chatOf(cmds).slice(-CHAT_ROWS);
 /** All chat text joined: lines are wrapped at spaces, so a phrase can be searched across lines. */
 const chatText = (cmds) => chatOf(cmds).join(' ').replace(/\s+/g, ' ');
 
-test('marquee: short texts are static, long texts scroll one character per step and wrap around', () => {
-  assert.equal(marquee('Room', 16, 5), 'Room');
-  const t = 'Armageddon desert (0/6) open';
-  assert.equal(marquee(t, 14, 0), 'Armageddon des');
-  assert.equal(marquee(t, 14, 1), 'rmageddon dese');
-  const period = t.length + 3; // text + separator
-  assert.equal(marquee(t, 14, period), marquee(t, 14, 0));
-  for (let i = 0; i < period; i++) assert.equal(marquee(t, 14, i).length, 14);
-  assert.equal(marquee(t, 14, t.length + 1), `  ${t.slice(0, 12)}`, 'the separator scrolls through before the text repeats');
+test('rowText: "<n> " + the first word of the map (nine places) + "(X/Y)" in the last five, always 16 characters', () => {
+  assert.equal(rowText(1, 'Plink - O', 0, 6, false), '1 Plink    (0/6)');
+  assert.equal(rowText(2, 'Armageddon', 1, 6, false), '2 Armageddo(1/6)', 'a long first word is cut, the count keeps its place');
+  assert.equal(rowText(4, 'Circle of Friends', 6, 6, false), '4 Circle   (6/6)');
+  assert.equal(rowText(7, 'Rings of fire', 2, 6, true), '7 in battle(2/6)', 'a battle replaces the map name');
+  assert.equal(firstWord('  Near..Far  '), 'Near..Far');
+  assert.equal(IN_BATTLE.length, 9);
+  for (const t of [rowText(1, 'A', 0, 6, false), rowText(7, 'Bottlenecks', 8, 8, true)]) assert.equal(t.length, MAX_NAME);
 });
 
 test('packPayloads: commands are concatenated into frames of at most 1021 bytes', () => {
@@ -66,7 +65,9 @@ test('config: ROOMS entries resolve against the map table, custom maps need a na
   assert.equal(dflt.ROOM_LIST[0].name, 'Plink - O', 'the default room 1 is a jungle map');
   assert.equal(dflt.ROOM_LIST[0].terrain, 'jungle');
   assert.equal(dflt.ROOM_LIST[1].name, 'Armageddon');
-  assert.equal(dflt.MARQUEE_MS, 200);
+  assert.equal(dflt.HALL_REFRESH_MS, 200);
+  assert.equal(loadConfig({ MARQUEE_MS: '300' }).HALL_REFRESH_MS, 300, 'the old name of the setting is still read');
+  assert.throws(() => loadConfig({}, { HALL_REFRESH_MS: 10 }), /HALL_REFRESH_MS/);
   assert.ok(dflt.PACK_LOBBY_FRAMES);
   // defaults since 7 Sep 2026: one fake (Mercenary) and one real player is enough to start
   assert.equal(dflt.FAKE_PLAYERS, 1, 'one master bot since 19 Sep 2026 (two from 13 Sep); /botcount adds more per room');
@@ -113,23 +114,16 @@ test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in plac
     assert.equal(nameAt(roomRows[i]).length, 16);
   }
   assert.equal(h.hall.roomAt(c, p.slot), null);
-  assert.equal(nameAt(0), '1 Plink - O jung', "room 1 is always row 0 (Mercenary's slot); the terrain follows the map name");
-  assert.equal(nameAt(roomRows[1]), '2 Armageddon des');
-  assert.equal(nameAt(roomRows[6]), '7 Rings of fire ');
+  assert.equal(nameAt(0), '1 Plink    (0/7)', "room 1 is always row 0 (Mercenary's slot); first word of the map, count in the last five places");
+  assert.equal(nameAt(roomRows[1]), '2 Armageddo(0/7)', 'a first word longer than nine characters is cut');
+  assert.equal(nameAt(roomRows[6]), '7 Rings    (0/7)');
   // the chat window: ten lines, static header on top, no name in front of relay lines (§17.8)
   const chat = chatOf(cmds);
   assert.equal(chat.length, CHAT_ROWS);
   assert.ok(chat.every((t) => t.length >= 1 && t.length <= 40), 'no line wraps on the client');
-  assert.deepEqual(chat.slice(0, 6), [
-    `Welcome to Dark Colony server ${VERSION_SHORT}.`,
-    'Type /1../7 + ENTER to select a room,',
-    'then press READY to join it.',
-    'The map line shows the selected room.',
-    'You may type your name in your row.',
-    'No room selected. Type /1../7 + ENTER.',
-  ]);
-  assert.ok(chat.slice(6).every((t) => t === ' '));
-  assert.deepEqual(hallClient(h, p).chat.header.length, 6, 'all six greeting lines are static');
+  assert.deepEqual(chat.slice(0, 2), [`Welcome to Dark Colony server ${VERSION_SHORT}.`, 'No room selected. Type /1../7 + ENTER.'], 'two header rows (maintainer, 27 Sep 2026)');
+  assert.ok(chat.slice(2).every((t) => t === ' '));
+  assert.deepEqual(hallClient(h, p).chat.header.length, 2, 'both greeting lines are static');
   assert.ok(!chat.some((t) => t.startsWith('Mercenary:')), 'the fake host greets in rooms only');
   assert.equal(h.hall.clients.size, 1);
   assert.equal(h.room.clients.size, 0);
@@ -146,43 +140,38 @@ test('READY without a selection is refused: nothing is preselected, the client s
   assert.equal(h.room.clients.size, 0, 'room 1 did not get the client');
   assert.ok(!cmds.some((cmd) => cmd.type === T.SCENARIO), 'no room dump');
   const win = windowOf(cmds);
-  assert.equal(win[5], 'No room selected. Type /1../7 + ENTER.', 'the header still says so');
-  assert.equal(win[6], 'Select a room first: /1../7 + ENTER.', 'the refusal, below the header');
+  assert.equal(win[1], 'No room selected. Type /1../7 + ENTER.', 'the header still says so');
+  assert.equal(win[2], 'Select a room first: /1../7 + ENTER.', 'the refusal, below the header');
   p.chat('/1');
   p.pressReady();
   assert.equal(p.roomOf(h.pool), h.room, 'after typing the number READY joins');
 });
 
-test('room rows: the number stays in place, the rest is padded to one length so all rows scroll with the same period', () => {
-  const h = new HallHarness({ MARQUEE_MS: 100 });
+test('room rows are static: number, first word and count in place; refreshes send nothing while no room changes', () => {
+  const h = new HallHarness({ HALL_REFRESH_MS: 100 });
   const p = h.enter('A');
   const c = hallClient(h, p);
   p.take();
   p.cdReport();
-  const start = h.hall.rowsFor(c).map((r) => r.text);
-  // the longest detail is "Circle of Friends desert (0/6) open" (35 characters); period = 35 + 3
-  const longest = Math.max(...h.pool.rooms.map((r) => h.hall.detail(r, c.slot).length));
-  assert.equal(longest, 35);
-  const period = longest + 3;
-  for (let i = 0; i < period; i++) {
+  const rows = h.hall.rowsFor(c).map((r) => r.text);
+  const slots = h.pool.rooms[0].summary().slots;
+  assert.equal(rows[h.hall.rowOf(c, 0)], `1 Plink    (0/${slots})`);
+  assert.equal(rows[h.hall.rowOf(c, 1)], `2 Armageddo(0/${slots})`, 'Armageddon loses its last letter to the count');
+  assert.equal(rows[h.hall.rowOf(c, 3)], `4 Circle   (0/${slots})`);
+  assert.equal(rows[h.hall.rowOf(c, 6)], `7 Rings    (0/${slots})`);
+  for (let q = 0; q < 8; q++) {
+    const room = h.hall.roomAt(c, q);
+    if (!room) continue;
+    assert.equal(rows[q].length, MAX_NAME);
+    assert.ok(rows[q].startsWith(`${room.id} `), `row ${q} starts with "${room.id} "`);
+    assert.equal(rows[q].slice(-5), `(0/${slots})`, 'the count occupies the last five places');
+  }
+  for (let i = 0; i < 20; i++) {
     h.advance(100);
     h.step();
-    const now = h.hall.rowsFor(c).map((r) => r.text);
-    if (i < period - 1) assert.notDeepEqual(now, start);
-    for (let q = 0; q < 8; q++) {
-      const room = h.hall.roomAt(c, q);
-      if (room) assert.ok(now[q].startsWith(`${room.id} `), `row ${q} keeps "${room.id} " at offset ${i + 1}`);
-    }
   }
-  assert.deepEqual(h.hall.rowsFor(c).map((r) => r.text), start, 'every room row is back at its start after one common period');
-  // one step in: the number stands, the detail moved by one character
-  h.advance(100);
-  h.step();
-  const rows = h.hall.rowsFor(c);
-  assert.equal(rows[h.hall.rowOf(c, 6)].text, '7 ings of fire j');
-  assert.equal(rows[0].text, '1 link - O jungl');
-  // offset 30 of a 31-character detail padded to 35: the last letter, four padding spaces, the separator, the wrap
-  assert.equal(marquee('Rings of fire jungle (0/6) open'.padEnd(35), 14, 30), 'n       Rings ', 'padding then the wrap');
+  assert.equal(p.takeCmds().length, 0, 'nothing is re-sent while the rooms do not change');
+  assert.deepEqual(h.hall.rowsFor(c).map((r) => r.text), rows, 'the rows never move');
 });
 
 test('the name may be typed in the hall and follows into the room; race, colour and team changes are dropped', () => {
@@ -202,7 +191,7 @@ test('the name may be typed in the hall and follows into the room; race, colour 
   assert.equal(p.takeCmds().length, 0, 'foreign slot dropped');
   h.advance(200);
   h.step();
-  assert.ok(!p.takeCmds().some((c) => c.type === T.NAME && c.player === p.slot), 'the own row is not re-sent by the marquee');
+  assert.ok(!p.takeCmds().some((c) => c.type === T.NAME && c.player === p.slot), 'the own row is not re-sent by the refresh');
   p.chat('/1');
   p.take();
   p.pressReady();
@@ -229,8 +218,8 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   const win = windowOf(cmds);
   assert.equal(win.length, CHAT_ROWS);
   assert.equal(win[0], `Welcome to Dark Colony server ${VERSION_SHORT}.`, 'the header stays on top');
-  assert.equal(win[5], 'Room 3 (Black Widow) is selected.', 'the selection line of the header changed in place');
-  assert.ok(win.slice(6).every((t) => t === ' '), 'no message was added');
+  assert.equal(win[1], 'Room 3 (Black Widow) is selected.', 'the selection line of the header changed in place');
+  assert.ok(win.slice(2).every((t) => t === ' '), 'no message was added');
   assert.ok(win.every((t) => t.length <= 40));
   const scen = cmds.find((cmd) => cmd.type === T.SCENARIO);
   assert.ok(scen.title.startsWith('>3 Black Widow desert (0/7) open\n'), scen.title);
@@ -298,30 +287,45 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   assert.equal(h.pool.rooms[0].state, STATE.LOBBY, 'the other rooms are untouched');
 });
 
-test('the rows scroll: after MARQUEE_MS all seven room rows shift by one character in ONE frame; the own row and map line stay', () => {
-  const h = new HallHarness({ MARQUEE_MS: 300 });
+test('a room change reaches the waiting clients at the next refresh in ONE frame: only that row; a battle there says "in battle"', () => {
+  const h = new HallHarness({ HALL_REFRESH_MS: 300 });
   const p = h.enter('A');
   const c = hallClient(h, p);
   p.take();
   p.cdReport();
-  h.advance(299);
-  h.step();
-  assert.equal(p.takeCmds().length, 0);
-  h.advance(1);
-  h.step();
-  const payloads = p.take();
-  assert.equal(payloads.length, 1, 'one frame per step (F34)');
-  const cmds = cmdsOf(payloads[0]);
-  const names = cmds.filter((cmd) => cmd.type === T.NAME);
-  assert.equal(names.length, 7, 'the seven room rows scroll, the own row does not');
-  assert.ok(!names.some((n) => n.player === p.slot));
-  assert.equal(names.find((n) => n.player === h.hall.rowOf(c, 1)).name, '2 rmageddon dese');
-  assert.equal(cmds.filter((cmd) => cmd.type === T.VAR).length, 0, 'icons unchanged');
-  assert.equal(cmds.filter((cmd) => cmd.type === T.SCENARIO).length, 0, 'the map line does not scroll');
-  assert.equal(cmds.filter((cmd) => cmd.type === T.LOBBY_CHAT).length, 0, 'the chat is not repainted by the marquee');
   h.advance(300);
   h.step();
-  assert.equal(p.takeCmds().find((cmd) => cmd.type === T.NAME && cmd.player === h.hall.rowOf(c, 1)).name, '2 mageddon deser');
+  assert.equal(p.takeCmds().length, 0, 'a refresh without a change sends nothing');
+  // a second player enters room 2
+  const q = h.enter('B');
+  q.take();
+  q.chat('/2');
+  q.pressReady();
+  const room = h.pool.rooms[1];
+  assert.equal(room.clients.size, 1);
+  const slots = room.summary().slots;
+  assert.equal(p.takeCmds().length, 0, 'not before the refresh');
+  h.advance(300);
+  h.step();
+  const payloads = p.take();
+  assert.equal(payloads.length, 1, 'one frame per refresh (F34)');
+  const cmds = cmdsOf(payloads[0]);
+  const names = cmds.filter((cmd) => cmd.type === T.NAME);
+  assert.deepEqual(names.map((n) => [n.player, n.name]), [[h.hall.rowOf(c, 1), `2 Armageddo(1/${slots})`]], 'only the changed row, the own row stays');
+  assert.equal(cmds.filter((cmd) => cmd.type === T.SCENARIO).length, 0, 'no room is selected: the map line stays empty');
+  assert.equal(cmds.filter((cmd) => cmd.type === T.LOBBY_CHAT).length, 0, 'the chat is not repainted');
+  // the room goes into battle: its row says so, the count keeps the last five places
+  q.pressReady();
+  const r = h.enter('C');
+  r.take();
+  r.chat('/2');
+  r.pressReady();
+  r.pressReady();
+  assert.equal(room.state, STATE.STARTING);
+  h.advance(300);
+  h.step();
+  const after = cmdsOf(p.take()[0]).filter((cmd) => cmd.type === T.NAME);
+  assert.deepEqual(after.map((n) => [n.player, n.name]), [[h.hall.rowOf(c, 1), `2 in battle(2/${slots})`]]);
 });
 
 test('a room in battle shows the icon off; nothing is preselected; the map line follows the selected room; READY there is refused', () => {
@@ -338,7 +342,7 @@ test('a room in battle shows the icon off; nothing is preselected; the map line 
   assert.equal(c.selected, -1, 'no room is preselected, not even an open one');
   assert.equal(cmds.find((cmd) => cmd.type === T.SCENARIO).title, '', 'empty map line');
   assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 && cmd.value === 0), 'row 0 = room 1: icon off');
-  assert.ok(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name.startsWith('1 Plink - O'));
+  assert.equal(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name, '1 in battle(1/7)', 'the row says "in battle" instead of the map name');
   p.chat('/1');
   p.pressReady();
   cmds = p.takeCmds();
@@ -396,7 +400,7 @@ test('seven fakes: rooms show (0/1), stay joinable, the fake in the way moves, a
   let cmds = p.takeCmds();
   p.cdReport();
   for (let q = 0; q < 8; q++) assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 + q && cmd.value === 1), `row ${q} joinable`);
-  assert.ok(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === h.hall.rowOf(c, 3)).name.startsWith('4 Circle of Fri'));
+  assert.equal(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === h.hall.rowOf(c, 3)).name, '4 Circle   (0/1)', 'the size shown is the map slots without the fakes');
   const room = h.pool.rooms[3];
   assert.equal(room.seats(), 1, 'one real seat in truth');
   p.chat('/4');
@@ -467,26 +471,29 @@ test("hall chat goes to the other waiting clients under the sender's name; /room
   p.chat('/rooms');
   const list = windowOf(p.takeCmds());
   assert.equal(list.length, CHAT_ROWS);
-  assert.deepEqual(list.slice(6), [
+  assert.deepEqual(list.slice(2), [
+    'Nika: hello all',
+    '1 Plink - O jungle (0/7) open',
+    '2 Armageddon desert (0/7) open',
+    '3 Black Widow desert (0/7) open',
     '4 Circle of Friends desert (0/7) open',
     '5 Olympus Mons desert (0/7) open',
     '6 Hoops of Fury jungle (0/7) open',
     '7 Rings of fire jungle (0/7) open',
-  ], 'six header rows leave four rows for messages');
-  assert.equal(list[1], 'Type /1../7 + ENTER to select a room,');
-  assert.equal(list[5], 'No room selected. Type /1../7 + ENTER.');
+  ], 'the two-row header leaves eight rows: all seven rooms fit (27 Sep 2026)');
+  assert.equal(list[1], 'No room selected. Type /1../7 + ENTER.');
   assert.equal(q.takeCmds().length, 0, 'the list is private');
   // a flood of comments never eats a greeting line
   for (let i = 0; i < 20; i++) p.chat(`comment ${i}`);
   const flood = windowOf(p.takeCmds());
-  assert.deepEqual(flood.slice(0, 6), hallClient(h, p).chat.header);
-  assert.deepEqual(flood.slice(6), ['Nika: comment 16', 'Nika: comment 17', 'Nika: comment 18', 'Nika: comment 19']);
+  assert.deepEqual(flood.slice(0, 2), hallClient(h, p).chat.header);
+  assert.deepEqual(flood.slice(2), [12, 13, 14, 15, 16, 17, 18, 19].map((i) => `Nika: comment ${i}`), 'eight message rows under the two-row header');
   const qFlood = windowOf(q.takeCmds());
-  assert.deepEqual(qFlood.slice(0, 6), hallClient(h, q).chat.header, 'the other client keeps its own header too');
+  assert.deepEqual(qFlood.slice(0, 2), hallClient(h, q).chat.header, 'the other client keeps its own header too');
   assert.equal(qFlood[9], 'Nika: comment 19');
   p.chat('/help');
   const help = windowOf(p.takeCmds());
-  assert.deepEqual(help.slice(7), ['/1../7 + ENTER selects a room.', '/rooms lists the rooms.', 'READY joins the selected room.'], 'three short help lines fit under the header');
+  assert.deepEqual(help.slice(7), ['/1../7 + ENTER selects a room', '/rooms lists the rooms', 'READY joins the selected room'], 'three terse help rows, no full stop');
   p.chat('/9');
   assert.ok(chatText(p.takeCmds()).includes('There is no room 9'));
   p.chat('/dance');
@@ -513,7 +520,7 @@ test('a 4-player room shows (0/3), seats three real players, caps MIN_PLAYERS, a
   assert.equal(c.selected, -1, 'nothing is preselected, full or not');
   assert.equal(cmds.find((cmd) => cmd.type === T.SCENARIO).title, '', 'empty map line');
   assert.equal(h.hall.rowOf(c, 0), 0);
-  assert.equal(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name, '1 Four Corners d');
+  assert.equal(cmds.find((cmd) => cmd.type === T.NAME && cmd.player === 0).name, '1 Four     (3/3)', 'full: the count says so, the row itself has no state word');
   assert.ok(cmds.some((cmd) => cmd.type === T.VAR && cmd.index === 8 && cmd.value === 0), 'full: icon off');
   // rows without a room are empty, except the newcomer's own row, which shows its name
   for (let q = 2; q < 8; q++) {

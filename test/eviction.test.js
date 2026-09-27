@@ -129,10 +129,11 @@ test('MREADY timeout evicts the loader that never reports and lets the rest star
   a.take();
   h.stepAfter(33);
   const cmds = cmdsOf(a.take()[0]);
-  assert.ok(leaveAnnouncement(cmds, c.slot));
+  assert.equal(cmds[0].type, T.UNTIL, 'the battle starts for the two who reported');
+  assert.ok(!leaveAnnouncement(cmds, c.slot), "no DISCONNECT in battle: the loader's base stands idle (maintainer, 27 Sep 2026)");
 });
 
-test('in-game strikes accumulate to an eviction announced in the sync stream', () => {
+test('in-game strikes accumulate to an eviction; nothing is announced in the sync stream (the base stands idle)', () => {
   const h = new Harness({ STRIKE_LIMIT: 3 });
   const a = h.join('A');
   const b = h.join('B');
@@ -150,7 +151,9 @@ test('in-game strikes accumulate to an eviction announced in the sync stream', (
   a.send(createRaw);
   assert.ok(a.gone);
   h.stepAfter(33);
-  assert.ok(leaveAnnouncement(cmdsOf(b.take()[0]), a.slot));
+  const cmds = cmdsOf(b.take()[0]);
+  assert.equal(cmds[0].type, T.UNTIL, 'the game goes on for B');
+  assert.ok(!leaveAnnouncement(cmds, a.slot), 'no DISCONNECT in battle: the game AI never runs on a client (maintainer, 27 Sep 2026)');
 });
 
 test('a socket error evicts like a close', () => {

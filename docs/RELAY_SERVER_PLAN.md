@@ -28,6 +28,7 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | R10 | Disable cheats by not broadcasting | `0x0E` cheat texts, `0x04` flag toggles, `0x03` are dropped. `0x0F` is **not** a cheat: it is the diplomacy screen's "give 1000" (F47) and is relayed since 13 Sep 2026 |
 | R11 | 150 % game speed (200 % until 10 Sep 2026), clients cannot change it | Server sends `TICK_SPEED(44)` itself and drops `0x11/0x12/0x13` from clients |
 | R12 | Clients may drop out or misbehave; a client that does not answer every message correctly is removed and everybody is told it left the lobby or the battle | Per-phase expected answers, deadlines and violation rules (§9); the eviction broadcasts `'h' 0` + `DISCONNECT` in the lobby and a `DISCONNECT` inside the next sync frame in battle |
+| R14 | **Bots run only on the relay, never on a player's machine** (maintainer, 27 Sep 2026: "bots must always run on relay! never allow to run them on customer machine!") | No lobby slot is ever typed computer (`FILL_EMPTY_WITH_AI` removed; clients' `'j'` type messages are dropped), and no `DISCONNECT` is sent during a battle: a leaving player's base becomes a server bot (§19.9) or, without the engine, stands idle (§8.4). The game's own AI (`0x41DBE0` takeover, `FILL_AI_TYPE` slots) is reached only by replayed recordings |
 | R13 | Seven rooms, each with its own map, chosen by the player inside the game's own lobby screen (added 7 Sep 2026, version 2.1) | A room-selection lobby ("hall", §17): the seven player rows that are not the player's own show the rooms, numbered 1..7 in place (F33), with the map name, player count and availability scrolling after the fixed number; the map line repeats the selected room (nothing is preselected since 12 Sep 2026: it asks for a room number until one is typed); chat commands select a room, READY joins it. The name may be typed in the hall and follows the player; race, colour and team cannot be changed there |
 
 ---
@@ -237,10 +238,12 @@ describe the room side; with `HALL=false` they apply to the connection directly.
    the lobby, `MREADY` while starting, an echo for every `UNTIL` in battle) and deadlines for them; a
    client that misses one, or violates the protocol, is evicted and announced to everybody else. The
    rules are in §9. `IDLE_TIMEOUT_MS` (10 s without any byte) is the phase-independent fallback.
-6. Close/error/timeout → free the slot and broadcast `DISCONNECT(slot)`. In the lobby, if the player
-   was ready, broadcast `'h'(0, slot)` first so every client releases its colour lock (F20), then
-   `DISCONNECT(slot)` as a standalone frame. While RUNNING, `DISCONNECT(slot)` is queued into the next
-   sync frame (F19). Exclude the slot from `min(clientTime)`. If no real client remains → `room.reset()`.
+6. Close/error/timeout → free the slot. In the lobby, if the player was ready, broadcast `'h'(0, slot)`
+   first so every client releases its colour lock (F20), then `DISCONNECT(slot)` as a standalone frame.
+   While STARTING or RUNNING **no `DISCONNECT` is sent** (R14, since 27 Sep 2026; until then it was
+   queued into the next sync frame, F19, and handed the base to the game's AI on every client): the base
+   becomes a server bot (§19.9) or stands idle. Exclude the slot from `min(clientTime)`. If no real
+   client remains → `room.reset()`.
 
 ---
 
@@ -317,8 +320,8 @@ server-side colour fix-up and the `READY_WORD`/`READY_BUTTON_COUNTS` options wer
   player index after its start-position shuffle (F24), so it is only range-checked (0..7); `state`
   must be 2, exactly once. Anything else is a hard violation and evicts the client (§9), as the
   original server does.
-- `MREADY_TIMEOUT_MS` (default 30 s): clients that never report are evicted (`DISCONNECT` queued for
-  the first sync frame, their base becomes AI on everybody else's machine). Evicting the last missing
+- `MREADY_TIMEOUT_MS` (default 30 s): clients that never report are evicted (no `DISCONNECT`, R14:
+  their base becomes a server bot when the battle starts, or stands idle). Evicting the last missing
   client completes the transition immediately.
 - When all reported: `time = 0`, `clientTime[s] = 0`, `lastStep = now`, `state = RUNNING`. The first
   sync frame is `[UNTIL(0, 8)][TICK_SPEED 33][CHEAT(0, 0) in debug mode (F28)][0x00]`.
@@ -443,9 +446,12 @@ commands) and nothing else.
 
 ### 8.4 Disconnects and end of game
 
-- Client lost → `DISCONNECT(slot)` queued (F19); its `clientTime` no longer gates pacing. Since
-  13 Sep 2026, when the bots are on and the engine is active, the base becomes a server bot instead
-  and no `DISCONNECT` is sent (§19.9).
+- Client lost → its `clientTime` no longer gates pacing and its pending echoes are dropped. When the
+  bots are on and the engine is active the base becomes a server bot (§19.9, since 13 Sep 2026);
+  otherwise it **stands idle**: units and buildings stay, the survivors must destroy them to win (F49).
+  **No `DISCONNECT` is ever sent in battle** since 27 Sep 2026 (R14): the game's handler `0x41DBE0` would
+  hand the base to Krusty on every client's machine. Until then `DISCONNECT(slot)` was queued (F19) as
+  the fallback.
 - Last real client gone → `reset()`: state LOBBY, all slots 1..7 empty, queue cleared, new random
   assignment for the next joiners. There is no in-game end detection (the server does not simulate);
   the game ends for the server when everybody has left.
@@ -525,18 +531,18 @@ ordinary clicks rather than misbehaviour.
      (F20); then `DISCONNECT(slot)` as a standalone frame (clients empty the slot: type 3, status 0);
      then `'e' "<name> left the lobby (<reason>)"` (no name in front of relay lines, §17.8). A running start countdown is cancelled
      and the ready check is re-evaluated, because the remaining players may now all be ready.
-   - **STARTING**: `DISCONNECT(slot)` is queued for the first sync frame. The others are loading and
-     no longer read lobby messages, and the in-game loop would hold a `0x10` frame until the first
-     `UNTIL` anyway (F19). The slot is removed from the `MREADY` wait list, which may complete the
-     transition at once.
-   - **RUNNING**: `DISCONNECT(slot)` is queued into the next sync frame, so every client processes it
-     at the same tick and prints "<name> lost, AI taking over" (F17). The slot leaves
-     `minClientTime()` and its `pendingEchoes` are dropped.
+   - **STARTING**: nothing is sent (R14, since 27 Sep 2026; before: `DISCONNECT(slot)` queued for the
+     first sync frame). The slot is removed from the `MREADY` wait list, which may complete the
+     transition at once; the base gets a server bot when the battle starts (§19.9) or stands idle.
+   - **RUNNING**: nothing is sent either (before 27 Sep 2026: `DISCONNECT(slot)` in the next sync frame,
+     which made every client print "<name> lost, AI taking over" and run the game's AI for that base).
+     The base becomes a server bot or stands idle; the slot leaves `minClientTime()` and its
+     `pendingEchoes` are dropped.
 4. If no real client remains → `reset()`.
 
-There is no in-game chat from the server; the `DISCONNECT` message itself produces the "lost, AI
-taking over" line on every client. Evicted players cannot rejoin a running game (no late joins, F17);
-they can reconnect once the room is back in LOBBY.
+There is no in-game chat from the server, so the other players see nothing when somebody leaves a
+battle: the base simply stops acting (or is run by a server bot). Evicted players cannot rejoin a
+running game (no late joins, F17); they can reconnect once the room is back in LOBBY.
 
 ### 9.5 Lag eviction
 
@@ -606,8 +612,8 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `HEALTH_PORT` | unset | optional bare TCP liveness port for a Fly check; the game never talks to it |
 | `ROOMS` | `J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07` | 1..7 rooms, one map each (§17.6): `SCENARIO/MPLAYER` file names, looked up in `src/maps.js` (F31); a map not in the table is written `FILE:Name[:terrain]`, name ≤ 42 chars. The 2nd character of the file is the player count and caps the room (F22). Seven at most: one lobby row per room, the eighth row is the player's own (F33). Room 1 is a jungle map (maintainer, 7 Sep 2026); no room is preselected since 12 Sep 2026. Replaces `MAP_FILE`/`MAP_TITLE`/`MAP_TERRAIN` of 2.0 |
 | `HALL` | `true` | the room-selection lobby (§17); `false` = every connection goes straight into room 1 as in 2.0 |
-| `MARQUEE_MS` | `200` | hall: the room rows scroll one character per this many ms (≥ 50); 300 was too slow for the maintainer (7 Sep 2026) |
-| `PACK_LOBBY_FRAMES` | `true` | several commands per lobby frame (F34): one frame per marquee step and per dump; `false` = one command per frame as the original host and 2.0 |
+| `HALL_REFRESH_MS` | `200` | hall: rows, icons and map line are recomputed from the live room states every this many ms (≥ 50) and only changes are sent. Called `MARQUEE_MS` until 26 Sep 2026, when the rows scrolled one character per step (300 was too slow for the maintainer, 7 Sep 2026); the old name is still read |
+| `PACK_LOBBY_FRAMES` | `true` | several commands per lobby frame (F34): one frame per refresh and per dump; `false` = one command per frame as the original host and 2.0 |
 | `STATS_INTERVAL_S` | `30` | in-battle stats log line (latency, ticks behind, pending echoes, stalls); `0` = off |
 | `TICK_MS` | `44` | 150 % speed (F11); `33` = 200 % until 10 Sep 2026 |
 | `LOOKAHEAD` / `MAX_LAG` | `8` / `200` | lockstep constants (F17) |
@@ -626,11 +632,11 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `MERCENARY_NAME` | `Mercenary` | display name of the fake host in slot 0 (`AI Mercenary` from 12 to 19 Sep 2026; maintainer, 19 Sep: "remove AI label"); at most 16 characters (F33) |
 | `FAKE_NAMES` | `Mercenary,Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider` | names for the fakes, slot 0 always `MERCENARY_NAME` (the `AI ` prefixes went on 19 Sep 2026) |
 | `DEBUG_MODE` | `false` | debug mode (also implied by `LOG_LEVEL=debug`): full map view for everybody at game start (F28) |
-| `FILL_EMPTY_WITH_AI` | `false` | empty slots become AI (`0` easy / `1` hard via `FILL_AI_TYPE`) |
+| `FILL_EMPTY_WITH_AI` | removed 27 Sep 2026 | empty slots became AI-typed (`0` easy / `1` hard via `FILL_AI_TYPE`), i.e. the game's own AI ran on every client; R14 rules that out, the relay's bots (`/botcount`) are the computer players |
 | `ALLOW_PAUSE` | `true` | relay pause/resume |
 | `SPEED_REFRESH_S` | `30` | re-send `TICK_SPEED` |
 | `LOG_LEVEL` | `info` | `debug` logs every frame |
-| `SYNC_CHECK` | `off` (`send` in `fly.toml` since 11 Sep 2026) | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
+| `SYNC_CHECK` | `send` (since 27 Sep 2026 - the bots need the engine; `off` until then, `send` in `fly.toml` since 11 Sep 2026; the test harnesses pin `off`) | the battle engine (§18): `off` relay only; `shadow` the engine runs beside the relay, its checksums are logged, recorded and compared with `0x08` messages from clients; `send` = shadow plus one `0x08 (checksum, tick)` in every sync frame. A wrong checksum aborts the *client* ("sync error"), so `send` only with a verified engine |
 | `RECORD_DIR` | unset | record every battle as JSON lines (sync frames, client checksums, engine checksums, MREADY, disconnects) for `tools/replay.js` (§18.4); independent of `SYNC_CHECK` |
 | `RECORD_LOG` | `false` (`on` in `fly.toml` since 18 Sep 2026) | record every battle into the **log** as compact `msg: "replay"` lines (§18.6), lossless for what the clients received: every sync frame byte for byte (UNTIL, the server's `0x08`, the commands) in chunks of 256 frames / 3000 hex characters, every client `0x08`, the events; only the engine's per-tick checksum lines are left out. 4-11 KB per game-minute (about 10 in `send` mode), lines of at most a few KB. `node tools/logs2replay.js --fetch dark-colony-server` rebuilds the recordings from Fly's Logs API (about seven days of history, F50) for `tools/replay.js`. Works beside `RECORD_DIR` |
 | `REPLAY_FILE` | unset | **replay mode** (§18.7): play this recording (a `RECORD_DIR` file or one rebuilt by `tools/logs2replay.js`) back to a real client. One room, no hall, no bots, the recorded speed; the lobby is the recorded one and the recorded sync frames are broadcast byte for byte. `SYNC_CHECK=send` becomes `shadow` (the frames already carry the original checksums) |
@@ -639,6 +645,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `MERCENARY_SLOT` | `0` | lobby slot of the fake host. With 0 nobody sends `0x08` (F14). A higher slot (7) makes the lowest real player the checksum sender, which `shadow`/`RECORD_DIR` need for verification; slot 0 is then never given to a real player (F40) |
 | `BOT_TYPE` | `krusty` | the bots' brain in a fresh room: `krusty` = the port of the game's own computer player (§19.10, `src/engine/krusty.js`), `rusher` = the purpose-built rusher of §19.8 (`src/rusher.js`), `random` = every bot draws one at game start. The players change it per room with **`/bottype T`** (maintainer, 19 Sep 2026: "so there is a possibility to apply rusher too"); a room reset restores the default. Replaces `MERCENARY_AI` (`rusher`/`off` 13-19 Sep 2026): there is no `off` any more - the bots idle only without the engine (`SYNC_CHECK=off`) or in replay mode |
 | `BOT_HIRE` | `false` | may the bots be hired in a fresh room (the 1000-money alliance of §19.8)? Off since 19 Sep 2026 (maintainer: "switch off hiring of bots"); the players turn it on per room with **`/bothire on`**. Off = no offer at the start, a `0x0F` to a bot is returned with a word, the bots stay at peace with each other and nobody's allies |
+| `BOT_TEAM` | `0` | team bots per real player in a fresh room (`/botteam N`, 0..6, §19.11): fake humans on the player's lobby team, in battle its allies with shared vision until the player loses the connection or the game ends; not for hire |
 | `MERCENARY_ALLY_S` | `45` (120 from 13 to 19 Sep 2026) | seconds an alliance bought for 1000 lasts (maintainer, 19 Sep 2026: "hiring of the bot must remain for 45 sec"); payments arriving while one runs are returned (§19.8) |
 | `MERCENARY_THINK_TICKS` | `32` | decision interval of a bot in game ticks (the original AI's 32, F45) |
 | `BOT_SEED` | `0` | seed of the bots' private RNG (the krusty bot walks the game's `rand()` table on its own index); `0` = random per game, else bot *i* starts at `(BOT_SEED + 17 i) & 0xFF`, which makes a recorded game's bot decisions reproducible (§19.10) |
@@ -1870,6 +1877,16 @@ played the Council Wars briefings for `mission/h1..h7.wav`; its call at `0x00405
 
 **25 Sep 2026, maintainer question "investigate if 'dark colony' missions in ultimate version use calibration data for that set of missions?"** - F70, investigation only, nothing changed. Answer: yes, DARK COLONY, LOAD DC GAME and ACADEMY in Dark Colony Ultimate play with Classic's own balance tables, the same 106-type root `GAMESTAT/` set that `Dark Colony.exe` reads. Trace in `dcexp16.asm`: the six table loaders are called in a row by `load_tables 0x43C4AC`, whose only caller is the game-state initialiser `0x41BB50` - run at every battle start (battle function `0x40122C`, all eight game-start sites) and on every save load (`0x40DD0E`) - and every loader opens through the prefix helper `0x4063E4` (`<prefix>` + name, then the bare root name). The `dc/` overlay holds no `gamestat/`, so every table falls through to the root; the tables are rewritten into the global arrays each time, nothing is cached from a previous mode. COUNCIL WARS mode would give the same numbers for the shared units (`exp/gamestat/gamestat.txt` = root + 12 appended types, no other expansion table; `exp/gamestat/gxmestat.txt` is unreferenced), only the OZI set is re-balanced and only under `ozi_ns/`. A save stores the type count and is refused on a mismatch, consistent with LOAD DC GAME setting `dc/` first. Shared by every mode because loaded once at start-up under `exp/`: the sound table (`exp/sound/sound2.dat`, 12 ambience entries differ from root - audio only) and the animation list (`exp/animozi.dat`, Classic-identical in the simulation since F65). `DC16_DISPLAY_AND_RESOLUTION.md` §10.36, `DC16_SINGLE_EXE_MERGE.md` §5.1 corrected (it had assumed the expansion's gamestat would be used).
 
+**26 Sep 2026, maintainer: "relay server. map selection lobby. disable scroll of maps. these fields must be static. format must be this: [number of the room]+[space]+[first word of map name]+[players on the map in format as it is now (X/Y)]. If room is in battle then instead of map name show info about that. Players in map indicator must always occupy last four character places in slot."** - §17.2, server only. The hall's room rows no longer scroll: `Hall.rowText` builds a static 16-character text `"<n> "` + the first word of the map name padded to nine places + `"(<players>/<slots>)"` in the last five (`1 Plink    (0/6)`; a word longer than nine characters is cut, `2 Armageddo(0/6)`; `2 in battle(2/6)` while the room is not in its lobby). The `(X/Y)` indicator is five characters, so it fills the last five places rather than four - the request's "as it is now" (parentheses included) was kept over its "four"; a four-place variant would have to drop a parenthesis. `full` / `slot taken` left the row (the CD icon, the map line and `/rooms` keep them). The step timer still recomputes rows, icons and map line from the live room states every `HALL_REFRESH_MS` (the setting was `MARQUEE_MS`; the old name is still read, `src/config.js`) and sends only changes in one frame (F34), so a quiet hall sends nothing (the scrolling cost about 0.7 KB/s per waiting client). Tests rewritten (`test/hall.test.js`: row format, no traffic without a change, one frame per change, the in-battle row; `test/integration.test.js` checks the format of the rows the fake clients saw); `tools/fakeclient.js` records `hallRows` instead of counting scroll steps. Confirmed by the maintainer against a local server on 27 Sep 2026 ("works").
+
+**27 Sep 2026, maintainer (after testing the static rows locally): "in room lobby shorten Mercenary greeting to first phrase. add "/help" as third line where commands will be described."** - `src/lobby.js` `greeting()` / `helpLines()`. The room header is three rows again: the room line, `Mercenary: Hi! I am the AI host.` (the ` 1000 in battle hires me for 45 s.` suffix while hiring is on and the ` My base stays idle.` of the engine-less server are gone) and `/help lists the commands.` (`HELP_LINE`). The four-row header of 19 Sep (bots row `Bots: 1 krusty, hire off. /botcount N`, commands row `/bottype, /bothire, /help for more.`) is history; `/botcount`, `/bottype` and `/bothire` no longer repaint the header (nothing in it changes), the players see their broadcast line instead. `/help` answers with the current settings first - `Bots: N <type>, hire on|off.` or `The bots stay idle (no battle engine).` - then `/botcount N sets the number of bots (1..7).`, `/bottype krusty|rusher|random sets their brain.`, `/bothire on|off: 1000 hires a bot 45 s.` (`MERCENARY_ALLY_S`); every row is at most 40 columns, so with the three header rows the answer fits the ten-row window (F35). Two follow-ups minutes later: "remove this line 'All here? READY starts the game.'" (gone), and - the maintainer's local test server had run with the code default `SYNC_CHECK=off`, so `/help` opened with "The bots stay idle (no battle engine)." - "remove line that bots stay idle! Bots must use krusty by default! don't write about default state of the bots brain!": the state row is gone (`/help` = the three command rows, `/botcount` / `/bottype` / `/bothire` without an argument still report the settings), and **`SYNC_CHECK` defaults to `send`** (§11), the value Fly has run since 11 Sep 2026, so a plain `node src/index.js` loads the engine and the bots play Krusty; `test/helpers.js` and the integration tests pin `off` so no test changed behaviour. Confirmed locally by the maintainer the same day. Replay rooms keep their own greeting. Tests updated (`botcount`, `mercenary`, `hall`, `lobby`), 245 tests.
+
+**27 Sep 2026, maintainer: "bots must always run on relay! never allow to run them on customer machine!"** - R14. Audit of every path by which a client's own game could run Krusty: (1) lobby slot types - the server never typed a slot computer except through `FILL_EMPTY_WITH_AI`, and clients' `'j'` TYPE messages are dropped as host-owned; (2) the in-battle `DISCONNECT`, whose handler `0x41DBE0` switches the lost player to AI control on every client (protocol doc §6.6) - sent by `Game.onClientLeft` whenever `Bots.takeOver` could not make a server bot (bots off, engine off, engine disabled by a divergence or a start-shuffle mismatch, `AiPlayer` not active), also for a loader evicted during STARTING; (3) the engine's own `ai.js` runs only inside the server. Closed both: `FILL_EMPTY_WITH_AI` / `FILL_AI_TYPE` are gone (`Room.emptySlot` is always type 3; an env value is ignored), and `Game.onClientLeft` clears the pending echoes without queuing anything - a leaving player's base stands idle when no bot takes it over (`room.leave` logs "...; the base stands idle"). Consequences: the survivors get no "lost, AI taking over" line (the server has no in-game chat), the idle base keeps its units and buildings and must be destroyed for the victory check (F49), and `send` mode keeps running because the engine sees no AI takeover; `SyncCheck`'s `aiTakeover` / `AI_SEND` path is reached only by replayed recordings that carry a `DISCONNECT`. Lobby `DISCONNECT`s (leaving the lobby, `/botcount` removing fakes, the hall-to-room dump) are unchanged: in the lobby the message only empties a slot. Tests: `game`, `eviction`, `lobby`, `mercenary`, `synccheck` and the integration test now assert the absence of the message; 245 tests. Not yet seen with a real client leaving a battle.
+
+**27 Sep 2026, maintainer: "add one more command for lobby. '/botteam N' sets for each client N bots which are always teamed with client with shared vision until either player looses connection or game ends."** - §19.11, `BOT_TEAM`. Every real player gets N team bots: fake humans on the player's lobby team (allied by the game at the start), which in the first sync frame add the shared-vision relation both ways (the game shares vision for equal teams only between AI-typed slots) and keep the bond until the player's connection is lost (then `relations(0)`, "X is gone. I fight for myself now.") or the game ends; not for hire (payments returned), allied with each other and with a bot their player hires (`syncPacts` on `alliedPlayer`). Lobby side: random free slots, pool names, `'n'` follows the owner's team cycles, removed with the owner or by `/botteam 0`; `/botcount` counts the free bots only. `/help` gained the row `/botteam N: N allied bots per player.`. New `test/botteam.test.js`. Not yet seen in the real game.
+
+**27 Sep 2026, maintainer: "in /help commands must be one liners without dot at the end. 'sets the number of bots', 'bots brain'. and in maps selection lobby there must be only two lines in chat: greeting and map selected with the hint as it appears now 'Type /1../7 + ENTER'."** - `Lobby.helpLines` = `/botcount N sets the number of bots` · `/botteam N allied bots per player` · `/bottype krusty|rusher|random bots brain` · `/bothire on|off hire a bot for 1000` (the hall's `/help` rows lost their full stops too); `Hall.headerFor` = two rows, `Welcome to Dark Colony server 2.3.` and `No room selected. Type /1../7 + ENTER.` / `Room <n> (<map>) is selected.` (§17.2 step 7, §17.8), which leaves eight rows for messages (`/rooms` shows all seven rooms). Tests adjusted (`hall`, `botcount`, `botteam`). Not yet seen in the real game.
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -1911,33 +1928,39 @@ packed frame (F34; `PACK_LOBBY_FRAMES=false` gives one command per frame as in �
 | 4 | for every row q ≠ p: `'g' q,text_q` · `'f' 0,q` · `'j' 2,q` · `'n' q,q` · `'h' 1,q` | every row is a present-not-ready human, so the client stays in the lobby (F3) and no colour is ever locked (F20) |
 | 5 | for p: `'g' p,<player name>` · `'f' 0,p` · `'j' 2,p` · `'l' p,p` · `'n' p,p` · `'h' 1,p` | the own row shows the player's name: the client never repaints its own field from an incoming `'g'` (F33), so this row cannot carry room text |
 | 6 | `'o' v,default` for v = 0..7, then `'o' 8+q, joinable_q` for q = 0..7 | the per-row CD icon (cosmetic, F5) marks the rooms this client can join right now |
-| 7 | the chat window | ten `'e'` lines (§17.8): the six-row header `Welcome to Dark Colony server 2.1.` · `Type /1../7 + ENTER to select a room,` · `then press READY to join it.` · `The map line shows the selected room.` · `You may type your name in your row.` · `No room selected. Type /1../7 + ENTER.` (becomes `Room <n> (<map>) is selected.` once a room is chosen), then blanks |
+| 7 | the chat window | ten `'e'` lines (§17.8): the two-row header `Welcome to Dark Colony server 2.3.` · `No room selected. Type /1../7 + ENTER.` (becomes `Room <n> (<map>) is selected.` once a room is chosen), then blanks. Two rows since 27 Sep 2026 (maintainer: "only two lines in chat: greeting and map selected" with the hint); from 7 to 27 Sep 2026 four more rows sat between them (`Type /1../7 + ENTER to select a room,` · `then press READY to join it.` · `The map line shows the selected room.` · `You may type your name in your row.`) |
 
 Rows and map line: the rooms fill the rows in order, skipping the client's own row `p`, so row 0
 (Mercenary's slot) is always room 1 and the rooms after the own row sit one row lower than their
-number. Every room row starts with `"<n> "`, which never moves; the remaining 14 characters scroll.
+number. Every room row is a static 16-character text (below; until 26 Sep 2026 the 14 characters after `"<n> "` scrolled).
 The map line repeats the selected room in full (42 characters are free, F15, so nothing scrolls
 there) and is re-sent when the selection or that room's state changes; selecting does not touch the
 rows. With fewer than seven rooms the remaining rows are empty (type 3, status 0). (An interim
 version of 7 Sep 2026 showed eight rooms by moving the selected one out of the rows into the map
 line; the maintainer found room 1 "lost" that way and asked for rows 1..7 that stay in place.)
 
-Row text: `"<n> "` + `"<map name> <terrain> (<players>/<slots>) <state>"` (e.g. `1 Plink - O jungle (0/7) open`; the terrain was asked for after the fourth live test) with `slots` = the map's player count
-minus one (Mercenary's slot; fakes are idle bases, not participants), state ∈ `open`, `full`,
-`in battle`, `slot taken` (this client's slot is held by a real player there); never a `':'` (the
-chat prefix is split at the first colon). The scrolling parts are padded with spaces to the length
-of the longest one, so that all rows scroll with the same period and wrap around together (third
-live test: unequal lengths made the rows drift apart). A part longer than the 14 characters scrolls
-one character per `MARQUEE_MS` (200 ms) with three spaces between the end and the wrap-around; a
-short one stands still. Every step recomputes the map line, the rows and the icons from the live room
-states and sends only what changed, **in one frame** (F34), so state changes (a room starts, fills
-or empties) show up within one step. No default selection (maintainer, 12 Sep 2026; until then the
+Row text (maintainer, 26 Sep 2026: "disable scroll of maps. these fields must be static"; `Hall.rowText`):
+`"<n> "` + the **first word of the map name** padded to nine places + `"(<players>/<slots>)"` in the
+**last five places**, always 16 characters: `1 Plink    (0/6)`, `4 Circle   (0/6)`; a first word longer
+than nine characters is cut (`2 Armageddo(0/6)`), and while the room is not in its lobby the word is
+replaced by `in battle` (`2 in battle(2/6)`). `slots` = the map's player count minus the fake players
+(bots are not seats). The `(X/Y)` indicator is five characters wide, so it fills the last five places
+(the request said "four"; the indicator "as it is now", parentheses included, was kept). The states
+`full` and `slot taken` are no longer in the row: the CD icon (joinable), the map line (unchanged
+format `>2 Armageddon desert (2/6) in battle`) and `/rooms` carry them; never a `':'` in a row (the
+chat prefix is split at the first colon). Every `HALL_REFRESH_MS` (200 ms) the server recomputes the
+map line, the rows and the icons from the live room states and sends only what changed, **in one
+frame** (F34), so a state change (a room starts, fills or empties) shows up within one step and an
+unchanged hall sends nothing. History: from 7 to 26 Sep 2026 the 14 characters after the number
+scrolled `"<map name> <terrain> (<players>/<slots>) <state>"` one character per `MARQUEE_MS`, padded
+to a common length so that all rows wrapped together (third live test: unequal lengths made the rows
+drift apart); the terrain was asked for after the fourth live test. No default selection (maintainer, 12 Sep 2026; until then the
 lowest-numbered joinable room, else room 1, was preselected): a room is selected only by typing its
 number, the map line is empty until then (which disables the client's READY button, F42), and a
 stray READY before a selection is refused (§17.3).
 
-Cost: one frame of at most about 150 bytes per step per waiting client, roughly 0.7 KB/s at
-200 ms, far below the battle stream.
+Cost: nothing while the rooms do not change; a change is one frame of a few dozen bytes per waiting
+client (the scrolling of 7-26 Sep 2026 cost about 0.7 KB/s per waiting client).
 
 ### 17.3 Messages from a client in the hall
 
@@ -1960,7 +1983,7 @@ Cost: one frame of at most about 150 bytes per step per waiting client, roughly 
 |---|---|
 | `/1` … `/7`, a bare digit, `/join N` | select room N: the map line shows it, the rows stay, the header's last line becomes `Room N (<map>) is selected.`; if the room cannot be joined right now a message `Room N: <reason>.` follows |
 | `/rooms`, `/list` | one line per room: `"N <map> (k/s) <state>"` |
-| `/help` | three lines of at most 40 characters: `/1../7 + ENTER selects a room.` · `/rooms lists the rooms.` · `READY joins the selected room.` |
+| `/help` | three rows of at most 40 characters, no full stop (maintainer, 27 Sep 2026): `/1../7 + ENTER selects a room` · `/rooms lists the rooms` · `READY joins the selected room` |
 | other `/word` | `"Unknown command /word, try /help."` |
 | anything else | relayed to every client waiting in the hall as `"Player<p>: text"` (the sender's real name replaces the row-text prefix) |
 
@@ -2038,14 +2061,17 @@ anything itself) and renders exactly ten lines, header first, messages below, bl
 chat event (a relay line, a player's line, a room's announcement, `/rooms`) appends to the affected
 clients' views and sends each of them its ten lines in one packed frame. What the client shows is
 therefore always the render, with the header on top. Entering a room replaces the view (new header,
-no old lines). Headers: hall **six rows** (`Welcome to Dark Colony server 2.1.`, the two command
-lines, `The map line shows the selected room.`, `You may type your name in your row.`, `Room <n>
-(<map>) is selected.`, which reads `No room selected. Type /1../7 + ENTER.` before the first
-selection; the last one is rewritten in place on every selection), room one row (`Room
-<n>: <map>, <terrain>, <k> players.`); the rest is for messages: four rows in the hall (so `/rooms`
-shows its last four lines and `/help` is three short lines), nine in a room. The tenth live test
-showed the three instruction lines scrolling away under a flood of comments while the three header
-lines stayed; the maintainer wanted all six to stay, hence the six-row header.
+no old lines). Headers: hall **two rows** since 27 Sep 2026 (`Welcome to Dark Colony server 2.3.` and
+`Room <n> (<map>) is selected.`, which reads `No room selected. Type /1../7 + ENTER.` before the
+first selection and is rewritten in place on every selection; maintainer: "only two lines in chat:
+greeting and map selected" with the hint), room **three rows** (`Room <n>: <map>, <terrain>, <k>
+players.`, `Mercenary: Hi! I am the AI host.`, `/help lists the commands.`); the rest is for
+messages: eight rows in the hall (`/rooms` shows all seven rooms, `/help` three short rows), seven in a
+room. History: from 7 to 27 Sep 2026 the hall header had six rows (the two command lines, `The map
+line shows the selected room.`, `You may type your name in your row.` between the two that remain) -
+the tenth live test had shown the instruction lines scrolling away under a flood of comments while
+the three header lines stayed, and the maintainer then wanted all six to stay; on 27 Sep 2026 the
+static room rows made most of them redundant.
 `"Name: text"` form, since that is what the player typed; the hall replaces that prefix with the
 name the server knows.
 
@@ -2522,7 +2548,7 @@ switched to be the same fake human bot that can be allied with."
   "<name> left the battle. I run this base now: 1000 buys my alliance for 120 seconds. And I rush."
   A client that leaves while everybody is loading (STARTING) is remembered and gets its bot when the
   battle starts. Without the engine (or with `MERCENARY_AI=off`, or after a divergence) the room
-  falls back to `DISCONNECT` as before. A bot's `isAlly` also honours a mutual alliance the game
+  fell back to `DISCONNECT` until 27 Sep 2026; since then the base stands idle (R14). A bot's `isAlly` also honours a mutual alliance the game
   already has (lobby team, an alliance the leaver had made), so an inherited base does not turn on
   its former allies.
 * Not done: the server has no end detection of its own (F49: the clients end the game and leave).
@@ -2596,6 +2622,38 @@ count of bots is set with `/botcount`; by default only the bare minimum, one mas
   the multiplayer maps is fun against one human - it builds the standard base and sends 75 % of its army
   at the nearest contested zone, tunable through `aimsg`-equivalent settings if the maintainer wants
   them exposed (`BOT_SPLIT_PERCENT`, `BOT_CLASS_WEIGHTS` of §19.4 are not implemented).
+
+### 19.11 Team bots: `/botteam N` (27 Sep 2026)
+
+Maintainer: "add one more command for lobby. '/botteam N' sets for each client N bots which are
+always teamed with client with shared vision until either player looses connection or game ends."
+
+* **Lobby.** `Room.botTeam` (default `BOT_TEAM` = 0, back to it at every reset like the other
+  settings) is set with `/botteam N` (0..6) in the room chat; `/botteam` alone reports it. Every real
+  player in the room, and every later joiner, gets N **team bots**: fake humans (`fakeSlot(s, name,
+  owner)`, `owner` = the player's lobby slot) in random free slots, named from the pool after the free
+  bots (else `Bot <slot>`), **on the player's lobby team** (`'n'` = the owner's team; `Room.followTeam`
+  re-sends it when the owner cycles its team, `relocateFake` keeps it). They are announced like a
+  joiner's dump (a joiner's own dump already carries them) and leave with a lobby `DISCONNECT` when
+  their player leaves the lobby or `/botteam` shrinks. `/botcount` counts the **free** bots only
+  (`Room.freeBots`); its ceiling `maxBots` subtracts the team bots. Limit: N ≤ ⌊(capacity − free bots −
+  players) / players⌋ for the players present; a later joiner gets as many as still fit and is told so.
+* **Battle.** The game allies equal lobby teams at the start (`0x4018BB`; matrix 0 = alliance) but sets
+  the vision matrix 1 only for AI-typed slots (`scenario.js`, `records[a].type !== SLOT_HUMAN`), so an
+  `AiPlayer` with an `owner` builds its **bond** in `onRunning` - `{ player: client.gamePlayer, client,
+  name }` - and queues `relations(player, 1)` (the four `0x0D`: alliance and vision, both directions;
+  the alliance half is repeated, harmless) into the first sync frame, then tells its player "I fight at
+  your side: allied, shared eyes, all battle long." `isAlly` and `alliedPlayer` honour the bond (the
+  rusher spares the player, Krusty reads the engine's alliance bytes), `onGift` returns any 1000 with
+  "I am X's team bot for this whole battle" (a team bot is not for hire), and `Bots.syncPacts` treats the
+  bond like a deal, so the team bots of one player are allied with each other too (equal team anyway)
+  and with a bot that player hires. **End of the bond:** the player loses the connection - `onClientLeft`
+  queues `relations(player, 0)`, says "X is gone. I fight for myself now." and the bot is an ordinary
+  rival from then on (also to the takeover bot or idle base that inherits X's units, R14) - or the game
+  ends. A team bot whose player left while everybody was loading starts free.
+* **Wire.** Nothing new: `'n'` team values in the lobby, `0x0D` diplomacy and `0x0E` chat in battle,
+  all of them commands the original host relays. Tests: `test/botteam.test.js` (lobby allocation,
+  joiner, team cycle, leaving, limits, `/botcount` interplay, the bond's commands and its end).
 
 ### 19.7 Risks and open points
 

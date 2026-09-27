@@ -365,8 +365,13 @@ export class Game {
     }
   }
 
+  /**
+   * A client left the battle and no server bot took its base: it falls silent. No DISCONNECT is
+   * queued (it was, until 27 Sep 2026): the game's DISCONNECT handler `0x41DBE0` hands the base to
+   * Krusty on every client's machine, which the maintainer rules out ("bots must always run on
+   * relay"). The idle base stays a human on the wire; the others must destroy it to win (F49).
+   */
   onClientLeft(client) {
     client.pendingEchoes.clear();
-    this.queue.push(build.disconnect(client.slot));
   }
 }

@@ -6,6 +6,40 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Static room rows in the hall** (26 Sep 2026, maintainer request; plan §17.2 + §16 entry of 26 Sep):
+  the seven room rows of the room-selection lobby no longer scroll. Each is a fixed 16-character text:
+  room number, a space, the first word of the map name (nine places, a longer word is cut) and
+  `(players/seats)` in the last five places, e.g. `1 Plink    (0/7)`, `2 Armageddo(1/7)`; `in battle`
+  replaces the map name while a battle runs there. `full` / `slot taken` are shown by the CD icon, the
+  map line and `/rooms` only. The setting `MARQUEE_MS` is now `HALL_REFRESH_MS` (how often the rows,
+  icons and map line are recomputed from the live rooms; only changes are sent, a quiet hall sends
+  nothing); the old name is still read. `tools/fakeclient.js` records the hall rows (`hallRows`).
+- **Terse `/help`, two-row hall header** (27 Sep 2026, maintainer request; plan §16 entry of 27 Sep): the
+  room's `/help` rows are one-liners without a full stop (`/botcount N sets the number of bots`,
+  `/botteam N allied bots per player`, `/bottype krusty|rusher|random bots brain`, `/bothire on|off
+  hire a bot for 1000`), and the room-selection lobby's chat header is down to two rows, the greeting
+  and `No room selected. Type /1../7 + ENTER.` / `Room <n> (<map>) is selected.`; eight rows are left
+  for messages there, so `/rooms` shows all seven rooms.
+- **`/botteam N`: team bots** (27 Sep 2026, maintainer request; plan §19.11 + §16 entry of 27 Sep,
+  setting `BOT_TEAM`): every real player in the room gets N bots (0..6) on its lobby team, which in
+  battle are its allies with shared vision until the player loses the connection or the game ends.
+  Later joiners get theirs too; a player's team bots follow its team cycles and leave with it; they are
+  not for hire and ally with each other and with a bot their player hires. `/botcount` counts the free
+  bots only; `/help` names the new command.
+- **Bots run only on the relay** (27 Sep 2026, maintainer rule; plan R14 + §16 entry of 27 Sep): a player
+  who leaves a battle no longer causes a `DISCONNECT` in the sync frames. That message made every
+  client's game run Krusty for the lost base whenever the server could not take it over with a bot of
+  its own (engine off or disabled). Now the base becomes a server bot when the engine plays, otherwise it
+  stands idle; the survivors see no "lost, AI taking over" line and must destroy the idle base to win.
+  The settings `FILL_EMPTY_WITH_AI` / `FILL_AI_TYPE` (AI-typed lobby slots, off by default) are removed
+  for the same reason. Lobby `DISCONNECT`s are unchanged.
+- **Room greeting: three rows** (27 Sep 2026, maintainer request; plan §16 entry of 27 Sep): the pinned
+  header of a room's chat is the room line, `Mercenary: Hi! I am the AI host.` (first phrase only, the
+  hire price is gone from it) and `/help lists the commands.`; the bots row (`Bots: 1 krusty, hire off.
+  /botcount N`) and the commands row of 19 Sep are gone. `/help` names `/botcount`, `/bottype` and
+  `/bothire` (with the price and the alliance length), every row within 40 columns, and says nothing
+  about the bots' state or default brain. **`SYNC_CHECK` defaults to `send`** (the Fly value since
+  11 Sep 2026), so a plain `node src/index.js` runs the engine and the Krusty bots; `off` = relay only.
 - **Eviction log lines carry the battle numbers** (25 Sep 2026; plan F66 + §16 entry of 25 Sep): after
   a player was dropped mid-game with `no echo for frame 20116` and saw "Connection Lost" (the client's
   reaction to the relay closing the socket, read from the battle loop `0x40115C` / client step

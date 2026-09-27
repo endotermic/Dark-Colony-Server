@@ -92,7 +92,8 @@ export class SyncCheck {
     }
     if (lobby.slots.some((s) => s.type === 0 || s.type === 1)) {
       // the game's own AI plays those slots on every client; the engine runs the same AI
-      // (engine/ai.js, 19 Sep 2026) but the port is unverified against a real client (plan §19.10)
+      // (engine/ai.js, 19 Sep 2026) but the port is unverified against a real client (plan §19.10).
+      // Only a replayed recording can bring such slots here since 27 Sep 2026 (no AI fill any more)
       if (this.mode === 'send' && !r.config.AI_SEND) {
         this.disable('computer players in the lobby: the AI port is unverified (set AI_SEND=true to send anyway)');
         return;
@@ -234,6 +235,7 @@ export class SyncCheck {
     if (type === T.UNTIL || type === T.SYNC || type === T.TICK) return;
     this.engine.applyCommand(raw);
     if (type === T.DISCONNECT) {
+      // only in a replayed recording since 27 Sep 2026 (a live room never sends an in-battle DISCONNECT):
       // the lost player's base goes to the game's AI (0x41DBE0) on every client and, since 19 Sep 2026,
       // in the engine too (engine/ai.js runs the Krusty port after record(t)). The port has not been
       // verified against a real client yet, so `send` stops unless AI_SEND says otherwise; `shadow`

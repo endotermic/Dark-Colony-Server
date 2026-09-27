@@ -225,7 +225,7 @@ test('the 0x08 counts against the command budget and yields to a full-size comma
   assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.SELECT, T.DESELECT, T.DESELECT], 'checksum skipped, both groups fit without it');
 });
 
-test('a DISCONNECT hands a base to the AI, which is not ported: send mode stops, shadow mode goes on', () => {
+test('an evicted player in send mode: no DISCONNECT, the engine keeps running; a replayed DISCONNECT still stops send mode', () => {
   const h = new Harness({ SYNC_CHECK: 'send', ECHO_TIMEOUT_MS: 100 }, { engine: fakeEngine() });
   const [a, b] = startBattle(h);
   h.stepAfter(33);
@@ -234,15 +234,18 @@ test('a DISCONNECT hands a base to the AI, which is not ported: send mode stops,
   h.advance(200);
   h.tick();
   assert.ok(b.gone);
-  h.stepAfter(33); // the frame with DISCONNECT(b)
+  h.stepAfter(33);
   const cmds = cmdsOf(a.take()[0]);
-  assert.ok(cmds.some((c) => c.type === T.DISCONNECT));
+  assert.ok(!cmds.some((c) => c.type === T.DISCONNECT), 'no in-battle DISCONNECT since 27 Sep 2026');
+  assert.ok(h.room.sync.active, 'the engine is still in step: nothing was handed to the clients\' AI');
+  // a DISCONNECT inside a frame (only a replayed recording can carry one now) hands the base to the
+  // game's AI, whose port is unverified: send mode stops
+  h.room.sync.feed(h.room.sync.engineTime + 1, build.disconnect(b.slot));
   assert.ok(!h.room.sync.active);
   assert.match(h.room.sync.disabledReason, /AI took over/);
+  // AI-typed lobby slots cannot be configured any more (FILL_EMPTY_WITH_AI removed: the override is ignored)
   const h2 = new Harness({ SYNC_CHECK: 'send', FILL_EMPTY_WITH_AI: true }, { engine: fakeEngine() });
-  startBattle(h2);
-  assert.ok(!h2.room.sync.active);
-  assert.match(h2.room.sync.disabledReason, /computer players/);
+  assert.ok(h2.room.slots.every((s) => s.type !== 0 && s.type !== 1), 'no computer slots');
 });
 
 test('MERCENARY_SLOT=7 pins the fake host to slot 7 and keeps slot 0 unused', () => {

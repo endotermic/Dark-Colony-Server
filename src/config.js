@@ -11,7 +11,7 @@ export const DEFAULTS = Object.freeze({
   // place; the map line repeats the selected one (no room is preselected since 12 Sep 2026). Room 1 is a jungle map.
   ROOMS: 'J8PLAY01,D8PLAY01,D8PLAY02,D8PLAY03,D8PLAY05,J8PLAY02,J8PLAY07',
   HALL: true, // false = every connection goes straight into room 1 (the 2.0 behaviour)
-  MARQUEE_MS: 200, // hall: one character of scrolling per step in the room rows
+  HALL_REFRESH_MS: 200, // hall: rows, icons and map line are recomputed from the live rooms this often; MARQUEE_MS until 26 Sep 2026 (the rows scrolled)
   PACK_LOBBY_FRAMES: true, // several commands per lobby frame (F34); false = one command per frame as in 2.0
   PROTOCOL_VERSION: 15,
   TICK_MS: 44, // 150 % (options screen: ms = 6600 / percent), the single-player default since 10 Sep 2026
@@ -35,8 +35,8 @@ export const DEFAULTS = Object.freeze({
   // default is ONE, and the players raise it per room with the lobby chat command `/botcount N`
   FAKE_PLAYERS: 1,
   FAKE_NAMES: 'Mercenary,Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
-  FILL_EMPTY_WITH_AI: false,
-  FILL_AI_TYPE: 0, // 0 easy, 1 hard
+  // (FILL_EMPTY_WITH_AI / FILL_AI_TYPE, AI-typed lobby slots, were removed on 27 Sep 2026: the game's
+  // AI must never run on a player's machine; the relay's own bots are the computer players)
   ALLOW_PAUSE: true,
   SPEED_REFRESH_S: 30,
   STATS_INTERVAL_S: 30, // in-game stats log line; 0 = off
@@ -45,8 +45,10 @@ export const DEFAULTS = Object.freeze({
   // The server-side battle engine (plan §18): off = relay only; shadow = the engine runs beside the
   // relay, its checksums are logged/recorded and compared with 0x08 messages from clients; send =
   // shadow plus one 0x08 (checksum, tick) command in every sync frame. A mismatch aborts the CLIENT
-  // ("sync error"), so `send` is for verified builds only.
-  SYNC_CHECK: 'off',
+  // ("sync error"), so `send` is for verified builds only. `send` by default since 27 Sep 2026 (as on
+  // Fly since 11 Sep 2026; maintainer: "Bots must use krusty by default!" - the bots need the engine);
+  // `off` until then. The test harnesses pin `off`.
+  SYNC_CHECK: 'send',
   // Record every battle (sync frames, client checksums, engine checksums) as JSON lines into this
   // directory for offline replay with tools/replay.js; '' = off. Independent of SYNC_CHECK.
   RECORD_DIR: '',
@@ -84,6 +86,10 @@ export const DEFAULTS = Object.freeze({
   // "switch off hiring of bots"); the players turn it on per room with `/bothire on`. With hiring off
   // the bots make no offer and return any 1000 sent to them.
   BOT_HIRE: false,
+  // `/botteam N` (27 Sep 2026, maintainer): N bots per real player, on that player's lobby team and in
+  // battle its allies with shared vision until the player loses the connection or the game ends
+  // (§19.11). 0 = none; the players set it per room in the lobby chat.
+  BOT_TEAM: 0,
   MERCENARY_ALLY_S: 45, // seconds an alliance bought for 1000 lasts (120 until 19 Sep 2026, maintainer: 45); later payments in that time are returned
   MERCENARY_THINK_TICKS: 32, // decision interval of a bot in game ticks (the original AI's 32)
   // Seed of the bots' private RNG (the krusty bot draws from the game's rand() table on its own index);
@@ -136,6 +142,10 @@ export function loadConfig(env = process.env, overrides = {}) {
     }
     cfg[key] = val;
   }
+  if ((env.HALL_REFRESH_MS === undefined || env.HALL_REFRESH_MS === '') && env.MARQUEE_MS) {
+    cfg.HALL_REFRESH_MS = Number(env.MARQUEE_MS); // the setting's name until 26 Sep 2026, still accepted
+    if (!Number.isFinite(cfg.HALL_REFRESH_MS)) throw new Error(`MARQUEE_MS must be a number, got "${env.MARQUEE_MS}"`);
+  }
   Object.assign(cfg, overrides);
   // rooms: { index (1-based), file, name, terrain, players, titleWire }
   cfg.ROOM_LIST = String(cfg.ROOMS)
@@ -163,7 +173,7 @@ export function loadConfig(env = process.env, overrides = {}) {
 function validate(cfg) {
   if (cfg.TICK_MS < 1) throw new Error('TICK_MS must be >= 1');
   if (cfg.ROOM_LIST.length < 1 || cfg.ROOM_LIST.length > MAX_ROOMS) throw new Error(`ROOMS must list 1..${MAX_ROOMS} maps`);
-  if (cfg.MARQUEE_MS < 50) throw new Error('MARQUEE_MS must be >= 50');
+  if (!(cfg.HALL_REFRESH_MS >= 50)) throw new Error('HALL_REFRESH_MS must be >= 50');
   if (cfg.FAKE_PLAYERS < 1 || cfg.FAKE_PLAYERS > 7) throw new Error('FAKE_PLAYERS must be 1..7');
   for (const m of cfg.ROOM_LIST) {
     if (cfg.FAKE_PLAYERS >= m.players) {
@@ -178,7 +188,6 @@ function validate(cfg) {
   if (race === 'random') cfg.MERCENARY_RACE = 'random';
   else if (race === '0' || race === '1') cfg.MERCENARY_RACE = Number(race);
   else throw new Error('MERCENARY_RACE must be 0, 1 or random');
-  if (cfg.FILL_AI_TYPE !== 0 && cfg.FILL_AI_TYPE !== 1) throw new Error('FILL_AI_TYPE must be 0 or 1');
   if (cfg.LOOKAHEAD < 1 || cfg.MAX_LAG <= cfg.LOOKAHEAD) throw new Error('need 1 <= LOOKAHEAD < MAX_LAG');
   if (cfg.STRIKE_LIMIT < 1) throw new Error('STRIKE_LIMIT must be >= 1');
   cfg.SYNC_CHECK = String(cfg.SYNC_CHECK).trim().toLowerCase();
@@ -190,4 +199,5 @@ function validate(cfg) {
   if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');
   if (!Number.isInteger(cfg.MERCENARY_THINK_TICKS) || cfg.MERCENARY_THINK_TICKS < 1) throw new Error('MERCENARY_THINK_TICKS must be >= 1');
   if (!Number.isInteger(cfg.BOT_SEED) || cfg.BOT_SEED < 0) throw new Error('BOT_SEED must be an integer >= 0');
+  if (!Number.isInteger(cfg.BOT_TEAM) || cfg.BOT_TEAM < 0 || cfg.BOT_TEAM > 6) throw new Error('BOT_TEAM must be 0..6');
 }

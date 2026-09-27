@@ -7,6 +7,8 @@ import { packPayloads } from './client.js';
 import { ChatView } from './chat.js';
 import { BOT_TYPES } from './config.js';
 
+export const HELP_LINE = '/help lists the commands.'; // third header row of every room (maintainer, 27 Sep 2026)
+
 export class Lobby {
   constructor(room) {
     this.room = room;
@@ -57,34 +59,29 @@ export class Lobby {
   /**
    * The static header of a player's chat window in this room: the room line (maintainer, 7 Sep 2026)
    * and, since 12 Sep 2026 (maintainer), a greeting from the fake host itself, the one relay line
-   * that carries a name: Mercenary says that it is the AI host (§17.8); since 19 Sep 2026 short, with
-   * a row for the bots and /botcount and one for the other commands (maintainer).
+   * that carries a name: Mercenary says that it is the AI host (§17.8). Three rows since 27 Sep 2026
+   * (maintainer: "shorten Mercenary greeting to first phrase. add /help as third line where commands
+   * will be described"): the bot settings and the hire price moved into the /help answer (`helpLines`).
+   * From 19 to 27 Sep 2026 the header had four rows (bots row with /botcount, commands row).
    * ChatView wraps it at 40 columns.
    */
   greeting() {
     const r = this.room;
     if (r.replay) return this.replayGreeting();
-    // Short since 19 Sep 2026 (maintainer: "shorten the greeting from the mercenary bot, mention
-    // /botcount"): one row for the host, one for the bots with /botcount, one for the other commands.
-    const lines = [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`];
-    if (r.bots?.configured) {
-      const hire = r.botHire ? ` 1000 in battle hires me for ${this.cfg.MERCENARY_ALLY_S} s.` : '';
-      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am the AI host.${hire}`);
-      const n = r.fakeSlots().length;
-      lines.push(`Bots: ${n} ${r.botType}, hire ${r.botHire ? 'on' : 'off'}. /botcount N`);
-      lines.push('/bottype, /bothire, /help for more.');
-    } else {
-      lines.push(`${this.cfg.MERCENARY_NAME}: Hi! I am the AI host. My base stays idle.`);
-    }
-    return lines;
+    return [`Room ${r.id}: ${r.map.name}, ${r.map.terrain}, ${r.map.players} players.`, `${this.cfg.MERCENARY_NAME}: Hi! I am the AI host.`, HELP_LINE];
   }
 
-  /** The bot count changed (`/botcount`): the pinned header of every player's chat window follows. */
+  /**
+   * The /help answer: one terse row per command, within 40 columns, no full stop (maintainer, 27 Sep
+   * 2026: "commands must be one liners without dot at the end"). Nothing about the bots' current
+   * state or their default brain; `/botcount`, `/bottype`, `/bothire` without an argument report them.
+   */
+  helpLines() {
+    return ['/botcount N sets the number of bots', '/botteam N allied bots per player', `/bottype ${BOT_TYPES.join('|')} bots brain`, '/bothire on|off hire a bot for 1000'];
+  }
+
+  /** The bot settings changed (`/botcount`, `/bottype`, `/bothire`): the header no longer shows them (27 Sep 2026), only the start condition may have moved. */
   onBotsChanged() {
-    for (const c of this.room.players()) {
-      c.chat.setHeader(this.greeting());
-      c.sendBatch(this.pack(c.chat.payloads()));
-    }
     this.checkStart(this.room.now());
   }
 
@@ -129,9 +126,18 @@ export class Lobby {
       r.log.info('bot hire', { by: client.slot, hire: r.botHire });
       return r.say(`${r.slots[client.slot].name} set hiring of the bots ${r.botHire ? 'on' : 'off'}.`);
     }
-    if (cmd === '/help') {
-      return this.tell(client, ['/botcount N sets the number of bots (1..7).', `/bottype ${BOT_TYPES.join('|')} sets their brain.`, '/bothire on|off: 1000 buys an alliance, or not.', 'READY when everybody is here starts the game.']);
+    if (cmd === '/botteam') {
+      // 27 Sep 2026: N bots per player, allied with it and sharing its vision for the whole battle (§19.11)
+      if (words.length < 2) {
+        const n = r.botTeam;
+        return this.tell(client, [n ? `${n} team bot${n === 1 ? '' : 's'} per player: allies with shared vision.` : 'No team bots. /botteam N (0..6) gives each player N allies.']);
+      }
+      const why = r.setBotTeam(Number(words[1]));
+      if (why) return this.tell(client, [`Cannot set ${words[1]} team bots: ${why}.`]);
+      r.log.info('bot team', { by: client.slot, count: r.botTeam });
+      return r.say(`${r.slots[client.slot].name} set the team bots to ${r.botTeam} per player.`);
     }
+    if (cmd === '/help') return this.tell(client, this.helpLines());
     return this.tell(client, [`Unknown command ${cmd}, try /help.`]);
   }
 
@@ -270,6 +276,7 @@ export class Lobby {
           }
           slot.team = (slot.team + d.value) % 8;
           r.broadcast(build.teamCycle(d.value, s));
+          r.followTeam(s); // its team bots stay on its team (`/botteam`, §19.11)
           break;
         }
 

@@ -47,7 +47,7 @@ export class FakeClient extends EventEmitter {
     this.hallTitle = false; // saw the hall's scenario title
     this.inRoom = false; // saw a room's scenario title
     this.scenarioTitle = '';
-    this.marqueeSteps = 0; // name changes of a row while in the hall
+    this.hallRows = new Array(8).fill(''); // the row texts as last seen in the hall (static since 26 Sep 2026)
     this.chat = [];
     this.syncPayloads = [];
     this.disconnects = [];
@@ -185,7 +185,7 @@ export class FakeClient extends EventEmitter {
           }
           break;
         case T.NAME:
-          if (this.hallTitle && !this.inRoom && this.names[d.player] && this.names[d.player] !== d.name) this.marqueeSteps++;
+          if (this.hallTitle && !this.inRoom) this.hallRows[d.player] = d.name;
           this.names[d.player] = d.name;
           break;
         case T.READY:
