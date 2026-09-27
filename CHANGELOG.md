@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **1920x1080 and 1920x1200 in the patcher; several sizes per aspect ratio** (27 Sep 2026, maintainer
+  request; doc §10.43, plan §16 entry of 27 Sep): `tools/gen_apply_script.py` lists both modes (the
+  one-size-per-ratio rule of 22 Sep is dropped), the game repository ships the three pictures per size
+  `INTRF_HD\<WxH>\INTRG.GIF, INTRO.GIF, INTRFACE.GIF` and the regenerated patcher; the exe patch
+  (56-tile-wide view, spare rows to the HUD bar) existed since 21 Sep. Reference builds Classic
+  `9a24896b…` / Ultimate `2b92968c…` (1920x1080), Classic `dac590be…` / Ultimate `2259f106…` (1920x1200);
+  not yet run in the game.
+
 - **Static room rows in the hall** (26 Sep 2026, maintainer request; plan §17.2 + §16 entry of 26 Sep):
   the seven room rows of the room-selection lobby no longer scroll. Each is a fixed 16-character text:
   room number, a space, the first word of the map name (nine places, a longer word is cut) and
@@ -25,7 +33,7 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   battle are its allies with shared vision until the player loses the connection or the game ends.
   Later joiners get theirs too; a player's team bots follow its team cycles and leave with it; they are
   not for hire and ally with each other and with a bot their player hires. `/botcount` counts the free
-  bots only; `/help` names the new command.
+  bots only; `/help` names the new command. Confirmed by the maintainer on the live server the same day.
 - **Bots run only on the relay** (27 Sep 2026, maintainer rule; plan R14 + §16 entry of 27 Sep): a player
   who leaves a battle no longer causes a `DISCONNECT` in the sync frames. That message made every
   client's game run Krusty for the lost base whenever the server could not take it over with a bot of
