@@ -161,7 +161,7 @@ ICON_FILE = os.path.join(GAME, 'DC - Council wars', 'DC_HD.ICO')
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
-           'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
+           'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
            'menuorder': 'patch_menu_order.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
@@ -172,7 +172,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'icon': ('patch_icon.py', ['--ico', ICON_FILE])}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
+           'clock': 'clock', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
            'music': 'music', 'menuorder': 'menu_order',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
@@ -285,6 +285,17 @@ def blocks_ddraw(g):
         name = m.group(1).strip()
         out.append((int(m.group(2), 16), lens[name], name))
     out += reloc_lines(t, '.reloc table: ')
+    return out
+
+def blocks_palette(g):
+    t = plan(g, 'palette')
+    out = []
+    lens = {'remap: pixel read-back -> arithmetic': 135, 'remap: Unlock of the read-back -> skipped': 24}
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+): stock', t, re.M):
+        name = m.group(1).strip()
+        out.append((int(m.group(2), 16), lens[name], name))
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 7, (g, len(out))                                   # 2 code sites + 5 .reloc entries
     return out
 
 def blocks_camera(g):
@@ -580,6 +591,21 @@ assert branches become "skip and continue": three "push format-string" instructi
 turn into "jmp next-palette-index", and the Flip check's je becomes jmp.  The game's own
 per-frame restore path repairs the surfaces at the first frame.  The three push operands were
 absolute pointers, so their .reloc entries become type 0 ABSOLUTE padding.'''),
+ dict(id='palette', name='Fast screen loads: the palette conversion no longer makes 512 surface round trips', date='28 Sep 2026',
+      tool='tools/patch_palette.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.46', blocks=blocks_palette,
+      desc='''Every screen the game shows (each menu, the briefings, the multiplayer hall, the battle load,
+twice at start-up) ends in the palette conversion of ddex4.c, which turns the 256 palette entries
+into 16-bit pixels the portable 1997 way: for every entry GetDC on the back buffer, SetPixel,
+ReleaseDC, then Lock the whole surface, read the pixel back, Unlock.  On Windows 11 DirectDraw is
+emulated over Direct3D 9 and ReleaseDC and Unlock each copy the WHOLE surface, so the loop costs
+512 full-screen transfers per screen change: measured 1.4-1.5 s at 1024x768 and 3.2-3.5 s at
+1920x1200 - the reason every menu loads slower the larger the resolution.  The value read back is
+nothing but the RGB bytes truncated to the surface's 5-6-5 (or 5-5-5) bit fields, verified for all
+256 entries in the running game.  The fix computes exactly that in place (58 bytes of shifts and
+ors, a short jump, NOP padding) and turns the now pointless Unlock into a jump to the next entry;
+the five .reloc entries of the overwritten absolute operands become type 0 ABSOLUTE padding.  The
+three "skip on failure" jumps of the two-monitor fix inside the same loop become dead code and stay
+harmless.  Nothing else in a screen load takes more than a fraction of a second.'''),
  dict(id='camera', name='Camera clamped at battle start: no crash when the start position is near the map edge', date='21 Sep 2026',
       tool='tools/patch_camera.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.22', blocks=blocks_camera,
       desc='''When a battle starts the game puts the camera on the player's start position and only
@@ -902,11 +928,11 @@ BUILDS = [
  dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe)',
       source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'movies', 'sounds', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'movies', 'sounds', 'icon']),
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'ozi', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'ozi', 'icon']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
