@@ -285,7 +285,7 @@ def cmd_template(args):
     n = 0
     if os.path.exists(maine):
         for kind, num, x, y, w, h in parse_widgets(open(maine, 'rb').read()):
-            nx, ny = shift(x, y, dx, dy)
+            nx, ny = shift(x, y, dx, dy, slack_rows(args.height))
             d.rectangle([nx, ny, nx + max(w, 1) - 1, ny + max(h, 1) - 1], outline=(70, 110, 210))
             n += 1
 
@@ -319,7 +319,7 @@ def parse_widgets(data):
     return out
 
 
-def shift(x, y, dx, dy):
+def shift(x, y, dx, dy, sy=0):
     """Right-panel widgets move sideways; bottom furniture moves down.
 
     The panel's bottom cluster does both: the status text (`in_text 79` at y 404), the Build
@@ -333,11 +333,20 @@ def shift(x, y, dx, dy):
     MAINBUT, 123x137 at (200,160), shown by the pause handler 0x0040B33C while `gs+0x46F51`
     is set), is centred on the view, so it moves by half the growth. The first 1024x768 build
     left it at (200,160), in the upper left of the enlarged view (found in play, 13 Sep 2026).
+
+    The two battlefield chat lines (`in_text 204` at (10,425) and `203` at (10,440), filled by
+    the client's chat display 0x0040B10D with widget ids 0xCB/0xCC) lie in the band between
+    MSG_Y and the bottom bar: they are overlays on the map view's last rows, not bar furniture.
+    They follow the VIEW's bottom edge, which is `dy - sy` down when the bar absorbs `sy` spare
+    rows (1280x720: 16, 1920x1080: 24, 1920x1200: 16); moved by the full `dy` the lower line sat
+    inside the enlarged bar (maintainer, 28 Sep 2026: "comments are messed up in network war").
     """
     if x >= PANEL_X:
         return x + dx, y + dy if y >= PANEL_INSERT else y
-    if y >= MSG_Y:
+    if y >= BOTTOM_Y:
         return x + dx if x >= BOTTOM_INSERT else x, y + dy
+    if y >= MSG_Y:
+        return x + dx if x >= BOTTOM_INSERT else x, y + dy - sy
     return x + dx // 2, y + dy // 2
 
 
@@ -364,6 +373,32 @@ def _extend(px, w, h, grows, add, insert, segment=SEGMENT):
         for y in range(nh):
             out[y * nw + x] = coldata[y]
     return bytes(out), nw, nh
+
+
+# The bar's message-box frame, as rows of the bar (bar row 0 = screen row 454): 0-2 black, 3 grey
+# (102), 4 highlight (255), 5-6 body (98 / 115), 7 shadow (47), 8 dark edge (11), 9-18 the black box
+# interior, 19-25 the lower frame.  The plate for the spare rows is built from these rows.
+BAR_HIGHLIGHT, BAR_BODY, BAR_SHADOW = 4, (5, 6), 7
+BAR_SAMPLE_X = 200                 # a column inside the message box's frame (stock x 45..480)
+
+
+def _bevel_plate(px, w, h, add):
+    """Splice `add` rows in at the top of the (already width-extended) bottom bar as a bevelled
+    plate made of the bar's own frame rows: one highlight row, a body of the two brushed rows
+    alternating, one shadow row - the look of the message box's frame, stretched.  Below it the
+    stock bar follows unchanged (its three black rows, the box, the buttons)."""
+    seq = _lines(px, w, h, True)
+    if add <= 0:
+        return px, w, h
+    # each frame row is one colour across the message box; sample it there (BAR_SAMPLE_X) and
+    # run it over the whole bar width, so the plate is plain above the arrow buttons too
+    def row(r):
+        return bytes([seq[r][BAR_SAMPLE_X]]) * w
+    if add < 3:
+        plate = [row(BAR_BODY[i % 2]) for i in range(add)]
+    else:
+        plate = [row(BAR_HIGHLIGHT)] + [row(BAR_BODY[i % 2]) for i in range(add - 2)] + [row(BAR_SHADOW)]
+    return b''.join(plate + seq), w, h + add
 
 
 def cmd_build(args):
@@ -395,14 +430,15 @@ def cmd_build(args):
         data, nw, nh = _extend(sub, w, h, r['grows'], t['add'], r['insert'])
         keep_from = 0
         if t['extra_rows']:
-            # spare rows above the bottom bar: splice them in at the bar's top edge, repeating
-            # its first rows, so the bar's furniture stays on the bottom edge of the screen. The
-            # filler covers only the part left of the right panel (the bar's stretch under the
-            # panel is the panel's own bottom cluster, already painted by the right_panel region;
-            # repeating its rows there drew stripes under the BUILD button in the first 1280x720
-            # frame).
-            data, nw, nh = _extend(data, nw, nh, 'height', t['extra_rows'], BAR_TOP_SEGMENT,
-                                   segment=BAR_TOP_SEGMENT)
+            # spare rows above the bottom bar: a bevelled plate spliced in at the bar's top edge
+            # (until 28 Sep 2026 the bar's first two rows were repeated - they are black, so the
+            # bar began with a 16-24 px black band above the chat input; maintainer: "there is a
+            # black line right over comment creation line"), so the bar's furniture stays on the
+            # bottom edge of the screen. The filler covers only the part left of the right panel
+            # (the bar's stretch under the panel is the panel's own bottom cluster, already painted
+            # by the right_panel region; repeating its rows there drew stripes under the BUILD
+            # button in the first 1280x720 frame).
+            data, nw, nh = _bevel_plate(data, nw, nh, t['extra_rows'])
             keep_from = PANEL_X + dx
         tx, ty, _, _ = t['dst']
         for row in range(nh):
@@ -444,6 +480,7 @@ def cmd_maine(args):
         return 0
 
     dx, dy = args.width - SRC_W, args.height - SRC_H
+    sy = slack_rows(args.height)
     data = open(path, 'rb').read()
     if args.action == 'apply':
         if not os.path.exists(path + '.bak'):
@@ -460,7 +497,7 @@ def cmd_maine(args):
                 and len(words) >= 5 and re.fullmatch(rb'\d+', words[3]) \
                 and re.fullmatch(rb'\d+', words[4]):
             x, y = int(words[3]), int(words[4])
-            nx, ny = shift(x, y, dx, dy)
+            nx, ny = shift(x, y, dx, dy, sy)
             if (nx, ny) != (x, y):
                 if nx != x:
                     panel += 1
@@ -494,8 +531,8 @@ def cmd_maine(args):
 
     print('  size %d %d -> size %d %d' % (SRC_W, SRC_H, args.width, args.height))
     print('  %d right-panel widget(s) x += %d' % (panel, dx))
-    print('  %d bottom-row widget(s)  y += %d  (the panel\'s bottom cluster is in both)'
-          % (bottom, dy))
+    print('  %d bottom-row widget(s)  y += %d  (the panel\'s bottom cluster is in both%s)'
+          % (bottom, dy, '; the two chat lines above the bar by %d' % (dy - sy) if sy else ''))
     print('  %d widget(s) left where they are (inside the map view)' % left)
     if args.action == 'plan':
         print('\nplan only, nothing written.')

@@ -17,13 +17,16 @@ test('a silent joiner is evicted after JOIN_TIMEOUT and announced to the others'
   b.take();
   b.cdReport();
   // B behaves (keep-alives every 700 ms), A stays silent
-  for (let t = 0; t < 4900; t += 700) {
+  const grace = h.room.config.JOIN_TIMEOUT_MS;
+  let t = 0;
+  while (t + 700 < grace) {
     h.advance(700);
+    t += 700;
     b.keepalive();
     h.tick();
   }
   assert.ok(!a.gone, 'still inside JOIN_TIMEOUT');
-  h.advance(200);
+  h.advance(grace - t + 1);
   b.keepalive();
   h.tick();
   assert.ok(a.gone);
@@ -32,6 +35,35 @@ test('a silent joiner is evicted after JOIN_TIMEOUT and announced to the others'
   assert.ok(leaveAnnouncement(cmds, a.slot));
   assert.ok(cmds.some((c) => c.type === T.LOBBY_CHAT && c.text.includes('left the lobby')));
   assert.equal(h.room.slots[a.slot].type, 3);
+});
+
+test('the CD report alone does not start the keep-alive clock: the join grace covers a slow lobby screen (F71)', () => {
+  // The game sends its CD report from its connect code, then nothing until the lobby screen is up - 3-4.5 s
+  // at 1920x1200, longer than KEEPALIVE_TIMEOUT.  Such a client must survive until JOIN_TIMEOUT.
+  const h = new Harness();
+  const a = h.join('A');
+  a.take();
+  a.cdReport();
+  h.advance(h.room.config.KEEPALIVE_TIMEOUT_MS + 1500);
+  h.tick();
+  assert.ok(!a.gone, 'silent after the CD report but inside JOIN_TIMEOUT');
+  a.keepalive(); // the lobby loop is up: from here the keep-alive clock runs
+  h.advance(h.room.config.KEEPALIVE_TIMEOUT_MS - 1);
+  h.tick();
+  assert.ok(!a.gone);
+  h.advance(2);
+  h.tick();
+  assert.ok(a.gone, 'evicted KEEPALIVE_TIMEOUT after the last keep-alive');
+  // and a client that never gets past the CD report is dropped at JOIN_TIMEOUT
+  const b = h.join('B');
+  b.take();
+  b.cdReport();
+  h.advance(h.room.config.JOIN_TIMEOUT_MS - 1);
+  h.tick();
+  assert.ok(!b.gone);
+  h.advance(2);
+  h.tick();
+  assert.ok(b.gone);
 });
 
 test('keep-alives keep a lobby client alive; their absence evicts', () => {

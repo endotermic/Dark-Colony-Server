@@ -48,7 +48,7 @@ GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.jo
 # `hdpaths` is the same in every HD mode; the patcher checks that the folder's set is the chosen size
 # by reading the GIF header of INTRF_HD\INTRFACE.GIF (`DataSize`).  Doc 10.25.
 STOCK_MODE = '640x480'
-HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800', '3840x1080']  # one size per aspect ratio (4:3 keeps the stock 640x480 too); maintainer rule of 22 Sep 2026
+HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800', '1920x1080', '1920x1200', '3840x1080']  # several sizes per aspect ratio since 27 Sep 2026 (maintainer: 1920x1080, 1920x1200; until then one per ratio, 22 Sep 2026). The window preselects the LAST recommended mode of this list, so within one ratio the larger size must come after the smaller
 DEFAULT_MODE = '1024x768'           # the mode of the exes published in the repository
 # tools replayed per mode (--width/--height): the display fixes differ per size; `movies` and `ozi` have
 # a 640x480 variant (the exe is pointed at copies of the lists / the menu script that the original exe
@@ -832,8 +832,8 @@ knows the healing units (GAMESTAT.TXT rows 49 and 50).  Two single-byte edits cl
 WS_THICKFRAME (a sizing border, useless for a fixed layout) to WS_SYSMENU (a title-bar close box).
 One byte in the DIALOG template's style dword.'''),
  # ---- every build, always last
- dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut)', date='25 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.38', blocks=blocks_icon,
+ dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut) + DPI-aware manifest (games)', date='25 Sep 2026 / 27 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.38 (icon) and 10.43 (manifest)', blocks=blocks_icon,
       desc='''The exes carry at most the game's 32x32, 16-colour icon (dc16.exe and ENGEXP16.EXE; the map
 editor none at all), which Windows blows up into a blur on the desktop, in Explorer and on the
 taskbar.  This fix gives the exe every image of DC_HD.ICO (in the "DC - Council wars" folder): the
@@ -851,9 +851,17 @@ How, without moving anything that is already in the file:
     game's own window asks for (LoadIconA(hInstance, 101) in create_window); the original has no
     such group, so the game window had the default icon
 
+Since 27 Sep 2026 the same directory also holds, for the two GAMES, an application manifest
+(resource type 24, id 1) that declares the process DPI-aware.  Without it Windows treats the game as
+an old, DPI-unaware program and, on a desktop with display scaling above 100 %, scales its full-screen
+picture like a window: at 150 % scaling a 1920x1080 or 1920x1200 game was shown at 1.5x with two
+thirds of the picture off the screen (1280x800 happened to fit because it equals the scaled desktop).
+With the manifest the picture is shown 1:1 at every resolution.  The map editor gets no manifest (its
+dialogs would shrink).
+
 No code changes.  The file grows by the new section (about 75 KB), which is why this fix is always
-applied last.  The appended bytes are written below in Base64 (they are the icon images and the
-directory that lists them); their SHA-256 is checked like every other edit.'''),
+applied last.  The appended bytes are written below in Base64 (they are the icon images, the manifest
+and the directory that lists them); their SHA-256 is checked like every other edit.'''),
 ]
 
 # Names of the patched builds and their desktop shortcuts since 25 Sep 2026 (maintainer: "resulting files and
@@ -1050,7 +1058,7 @@ W(r'''<#
       * after writing it prints the SHA-256 of the result; with every patch selected the result
         is byte-identical to the executable published in the repository and the script says so
       * the screen resolution is chosen in a drop-down (or -Resolution): 640x480, 1024x768, 1280x1024,
-        1280x720, 1280x800, 3840x1080; the sizes with your monitor's aspect ratio are marked "recommended for your
+        1280x720, 1280x800, 1920x1080, 1920x1200, 3840x1080; the sizes with your monitor's aspect ratio are marked "recommended for your
         screen" and the largest of them is preselected in the window (the command line defaults to
         1024x768, the published exes)
       * for an HD resolution the script also WRITES the interface data the patched exe reads
@@ -1103,7 +1111,7 @@ W(r'''<#
 
 .PARAMETER Resolution
     Screen resolution to patch for: 640x480 (the stock size: no display fixes), 1024x768 (default,
-    the published exes), 1280x1024, 1280x720, 1280x800 or 3840x1080 (32:9).  The 'resolution' and 'clock' fixes exist
+    the published exes), 1280x1024, 1280x720, 1280x800, 1920x1080, 1920x1200 or 3840x1080 (32:9).  The 'resolution' and 'clock' fixes exist
     once per size; all sizes share the one INTRF_HD data folder, which must hold the interface set
     built for the chosen size.  The window offers the same choice in a drop-down, marks the sizes
     with your monitor's aspect ratio as "recommended for your screen" and preselects the largest of
@@ -1985,14 +1993,17 @@ function Edit-IntroScript([string] $Text, [int] $W, [int] $H, [int] $Lift = 0) {
 }
 
 # hud_layout.cmd_maine: right-panel widgets slide right (and down with the panel's bottom cluster),
-# bottom-bar furniture slides down (and right from the message box's end), the one in-view widget
+# bottom-bar furniture (y >= 454) slides down (and right from the message box's end), the two battlefield
+# chat lines in the band 420..453 follow the map view's bottom edge (down by dy minus the spare rows the
+# bar absorbs: 16 at 1280x720 and 1920x1200, 24 at 1920x1080; 28 Sep 2026), the one in-view widget
 # (PAUSED) by half the growth; size -> W H
 function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
-    $dx = $W - 640; $dy = $H - 480
+    $dx = $W - 640; $dy = $H - 480; $sy = ($H - 32) % 32
     $move = { param($fields) if ($fields.Count -lt 5 -or $fields[3] -notmatch '^\d+$' -or $fields[4] -notmatch '^\d+$') { return $null }
               $x = [int]$fields[3]; $y = [int]$fields[4]
               if ($x -ge 516) { $nx = $x + $dx; $ny = if ($y -ge 399) { $y + $dy } else { $y } }
-              elseif ($y -ge 420) { $nx = if ($x -ge 300) { $x + $dx } else { $x }; $ny = $y + $dy }
+              elseif ($y -ge 454) { $nx = if ($x -ge 300) { $x + $dx } else { $x }; $ny = $y + $dy }
+              elseif ($y -ge 420) { $nx = if ($x -ge 300) { $x + $dx } else { $x }; $ny = $y + $dy - $sy }
               else { $nx = $x + [int][Math]::Floor($dx / 2); $ny = $y + [int][Math]::Floor($dy / 2) }
               if ($nx -eq $x -and $ny -eq $y) { return $null }
               return @($nx, $ny) }

@@ -460,7 +460,11 @@ export class Room {
     for (const r of resyncs) this.log.warn('sequence resync', { id: client.id, ...r });
     for (const b of batches) {
       if (client.gone) return;
-      if (!client.firstMessageAt) client.firstMessageAt = now;
+      // The game's connect code sends its CD report ('o', F23) the moment the socket is up, before its
+      // lobby screen has loaded; keep-alives start only with the lobby loop, which at 1920x1200 is 3-4.5 s
+      // later (28 Sep 2026, F71).  So that report does not end the join grace: the keep-alive clock starts
+      // with the first command that is not a VAR.
+      if (!client.firstMessageAt && b.cmds.some((c) => c.type !== T.VAR)) client.firstMessageAt = now;
       if (this.log.level === 'debug') this.trace(client, b.seq, b.cmds);
       this.dispatch(client, b.cmds, now);
     }

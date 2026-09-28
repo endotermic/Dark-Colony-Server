@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Give a Dark Colony executable the high-resolution icon DC_HD.ICO (fix `icon`, 25 Sep 2026).
+"""Give a Dark Colony executable the high-resolution icon DC_HD.ICO (fix `icon`, 25 Sep 2026) and,
+for the two games, an embedded DPI-aware manifest (27 Sep 2026).
 
 The exes carry at most the game's 32x32, 16-colour icon: dc16.exe and ENGEXP16.EXE one RT_ICON
 (id 1) in the group "DC16", maped.exe none at all.  This tool gives each of them every image of
@@ -24,10 +25,21 @@ How, without moving anything that is already there:
 The file grows by the new section, so this is always the LAST fix of a build (the patcher appends
 it after every other edit).
 
+Manifest (27 Sep 2026, maintainer: "make the game DPI-aware via manifest ... embed manifest the same
+way as icon").  The game is a DPI-unaware process, and on a desktop with display scaling above 100 %
+Windows scales its 16-bit exclusive-mode surface (drawn through the DWM8And16BitMitigation layer)
+like any unaware window: at 150 % a 1920x1200 game frame was shown at 1.5x and two thirds of it fell
+off the screen (only 1280x800 = the logical desktop happened to fit).  An RT_MANIFEST resource (type
+24, id 1) with <dpiAware>true</dpiAware> in the same appended directory makes the loader mark the
+process DPI-aware before it runs, so the frame is shown 1:1 at every size; the game's own code never
+asks about DPI, so nothing else changes.  The games get it (they carry the "DC16" icon group); the
+map editor does not (its Borland dialogs are laid out in dialog units and would shrink), unless
+--manifest yes is given.  An external <exe>.manifest file is ignored once a manifest is embedded.
+
 CLI
     python patch_icon.py verify EXE [--ico FILE]
-    python patch_icon.py plan   EXE [--ico FILE]
-    python patch_icon.py apply  EXE [--ico FILE]     (writes EXE.icon.bak first)
+    python patch_icon.py plan   EXE [--ico FILE] [--manifest auto|yes|no]
+    python patch_icon.py apply  EXE [--ico FILE] [--manifest auto|yes|no]     (writes EXE.icon.bak first)
 --ico defaults to DC_HD.ICO in the Council Wars game folder of the repository beside this tool's
 repository (../../Dark-Colony/DC - Council wars/DC_HD.ICO).
 """
@@ -39,7 +51,17 @@ import struct
 import sys
 
 SECTION_NAME = b'.dcicon'
-RT_ICON, RT_GROUP_ICON = 3, 14
+RT_ICON, RT_GROUP_ICON, RT_MANIFEST = 3, 14, 24
+# The embedded application manifest (CREATEPROCESS_MANIFEST_RESOURCE_ID = 1): DPI-aware, nothing else.
+MANIFEST = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+            b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">\r\n'
+            b'  <assemblyIdentity type="win32" name="DarkColony" version="1.0.0.0" processorArchitecture="x86"/>\r\n'
+            b'  <application xmlns="urn:schemas-microsoft-com:asm.v3">\r\n'
+            b'    <windowsSettings>\r\n'
+            b'      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>\r\n'
+            b'    </windowsSettings>\r\n'
+            b'  </application>\r\n'
+            b'</assembly>\r\n')
 GAME_GROUP_ID = 101            # LoadIconA(hInstance, MAKEINTRESOURCE(101)) in create_window
 DEFAULT_ICO = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'Dark-Colony', 'DC - Council wars', 'DC_HD.ICO')
 
@@ -184,8 +206,9 @@ def is_applied(pe):
     return any(s['name'] == SECTION_NAME for s in pe.secs)
 
 
-def plan_edits(data, ico_path):
-    """Return (header edits [(offset, old, new, note)], append offset, append bytes, summary)."""
+def plan_edits(data, ico_path, manifest='auto'):
+    """Return (header edits [(offset, old, new, note)], append offset, append bytes, summary).
+    manifest: 'auto' = the games (an exe with an icon group), 'yes', 'no'."""
     pe = PE(data)
     if is_applied(pe):
         raise SystemExit('already applied: the exe has a %s section' % SECTION_NAME.decode())
@@ -206,6 +229,10 @@ def plan_edits(data, ico_path):
         icon_entries.append((RT_ICON, i, lang, ('bytes', im['data'])))
         grp += struct.pack('<BBBBHHIH', im['w'], im['h'], im['cc'], 0, im['planes'], im['bpp'], len(im['data']), i)
     entries = kept + icon_entries + [(RT_GROUP_ICON, g, lang, ('bytes', grp)) for g in group_names]
+    with_manifest = manifest == 'yes' or (manifest == 'auto' and bool(old_groups))
+    if with_manifest:
+        assert not any(t == RT_MANIFEST for t, *_ in old), 'the exe already carries a manifest'
+        entries.append((RT_MANIFEST, 1, lang, ('bytes', MANIFEST)))
     # new section placement
     last_end = max(s['va'] + align(max(s['vs'], s['rs']), pe.sect_align) for s in pe.secs)
     sec_rva = align(max(last_end, pe.size_of_image), pe.sect_align)
@@ -236,7 +263,8 @@ def plan_edits(data, ico_path):
     summary = (f'new section {SECTION_NAME.decode()} at file 0x{raw_off:X} (VA 0x{sec_rva:X}), {len(append)} bytes appended: resource directory '
                f'(kept in place: {len(kept)} resources of types {", ".join(map(str, kept_types)) or "none"}; left out: '
                f'{sum(1 for t, *_ in old if t in (RT_ICON, RT_GROUP_ICON))} old icon entries), {len(imgs)} icon images ({sizes}) '
-               f'and the icon group{"s" if len(group_names) > 1 else ""} {", ".join(repr(g) for g in group_names)} from {os.path.basename(ico_path)}')
+               f'and the icon group{"s" if len(group_names) > 1 else ""} {", ".join(repr(g) for g in group_names)} from {os.path.basename(ico_path)}'
+               + (f', and the DPI-aware application manifest (RT_MANIFEST id 1, {len(MANIFEST)} bytes)' if with_manifest else ''))
     return edits, len(data), append, summary
 
 
@@ -254,18 +282,22 @@ def main():
     ap.add_argument('cmd', choices=['verify', 'plan', 'apply'])
     ap.add_argument('exe')
     ap.add_argument('--ico', default=DEFAULT_ICO)
+    ap.add_argument('--manifest', choices=['auto', 'yes', 'no'], default='auto', help='embed the DPI-aware manifest: auto = the games only')
     a = ap.parse_args()
     data = open(a.exe, 'rb').read()
     pe = PE(data)
     if a.cmd == 'verify':
         if is_applied(pe):
             s = next(s for s in pe.secs if s['name'] == SECTION_NAME)
-            icons = [r for r in read_resources(pe) if r[0] == RT_ICON]
-            print(f'{a.exe}: icon APPLIED ({SECTION_NAME.decode()} at VA 0x{s["va"]:X}, {len(icons)} icon images)')
+            res = read_resources(pe)
+            icons = [r for r in res if r[0] == RT_ICON]
+            man = any(r[0] == RT_MANIFEST for r in res)
+            print(f'{a.exe}: icon APPLIED ({SECTION_NAME.decode()} at VA 0x{s["va"]:X}, {len(icons)} icon images, '
+                  f'{"DPI-aware manifest embedded" if man else "no manifest (25 Sep 2026 form)"})')
         else:
             print(f'{a.exe}: icon not applied ({sum(1 for r in read_resources(pe) if r[0] == RT_ICON)} icon images in the stock resources)')
         return
-    edits, at, append, summary = plan_edits(data, a.ico)
+    edits, at, append, summary = plan_edits(data, a.ico, a.manifest)
     if a.cmd == 'plan':
         print(f'{a.exe}: {len(edits)} header edits + {len(append)} bytes appended at file 0x{at:X}')
         for off, old, new, note in edits:

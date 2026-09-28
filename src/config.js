@@ -21,7 +21,7 @@ export const DEFAULTS = Object.freeze({
   START_COUNTDOWN_S: 3,
   MREADY_TIMEOUT_MS: 30000,
   IDLE_TIMEOUT_MS: 10000,
-  JOIN_TIMEOUT_MS: 5000,
+  JOIN_TIMEOUT_MS: 15000, // grace for the first lobby-loop message after the join; the game's lobby screen takes 3-4.5 s to load at 1920x1200 (5 s until 28 Sep 2026)
   KEEPALIVE_TIMEOUT_MS: 3000,
   ECHO_TIMEOUT_MS: 5000,
   LAG_DROP_MS: 10000, // 0 = never drop laggards (original behaviour)

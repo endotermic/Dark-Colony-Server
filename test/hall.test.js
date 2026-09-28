@@ -429,6 +429,26 @@ test('seven fakes: rooms show (0/1), stay joinable, the fake in the way moves, a
   assert.equal(q.roomOf(h.pool), h.pool.rooms[1]);
 });
 
+test('hall: the CD report alone keeps the join grace, the first keep-alive starts the keep-alive clock (F71)', () => {
+  const h = new HallHarness();
+  const p = h.enter('P');
+  p.take();
+  p.cdReport();
+  h.advance(h.cfg.KEEPALIVE_TIMEOUT_MS + 1500);
+  h.tick();
+  assert.ok(!p.gone, 'a 1920x1200 client still loading its hall screen is not evicted');
+  p.keepalive();
+  h.advance(h.cfg.KEEPALIVE_TIMEOUT_MS + 1);
+  h.tick();
+  assert.ok(p.gone, 'the keep-alive clock runs from the first lobby-loop message');
+  const q = h.enter('Q');
+  q.take();
+  q.cdReport();
+  h.advance(h.cfg.JOIN_TIMEOUT_MS + 1);
+  h.tick();
+  assert.ok(q.gone, 'never past the CD report: dropped at JOIN_TIMEOUT');
+});
+
 test('hall deadlines: silent after the handshake is dropped, keep-alives keep a client, then their absence drops it', () => {
   const h = new HallHarness();
   const p = h.enter('P');

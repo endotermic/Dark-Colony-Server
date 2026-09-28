@@ -6,13 +6,32 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Bottom bar filler is a bevel plate** (28 Sep 2026, maintainer report "black line right over comment
+  creation line"; doc §10.45): at the sizes whose bar absorbs spare rows (1280x720, 1920x1080, 1920x1200)
+  `tools/hud_layout.py` fills them with the bar's own frame rows instead of its black top rows; the shipped
+  `INTRFACE.GIF` of those sizes rebuilt. Data only; confirmed in a 1920x1200 battle.
+- **Battlefield chat lines at 1280x720 / 1920x1080 / 1920x1200** (28 Sep 2026, maintainer report; doc §10.45):
+  `tools/hud_layout.py` and the patcher moved the two in-game chat widgets of `MAINE` with the bottom-bar
+  furniture, so at the sizes whose bar absorbs spare rows the lower line sat inside the bar; they now follow
+  the map view's bottom edge. Data only (fixtures, patcher, no exe change); confirmed in a relay battle.
+- **Hall and lobby join grace covers slow screens** (28 Sep 2026, maintainer report "comments are messed up in
+  network war"; plan §16 entry of 28 Sep, F71): the game sends its CD report the moment it connects and its
+  first keep-alive only once the lobby screen is up, which takes 3-4.5 s at 1920x1200 - longer than the 3 s
+  keep-alive limit, so every 1920-wide client was evicted before it saw the hall (black screen, then the main
+  menu). The CD report no longer starts the keep-alive clock (`Hall.onData`, `Room.onData`: the first
+  non-`VAR` command does) and `JOIN_TIMEOUT_MS` is 15 s (was 5 s).
 - **1920x1080 and 1920x1200 in the patcher; several sizes per aspect ratio** (27 Sep 2026, maintainer
   request; doc §10.43, plan §16 entry of 27 Sep): `tools/gen_apply_script.py` lists both modes (the
   one-size-per-ratio rule of 22 Sep is dropped), the game repository ships the three pictures per size
   `INTRF_HD\<WxH>\INTRG.GIF, INTRO.GIF, INTRFACE.GIF` and the regenerated patcher; the exe patch
   (56-tile-wide view, spare rows to the HUD bar) existed since 21 Sep. Reference builds Classic
   `9a24896b…` / Ultimate `2b92968c…` (1920x1080), Classic `dac590be…` / Ultimate `2259f106…` (1920x1200);
-  not yet run in the game.
+  confirmed in game the same day once the games became DPI-aware (below).
+- **The games are DPI-aware** (27 Sep 2026, maintainer request; doc §10.44): `tools/patch_icon.py` embeds an
+  `RT_MANIFEST` with `dpiAware` in the `.dcicon` resource directory of the two games (not the map editor), so
+  Windows no longer scales the emulated 16-bit surface by the desktop scaling - at 150 % the 1920-wide frames
+  had been shown at 1.5x and cropped. Every game build's reference hash changed (1024x768 Classic `866ad0f5…`,
+  Ultimate `7abb952a…`); both new sizes confirmed in game for both games.
 
 - **Static room rows in the hall** (26 Sep 2026, maintainer request; plan §17.2 + §16 entry of 26 Sep):
   the seven room rows of the room-selection lobby no longer scroll. Each is a fixed 16-character text:
