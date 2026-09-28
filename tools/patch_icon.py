@@ -36,6 +36,23 @@ asks about DPI, so nothing else changes.  The games get it (they carry the "DC16
 map editor does not (its Borland dialogs are laid out in dialog units and would shrink), unless
 --manifest yes is given.  An external <exe>.manifest file is ignored once a manifest is embedded.
 
+PER-MONITOR, not system-aware (28 Sep 2026, maintainer: "patcher is broken. all graphical modes
+(except 1920x1200) are showing picture in left upper corner").  <dpiAware>true</dpiAware> makes the
+process SYSTEM-DPI-aware: its windows are laid out for the DPI the desktop had at start (144 at
+150 %) and the DWM bitmap-scales them whenever the monitor's DPI differs from that.  A mode switch
+changes the monitor's DPI: Windows only allows the scale steps a resolution supports, so on the
+1920x1200 / 150 % panel the effective DPI drops to 96 (100 %) at 1024x768, 1280x720 and 1280x800
+and to 120 (125 %) at 1280x1024, while 1920x1080 and 1920x1200 keep 144.  The game's window, and the
+emulated 16-bit surface the mitigation layer presents through it, were therefore scaled by 96/144:
+a 1024x768 game showed a 683x512 picture in the top-left corner (1280x800: 854x533), while 1920x1200
+(no DPI change) and 1920x1080 (150 % allowed) filled the screen - measured with the 27 Sep build.
+<dpiAwareness>PerMonitorV2</dpiAwareness> (Windows 10 1703+; the "true/pm" fallback is per-monitor
+V1 on 8.1 and system-aware before) makes the process responsible for every monitor DPI, so the DWM
+never scales its windows: the WxH frame fills the WxH mode at every size.  The game receives
+WM_DPICHANGED messages it never reads (it has no message loop) - harmless.  Confirmed in game at
+1024x768, 1280x800, 1920x1080 and 1920x1200 (Classic) and 1280x800 (Ultimate), menu clicks landing
+1:1.
+
 CLI
     python patch_icon.py verify EXE [--ico FILE]
     python patch_icon.py plan   EXE [--ico FILE] [--manifest auto|yes|no]
@@ -52,13 +69,17 @@ import sys
 
 SECTION_NAME = b'.dcicon'
 RT_ICON, RT_GROUP_ICON, RT_MANIFEST = 3, 14, 24
-# The embedded application manifest (CREATEPROCESS_MANIFEST_RESOURCE_ID = 1): DPI-aware, nothing else.
+# The embedded application manifest (CREATEPROCESS_MANIFEST_RESOURCE_ID = 1): per-monitor DPI-aware
+# (V2 on Windows 10 1703+, V1 on 8.1/10 before that, system-aware on Vista..8), nothing else.  The
+# 27 Sep 2026 form said <dpiAware>true</dpiAware> only = SYSTEM-DPI-aware; see the docstring for why
+# that shrank every mode whose scale differs from the desktop's.
 MANIFEST = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
             b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">\r\n'
             b'  <assemblyIdentity type="win32" name="DarkColony" version="1.0.0.0" processorArchitecture="x86"/>\r\n'
             b'  <application xmlns="urn:schemas-microsoft-com:asm.v3">\r\n'
             b'    <windowsSettings>\r\n'
-            b'      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>\r\n'
+            b'      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>\r\n'
+            b'      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>\r\n'
             b'    </windowsSettings>\r\n'
             b'  </application>\r\n'
             b'</assembly>\r\n')
@@ -291,9 +312,15 @@ def main():
             s = next(s for s in pe.secs if s['name'] == SECTION_NAME)
             res = read_resources(pe)
             icons = [r for r in res if r[0] == RT_ICON]
-            man = any(r[0] == RT_MANIFEST for r in res)
-            print(f'{a.exe}: icon APPLIED ({SECTION_NAME.decode()} at VA 0x{s["va"]:X}, {len(icons)} icon images, '
-                  f'{"DPI-aware manifest embedded" if man else "no manifest (25 Sep 2026 form)"})')
+            man = [r for r in res if r[0] == RT_MANIFEST]
+            if man:
+                t, n, l, rva, size, cp = man[0]
+                text = data[pe.r2o(rva):pe.r2o(rva) + size]
+                form = ('per-monitor DPI-aware manifest embedded' if b'PerMonitorV2' in text
+                        else 'SYSTEM-DPI-aware manifest embedded (27 Sep 2026 form: modes with another scale shrink)')
+            else:
+                form = 'no manifest (25 Sep 2026 form)'
+            print(f'{a.exe}: icon APPLIED ({SECTION_NAME.decode()} at VA 0x{s["va"]:X}, {len(icons)} icon images, {form})')
         else:
             print(f'{a.exe}: icon not applied ({sum(1 for r in read_resources(pe) if r[0] == RT_ICON)} icon images in the stock resources)')
         return

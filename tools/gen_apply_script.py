@@ -920,7 +920,7 @@ knows the healing units (GAMESTAT.TXT rows 49 and 50).  Two single-byte edits cl
 WS_THICKFRAME (a sizing border, useless for a fixed layout) to WS_SYSMENU (a title-bar close box).
 One byte in the DIALOG template's style dword.'''),
  # ---- every build, always last
- dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut) + DPI-aware manifest (games)', date='25 Sep 2026 / 27 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
+ dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut) + per-monitor DPI-aware manifest (games)', date='25 Sep 2026 / 27-28 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.38 (icon) and 10.43 (manifest)', blocks=blocks_icon,
       desc='''The exes carry at most the game's 32x32, 16-colour icon (dc16.exe and ENGEXP16.EXE; the map
 editor none at all), which Windows blows up into a blur on the desktop, in Explorer and on the
@@ -944,8 +944,14 @@ Since 27 Sep 2026 the same directory also holds, for the two GAMES, an applicati
 an old, DPI-unaware program and, on a desktop with display scaling above 100 %, scales its full-screen
 picture like a window: at 150 % scaling a 1920x1080 or 1920x1200 game was shown at 1.5x with two
 thirds of the picture off the screen (1280x800 happened to fit because it equals the scaled desktop).
-With the manifest the picture is shown 1:1 at every resolution.  The map editor gets no manifest (its
-dialogs would shrink).
+Since 28 Sep 2026 the manifest says PER-MONITOR DPI-aware (dpiAwareness PerMonitorV2, with the
+older forms as fallback): the first form, <dpiAware>true</dpiAware>, only made the game SYSTEM-DPI-
+aware, and Windows still bitmap-scaled its window whenever the monitor's DPI differed from the
+desktop's - which a mode switch causes, because a resolution only allows certain scale steps
+(1024x768, 1280x720 and 1280x800 drop a 150 % desktop to 100 %, 1280x1024 to 125 %), so those modes
+showed a picture shrunk to two thirds in the top-left corner, and only 1920x1080 / 1920x1200 filled
+the screen.  A per-monitor-aware process is never scaled by Windows, so the picture is shown 1:1 at
+every resolution.  The map editor gets no manifest (its dialogs would shrink).
 
 No code changes.  The file grows by the new section (about 75 KB), which is why this fix is always
 applied last.  The appended bytes are written below in Base64 (they are the icon images, the manifest
