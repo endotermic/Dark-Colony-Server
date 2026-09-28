@@ -163,7 +163,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
-           'menuorder': 'patch_menu_order.py',
+           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -173,7 +173,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music', 'menuorder': 'menu_order',
+           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'icon': 'icon'}
@@ -332,6 +332,15 @@ def blocks_menuorder(g):
         assert len(old) == len(new) == int(m.group(3)) and len(old) in (41, 102, 51), (g, len(old))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ': ' + m.group(6).rstrip(), old, new))
     assert len(out) == 3, (g, len(out))                                   # the three in-place blocks of main.c bintro
+    return out
+
+def blocks_chat(g):
+    t = plan(g, 'chat'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2}); (.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (276, 6, 51), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ': ' + m.group(6).rstrip(), old, new))
+    assert len(out) == 3, (g, len(out))                                   # the chat display, the handler's inc, stub + helper in the palette room
     return out
 
 def blocks_widemap(g):
@@ -763,6 +772,24 @@ anim_oneoff so the wave has something to chain from) is put back to its first fr
 first screen update and started again when the wave begins, so the interface files need no change
 and an older exe with the same files behaves as before.  Relative calls and register-relative
 operands only; nothing moves, no relocation entry changes; the same three blocks in both games.'''),
+ dict(id='chat', name='Battlefield chat: six lines, each new line announced with the mission-message sound', date='28 Sep 2026',
+      tool='tools/patch_chat.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.48', blocks=blocks_chat,
+      requires=['palette'],
+      desc='''In a network battle the chat lines of the other players (and the relay's bots) appear on the last
+rows of the map view, above the bottom bar.  The original shows only the two newest lines and shows
+them silently, while a mission message in a single-player game announces itself with a sound
+(SOUND\\MSG.WAV, entry 187 of the sound table).  This fix makes the battlefield chat behave like the
+mission messages: every line that arrives plays that sound, and up to SIX lines stay on screen (the
+oldest one leaves 7.5 seconds after the previous one left, as before).  The chat display of the
+client is rewritten in place (276 bytes: the newest-line cap goes from 2 to 6 lines, line 3-6 use
+the HUD script's new widgets 207-210, and a line is drawn only if its widget exists, so a HUD
+script with the stock two lines still works and shows two); the chat handler's "count the queued
+line" instruction becomes a call to a 17-byte stub that also leaves a "new line" mark, and a
+34-byte helper plays the sound when the display finds that mark.  Stub and helper live in the 75
+bytes the "fast screen loads" fix (palette) frees inside the palette conversion, which is
+therefore required.  No absolute addresses are written, so the .reloc table is unchanged.  The six
+lines themselves are data: the HUD script INTRF_HD\\MAINE written with the display fix gets
+in_text 207..210 above the two stock chat lines (15 rows apart); the stock 640x480 MAINE keeps two.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -928,11 +955,11 @@ BUILDS = [
  dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe)',
       source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'movies', 'sounds', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'movies', 'sounds', 'icon']),
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'ozi', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
@@ -2062,10 +2089,47 @@ function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
               else { $nx = $x + [int][Math]::Floor($dx / 2); $ny = $y + [int][Math]::Floor($dy / 2) }
               if ($nx -eq $x -and $ny -eq $y) { return $null }
               return @($nx, $ny) }
-    $t = Edit-Widgets $Text $move $HUD_KINDS
+    $t = Add-ChatLines (Edit-Widgets $Text $move $HUD_KINDS)
     $m = $SIZE2.Match($t)
     if ($m.Success) { $t = $t.Substring(0, $m.Index) + ('{0}size{1}{2} {3}{4}' -f $m.Groups[1].Value, $m.Groups[2].Value, $W, $H, $m.Groups[6].Value) + $t.Substring($m.Index + $m.Length) }
     return $t
+}
+
+# hud_layout.chat_lines (fix `chat`, 28 Sep 2026): six battlefield chat lines instead of two.  The patched exes
+# show chat line i in widget 203 + i (i < 2) / 205 + i (i >= 2) and draw a line only if its widget exists, so
+# `in_text 207..210` are inserted after the (already shifted) `in_text 203`, each a copy of that line with the id
+# and the y replaced, 15 rows further up per line (205/206 are the HUD's count widgets).  Nothing is added when a
+# 207 line is already there.
+function Add-ChatLines([string] $Text) {
+    $lines = $Text.Split("`n")
+    foreach ($ln in $lines) {
+        $i = $ln.IndexOf('%'); $body = if ($i -ge 0) { $ln.Substring(0, $i) } else { $ln }
+        $w = @(@($TOKENS.Matches($body) | ForEach-Object { $_.Value }) | Where-Object { $_.Trim().Length -gt 0 })
+        if ($w.Count -ge 2 -and $w[0] -eq 'in_text' -and $w[1] -eq '207') { return $Text }
+    }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($ln in $lines) {
+        $out.Add($ln)
+        $i = $ln.IndexOf('%')
+        $body = if ($i -ge 0) { $ln.Substring(0, $i) } else { $ln }
+        $rest = if ($i -ge 0) { $ln.Substring($i) } else { '' }
+        $toks = @($TOKENS.Matches($body) | ForEach-Object { $_.Value })
+        $words = @($toks | Where-Object { $_.Trim().Length -gt 0 })
+        if ($words.Count -ge 5 -and $words[0] -eq 'in_text' -and $words[1] -eq '203') {
+            $y = [int]$words[4]
+            for ($k = 2; $k -le 5; $k++) {
+                $t = @($toks); $n = 0
+                for ($j = 0; $j -lt $t.Count; $j++) {
+                    if ($t[$j].Trim().Length -eq 0) { continue }
+                    $n++
+                    if ($n -eq 2) { $t[$j] = [string](205 + $k) }
+                    elseif ($n -eq 5) { $t[$j] = [string]($y - 15 * $k); break }
+                }
+                $out.Add((-join $t) + $rest)
+            }
+        }
+    }
+    return ($out -join "`n")
 }
 
 # pad_background.edit_scene / build_ozi_overlay.shift_scene_markers: the `frame x y` line after an .avi line

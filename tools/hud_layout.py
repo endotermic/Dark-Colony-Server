@@ -350,6 +350,48 @@ def shift(x, y, dx, dy, sy=0):
     return x + dx // 2, y + dy // 2
 
 
+CHAT_EXTRA = (207, 208, 209, 210)      # widgets of chat lines 3..6 (fix `chat`, doc 10.48); 205/206 are the count widgets
+CHAT_ROW = 15                          # rows between two chat lines (stock 425 / 440)
+
+
+def chat_lines(lines):
+    """Six battlefield chat lines instead of two (fix `chat`, 28 Sep 2026, maintainer: "on the
+    battlefield we must have six lines of sent comments").
+
+    The patched exes show chat line i in widget 203 + i for i < 2 and 205 + i for i >= 2, and draw a
+    line only if its widget exists, so the stock two-line script still works.  This inserts
+    `in_text 207..210` right after the (already shifted) `in_text 203`: each a copy of that line with
+    the id and the y replaced, 15 rows further up per line - 203 (lowest), 204, 207, 208, 209, 210.
+    Idempotent: nothing is added when a 207 line is already there."""
+    def words_of(line):
+        body, sep, comment = line.partition(b'%')
+        toks = re.findall(rb'\S+|[ \t]+', body)
+        return toks, [t for t in toks if not t.isspace()], sep, comment
+
+    if any(w[:2] == [b'in_text', b'207'] for _, w, _, _ in map(words_of, lines)):
+        return lines, 0
+    res, added = [], 0
+    for line in lines:
+        res.append(line)
+        toks, words, sep, comment = words_of(line)
+        if len(words) >= 5 and words[0] == b'in_text' and words[1] == b'203':
+            y = int(words[4])
+            for k, wid in enumerate(CHAT_EXTRA, start=2):
+                t, n = list(toks), 0
+                for i, tok in enumerate(t):
+                    if tok.isspace():
+                        continue
+                    n += 1
+                    if n == 2:
+                        t[i] = b'%d' % wid
+                    elif n == 5:
+                        t[i] = b'%d' % (y - CHAT_ROW * k)
+                        break
+                res.append(b''.join(t) + sep + comment)
+                added += 1
+    return res, added
+
+
 def _lines(px, w, h, vertical):
     """Rows (or columns) of an index buffer, as a list of bytes."""
     if vertical:
@@ -520,6 +562,7 @@ def cmd_maine(args):
                     print('  left alone: %-8s #%-4s at (%d,%d)'
                           % (words[0].decode(), words[1].decode(), x, y))
         out.append(body + sep + comment)
+    out, chat_added = chat_lines(out)
     data = b'\n'.join(out)
 
     m = SIZE2.search(data)
@@ -534,6 +577,7 @@ def cmd_maine(args):
     print('  %d bottom-row widget(s)  y += %d  (the panel\'s bottom cluster is in both%s)'
           % (bottom, dy, '; the two chat lines above the bar by %d' % (dy - sy) if sy else ''))
     print('  %d widget(s) left where they are (inside the map view)' % left)
+    print('  %d chat widget(s) added (in_text 207..210, six battlefield chat lines with fix chat)' % chat_added)
     if args.action == 'plan':
         print('\nplan only, nothing written.')
         return 0
