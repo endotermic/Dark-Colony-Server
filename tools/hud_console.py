@@ -1,0 +1,1506 @@
+#!/usr/bin/env python3
+"""The battlefield HUD in the game's own menu style (doc 10.49).
+
+Dark Colony has two visual languages.  Every menu screen - race selection (SHUMAN.GIF), the network
+lobby (MULTIWIN.GIF, NET.GIF, SERVER.GIF), story, victory, encyclopedia - is grey pipework: dark
+greys of several intensities (palette 67 = (11,11,11), 66 = (23,23,23), 65 = (35,35,35),
+62 = (43,43,43)) with light edge lines (40 = (107,107,107)), nested compartments, vents and rounded
+tubes; black only inside the read-out screens; buttons are black plates with a 3-px red ring
+(KNOBE.SPR) whose pressed state is a green grid; the only icons are clean red-outline glyphs (the
+arrows).  The battlefield alone - the HUD frame INTRFACE.GIF, its cell bank MAINBUT.SPR and the
+dialog plates POPP.SPR - was brushed, bevelled metal.  The maintainer asked for one style
+(28 Sep 2026: "battlefield interface and menus styles are bad. You must create the same style as in
+race selection, network lobby and other menus"; "keep the icons and portraits, red-outlined button
+icons which mimics lobby button style everywhere"; "frames must be in lobby style. lobby is not
+black, it is in different intensities of gray").
+
+    frame    --width W --height H --out INTRFACE.GIF
+             the HUD frame at any size from geometry (no resampling): pipework over the panel
+             column, the bottom bar and the borders (seeded, so every run gives the same picture),
+             black screens where the engine or a widget paints (minimap, button grid, status line,
+             DAYS, money, dial, message box), the BUILD button and the two bar arrows as lobby plates
+    bank     GAME_DIR --out INTRF_HD/MAINBUT.SPR
+             the 133-cell HUD bank on lobby plates: the unit / building / upgrade portraits of
+             MAINBUT.SPR pixel for pixel (maintainer), clean red-outline glyphs drawn here for every
+             order and option button, KNOBE's own triangles for the arrows, the tab strips, PAUSED
+    popp     GAME_DIR --out INTRF_HD/POPP.SPR
+             the 14 dialog plates: pipework rows, red title plate, red OK / cancel, red arrows
+    apply    TARGET [--game SRC] --width W --height H [--no-bank]
+             frame + banks + the script edits (`pictures intrf_hd/mainbut|popp`, tab strips) into a
+             game folder or an hd_sets/<WxH> fixture
+    preview  GAME_DIR --width W --height H [--orders] --out preview.png
+
+Geometry shared with hud_layout.py (imported): the view is (4,6) .. (W-125, H-27-slack), panel
+widgets at x >= 516 move right by W-640 and, from y 399 down, also down by H-480; bottom furniture
+moves down by H-480; spare rows of the 32-px tile grid widen the bar at its top.
+
+Palette: PALETTE.GIF indices; the terrain palettes carry the same colour within +-3 at every index
+(measured 28 Sep 2026).  Index 254 is the erase colour: the hole is written as 254 exactly.  The cyan
+ramp 128..143 is remapped to the player's team colour in widget-drawn cells (observed in game).
+"""
+
+import argparse
+import math
+import os
+import random
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import spr                                   # noqa: E402
+import hud_layout                            # noqa: E402
+
+# ---------------------------------------------------------------- palette (PALETTE.GIF indices)
+BLK = 254        # black, the erase colour
+D11 = 67         # (11,11,11)   the pipework's ground
+D23 = 66         # (23,23,23)
+BAND = 65        # (35,35,35)   tube / band body
+G43 = 62         # (43,43,43)   compartment outlines
+WARM = 60        # (57,49,49)
+G65 = 55         # (65,65,65)
+G82 = 49         # (82,82,82)
+LT = 40          # (106,106,106) light edge line
+G115 = 36
+WHITE = 1
+GRN = (120, 121, 122, 123, 124, 125)        # (103,255,0) (91,203,0) (67,159,0) (51,119,0) (31,79,0) (15,39,0)
+RED = (96, 97, 98, 99, 100, 101)            # (255,31,31) (203,23,23) (159,19,19) (119,11,11) (79,7,7) (39,7,7)
+CYAN = (138, 139, 141, 142, 143)
+CYAN_TO_GREEN = {138: 120, 139: 121, 140: 121, 141: 122, 142: 123, 143: 124}
+CYAN_TO_RED = {138: 97, 139: 98, 140: 98, 141: 99, 142: 100, 143: 101}
+
+# the lobby button plate (KNOBE.SPR cells 0, 4, 10, 28, measured): outer 100 with 101 corners, the
+# bright line 80 = (255,47,0), inner 100 with 98 / 99 corner softening; pressed = green grid
+L_OUT, L_BRIGHT, L_CORNER, L_IN1, L_IN2 = 100, 80, 101, 98, 99
+P_FILL, P_LINE, P_BORDER = 125, 124, 123
+
+# ---------------------------------------------------------------- stock geometry (640x480)
+SRC_W, SRC_H = hud_layout.SRC_W, hud_layout.SRC_H
+INSET_X, INSET_Y = hud_layout.INSET_X, hud_layout.INSET_Y
+VIEW_W, VIEW_H = hud_layout.VIEW_W, hud_layout.VIEW_H
+PANEL_X = hud_layout.PANEL_X          # 516
+BOTTOM_Y = hud_layout.BOTTOM_Y        # 454
+PANEL_INSERT = hud_layout.PANEL_INSERT  # 399
+
+MINIMAP = (518, 6, 614, 89)           # engine paints 96x84 at (519,6)
+LETTER_STRIP = (617, 8, 634, 88)      # the vertical DARK COLONY beside the minimap
+GRID = (518, 92, 635, 398)            # tab row 92..111 + 2 x 7 cells of 59x41 from 112
+STATUS = (520, 404, 633, 415)         # in_text 79 at (520,404)
+BUILD = (516, 422, 601, 448)          # pushb 19, 86x27
+DAYS_TEXT = (606, 421)
+DAYS_BOX = (609, 433, 634, 444)       # in_text 234 at (613,433)
+MONEY = (521, 456, 598, 472)          # scount 75 at (524,456)
+DIAL = (621, 463, 15)                 # the 28x28 hand cell lands at (608..635, 450..477): centre (621.5, 463.5), measured in game
+ARROWS = ((4, 460, 23, 478), (24, 460, 43, 478))
+MSG = (49, 461, 509, 473)             # in_text 148 at (50,462), 200 at (480,463)
+
+
+# ---------------------------------------------------------------- an index canvas
+class Canvas:
+    def __init__(self, w, h, fill=BLK):
+        self.w, self.h = w, h
+        self.px = bytearray([fill]) * (w * h)
+
+    def put(self, x, y, c):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            self.px[y * self.w + x] = c
+
+    def get(self, x, y):
+        return self.px[y * self.w + x] if 0 <= x < self.w and 0 <= y < self.h else BLK
+
+    def hline(self, x0, x1, y, c):
+        for x in range(min(x0, x1), max(x0, x1) + 1):
+            self.put(x, y, c)
+
+    def vline(self, x, y0, y1, c):
+        for y in range(min(y0, y1), max(y0, y1) + 1):
+            self.put(x, y, c)
+
+    def fill(self, x0, y0, x1, y1, c):
+        for y in range(y0, y1 + 1):
+            self.hline(x0, x1, y, c)
+
+    def ring(self, x0, y0, x1, y1, r, c):
+        """1-px rounded rectangle outline (inclusive corners)."""
+        r = max(0, min(r, (x1 - x0) // 2, (y1 - y0) // 2))
+        self.hline(x0 + r, x1 - r, y0, c)
+        self.hline(x0 + r, x1 - r, y1, c)
+        self.vline(x0, y0 + r, y1 - r, c)
+        self.vline(x1, y0 + r, y1 - r, c)
+        if r:
+            for cx, cy, sx, sy in ((x0 + r, y0 + r, -1, -1), (x1 - r, y0 + r, 1, -1),
+                                   (x0 + r, y1 - r, -1, 1), (x1 - r, y1 - r, 1, 1)):
+                for dx, dy in _arc(r):
+                    self.put(cx + sx * dx, cy + sy * dy, c)
+
+    def rfill(self, x0, y0, x1, y1, r, c):
+        """Filled rounded rectangle."""
+        r = max(0, min(r, (x1 - x0) // 2, (y1 - y0) // 2))
+        for y in range(y0, y1 + 1):
+            dy = max(0, (y0 + r) - y, y - (y1 - r))
+            dx = r - int(round(math.sqrt(max(0, r * r - dy * dy)))) if dy else 0
+            self.hline(x0 + dx, x1 - dx, y, c)
+
+    def screen(self, x0, y0, x1, y1):
+        """A black read-out window: interior black, light edge line, band, dark gap."""
+        self.fill(x0, y0, x1, y1, BLK)
+        self.ring(x0 - 1, y0 - 1, x1 + 1, y1 + 1, 1, LT)
+        self.ring(x0 - 2, y0 - 2, x1 + 2, y1 + 2, 2, BAND)
+        self.ring(x0 - 3, y0 - 3, x1 + 3, y1 + 3, 3, D11)
+
+    def vents(self, x, y, n, step=3, w=4, vertical=True, c=LT, c2=D11):
+        for i in range(n):
+            if vertical:
+                self.hline(x, x + w - 1, y + i * step, c)
+                self.hline(x, x + w - 1, y + i * step + 1, c2)
+            else:
+                self.vline(x + i * step, y, y + w - 1, c)
+                self.vline(x + i * step + 1, y, y + w - 1, c2)
+
+    def blit(self, cell, x, y, transparent=(0, BLK), remap=None):
+        w, h, px = cell['w'], cell['h'], cell['px']
+        for yy in range(h):
+            for xx in range(w):
+                v = px[yy * w + xx]
+                if v in transparent:
+                    continue
+                if remap:
+                    v = remap.get(v, v)
+                self.put(x + xx, y + yy, v)
+
+    def image(self, palette):
+        from PIL import Image
+        im = Image.frombytes('P', (self.w, self.h), bytes(self.px))
+        im.putpalette(palette)
+        return im
+
+
+def _arc(r):
+    pts = set()
+    x, y, err = r, 0, 1 - r
+    while x >= y:
+        pts.update({(x, y), (y, x)})
+        y += 1
+        if err < 0:
+            err += 2 * y + 1
+        else:
+            x -= 1
+            err += 2 * (y - x) + 1
+    return list(pts)
+
+
+# ---------------------------------------------------------------- the lobby button plate
+def lobby_plate(w, h, canvas=None, x0=0, y0=0):
+    cv = canvas or Canvas(w, h)
+    x1, y1 = x0 + w - 1, y0 + h - 1
+    cv.fill(x0, y0, x1, y1, BLK)
+    cv.ring(x0, y0, x1, y1, 0, L_OUT)
+    for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+        cv.put(x, y, L_CORNER)
+    cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0, L_BRIGHT)
+    cv.ring(x0 + 2, y0 + 2, x1 - 2, y1 - 2, 0, L_OUT)
+    for cx, cy, sx, sy in ((x0 + 2, y0 + 2, 1, 1), (x1 - 2, y0 + 2, -1, 1), (x0 + 2, y1 - 2, 1, -1), (x1 - 2, y1 - 2, -1, -1)):
+        cv.put(cx, cy, L_IN1)
+        cv.put(cx + sx, cy, L_IN2)
+        cv.put(cx, cy + sy, L_IN2)
+    return cv
+
+
+def pressed_plate(w, h, canvas=None, x0=0, y0=0):
+    cv = canvas or Canvas(w, h)
+    cv.fill(x0, y0, x0 + w - 1, y0 + h - 1, P_FILL)
+    for x in range(x0 + 8, x0 + w - 1, 8):
+        cv.vline(x, y0, y0 + h - 1, P_LINE)
+    for y in range(y0 + 9, y0 + h - 1, 7):
+        cv.hline(x0, x0 + w - 1, y, P_LINE)
+    cv.ring(x0, y0, x0 + w - 1, y0 + h - 1, 0, P_BORDER)
+    return cv
+
+
+# ---------------------------------------------------------------- the lobby pipework
+class Pipework:
+    """Fills a rectangle with the menu screens' grey pipework: horizontal bands of compartments
+    (1-px 43-grey outlines on 11-grey, nested), vent blocks (light dashes on 35-grey), plain 23-grey
+    cells and rounded 35-grey tubes with a light edge, separated by tube bands.  Seeded per region so
+    every run of the tool reproduces the shipped picture byte for byte."""
+
+    def __init__(self, cv, seed):
+        self.cv = cv
+        self.rng = random.Random(seed)
+
+    def region(self, x0, y0, x1, y1):
+        cv, rng = self.cv, self.rng
+        if x1 < x0 or y1 < y0:
+            return
+        cv.fill(x0, y0, x1, y1, D11)
+        y = y0
+        first = True
+        while y <= y1:
+            if not first:
+                th = rng.choice((4, 5, 6, 7))
+                yt = min(y + th - 1, y1)
+                self.tube(x0, y, x1, yt)
+                y = yt + 1
+                if y > y1:
+                    break
+            first = False
+            bh = rng.randint(16, 56)
+            yb = min(y + bh - 1, y1)
+            if y1 - yb < 10:
+                yb = y1
+            self.band(x0, y, x1, yb)
+            y = yb + 1
+
+    def tube(self, x0, y0, x1, y1):
+        """A horizontal tube band: 35-grey body, light line along its top, dark line under it."""
+        cv = self.cv
+        cv.fill(x0, y0, x1, y1, BAND)
+        cv.hline(x0, x1, y0, LT)
+        if y1 > y0 + 1:
+            cv.hline(x0, x1, y1, D11)
+        if y1 - y0 >= 5:
+            cv.hline(x0, x1, y1 - 1, D23)
+
+    def band(self, x0, y0, x1, y1):
+        cv, rng = self.cv, self.rng
+        x = x0
+        h = y1 - y0 + 1
+        while x <= x1:
+            w = rng.randint(10, 44)
+            xb = min(x + w - 1, x1)
+            if x1 - xb < 8:
+                xb = x1
+            style = rng.choice(('comp', 'comp', 'nested', 'vent', 'plain', 'tube', 'comp2'))
+            if xb - x < 9 or h < 9:
+                style = 'plain'
+            self.cell(style, x, y0, xb, y1)
+            x = xb + 1
+
+    def cell(self, style, x0, y0, x1, y1):
+        cv, rng = self.cv, self.rng
+        if style == 'plain':
+            cv.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, D23)
+            cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0, G43)
+        elif style in ('comp', 'comp2'):
+            cv.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, D11)
+            cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0, G43)
+            if style == 'comp2' and x1 - x0 > 16 and y1 - y0 > 12:
+                # split into two compartments
+                if rng.random() < 0.5:
+                    xm = (x0 + x1) // 2
+                    cv.vline(xm, y0 + 1, y1 - 1, G43)
+                else:
+                    ym = (y0 + y1) // 2
+                    cv.hline(x0 + 1, x1 - 1, ym, G43)
+            if rng.random() < 0.5 and x1 - x0 > 14 and y1 - y0 > 12:
+                cv.ring(x0 + 4, y0 + 4, x1 - 4, y1 - 4, 0, G65 if rng.random() < 0.5 else G43)
+        elif style == 'nested':
+            cv.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, D11)
+            k = 0
+            while x1 - x0 - 2 * k > 8 and y1 - y0 - 2 * k > 8 and k < 12:
+                cv.ring(x0 + 1 + k, y0 + 1 + k, x1 - 1 - k, y1 - 1 - k, 0, (G43, D23, G65)[(k // 3) % 3])
+                k += 3
+        elif style == 'vent':
+            cv.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, BAND)
+            cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0, G43)
+            n = (y1 - y0 - 6) // 3
+            if n > 0:
+                cv.vents(x0 + 4, y0 + 4, n, step=3, w=max(2, x1 - x0 - 7), c=LT, c2=D11)
+        elif style == 'tube':
+            r = min(6, (x1 - x0) // 3, (y1 - y0) // 3)
+            cv.rfill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, r, BAND)
+            cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, r, LT)
+            if x1 - x0 > 12 and y1 - y0 > 12:
+                cv.ring(x0 + 4, y0 + 4, x1 - 4, y1 - 4, max(0, r - 3), D11)
+        # dark gap around every cell
+        cv.ring(x0, y0, x1, y1, 0, D11)
+
+
+# ---------------------------------------------------------------- game files
+def read_palette(game):
+    from PIL import Image
+    return Image.open(os.path.join(game, 'PALETTE.GIF')).getpalette()
+
+
+def find_file(game, *parts):
+    d = game
+    for p in parts[:-1]:
+        d = os.path.join(d, p)
+    want = parts[-1].lower()
+    for fn in os.listdir(d):
+        if fn.lower() == want:
+            return os.path.join(d, fn)
+    raise FileNotFoundError(os.path.join(d, parts[-1]))
+
+
+class Font:
+    """MFONTO7: cell index = ord(ch) - 31 (cell 0 is the cursor block, cell 1 the empty space)."""
+
+    def __init__(self, game, name='mfonto7.spr'):
+        self.cells = spr.read_spr(find_file(game, 'INTRFACE', name))['cells']
+
+    def glyph(self, ch):
+        if ch == ' ':
+            return None
+        i = ord(ch) - 31
+        return self.cells[i] if 0 <= i < len(self.cells) else None
+
+    def width(self, text, spacing=1):
+        w = 0
+        for ch in text:
+            g = self.glyph(ch)
+            w += (g['w'] if g and g['w'] else 4) + spacing
+        return w - spacing
+
+    def draw(self, cv, x, y, text, remap=CYAN_TO_GREEN, spacing=1):
+        for ch in text:
+            g = self.glyph(ch)
+            if g and g['w']:
+                cv.blit(g, x, y, remap=remap)
+                x += g['w'] + spacing
+            else:
+                x += 4 + spacing
+        return x
+
+    def draw_vertical(self, cv, x, y, text, remap=CYAN_TO_GREEN, spacing=1):
+        for ch in text:
+            g = self.glyph(ch)
+            if g and g['w']:
+                w, h = g['w'], g['h']
+                for yy in range(h):
+                    for xx in range(w):
+                        v = g['px'][yy * w + xx]
+                        if v in (0, BLK):
+                            continue
+                        cv.put(x + (h - 1 - yy), y + xx, remap.get(v, v))
+                y += w + spacing
+            else:
+                y += 4 + spacing
+        return y
+
+
+# ---------------------------------------------------------------- clean red glyphs for the buttons
+SCALE = 8
+FONT_TTF = [os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts', f) for f in ('arialbd.ttf', 'verdanab.ttf')]
+
+
+class Glyph:
+    """Vector-drawn icon rasterised through an 8x supersampled coverage map into the lobby's red
+    ramp: full coverage -> 97 (203,23,23), partial -> 99 / 100.  Coordinates are in cell pixels."""
+
+    def __init__(self, w, h):
+        from PIL import Image, ImageDraw
+        self.w, self.h = w, h
+        self.im = Image.new('L', (w * SCALE, h * SCALE), 0)
+        self.d = ImageDraw.Draw(self.im)
+
+    def _s(self, pts):
+        return [(p[0] * SCALE, p[1] * SCALE) for p in pts]
+
+    def line(self, pts, width=2):
+        self.d.line(self._s(pts), fill=255, width=int(width * SCALE), joint='curve')
+
+    def poly(self, pts, width=2, fill=False):
+        if fill:
+            self.d.polygon(self._s(pts), fill=255)
+        else:
+            self.d.line(self._s(pts + [pts[0]]), fill=255, width=int(width * SCALE), joint='curve')
+
+    def circle(self, c, r, width=2, fill=False):
+        b = [(c[0] - r) * SCALE, (c[1] - r) * SCALE, (c[0] + r) * SCALE, (c[1] + r) * SCALE]
+        if fill:
+            self.d.ellipse(b, fill=255)
+        else:
+            self.d.ellipse(b, outline=255, width=int(width * SCALE))
+
+    def ellipse(self, x0, y0, x1, y1, width=2, fill=False):
+        b = [x0 * SCALE, y0 * SCALE, x1 * SCALE, y1 * SCALE]
+        if fill:
+            self.d.ellipse(b, fill=255)
+        else:
+            self.d.ellipse(b, outline=255, width=int(width * SCALE))
+
+    def arc(self, x0, y0, x1, y1, a0, a1, width=2):
+        self.d.arc([x0 * SCALE, y0 * SCALE, x1 * SCALE, y1 * SCALE], a0, a1, fill=255, width=int(width * SCALE))
+
+    def arrow(self, p, q, width=2, head=6):
+        """Line p->q with a filled arrow head at q."""
+        self.line([p, q], width)
+        ang = math.atan2(q[1] - p[1], q[0] - p[0])
+        a1, a2 = ang + 2.5, ang - 2.5
+        self.poly([q, (q[0] + head * math.cos(a1), q[1] + head * math.sin(a1)),
+                   (q[0] + head * math.cos(a2), q[1] + head * math.sin(a2))], fill=True)
+
+    def text(self, s, height, center):
+        from PIL import ImageFont
+        for path in FONT_TTF:
+            if os.path.exists(path):
+                f = ImageFont.truetype(path, int(height * SCALE))
+                break
+        else:
+            f = ImageFont.load_default()
+        b = self.d.textbbox((0, 0), s, font=f)
+        tw, th = b[2] - b[0], b[3] - b[1]
+        self.d.text((center[0] * SCALE - tw / 2 - b[0], center[1] * SCALE - th / 2 - b[1]), s, fill=255, font=f)
+
+    def raster(self, bright=RED[1], mid=RED[3], dim=RED[4], lo=(150, 80, 35), size=None):
+        from PIL import Image
+        cov = self.im.resize(size or (self.w, self.h), Image.BOX)
+        if size:
+            self.w, self.h = size
+        out = {}
+        for y in range(self.h):
+            for x in range(self.w):
+                v = cov.getpixel((x, y))
+                if v >= lo[0]:
+                    out[(x, y)] = bright
+                elif v >= lo[1]:
+                    out[(x, y)] = mid
+                elif v >= lo[2]:
+                    out[(x, y)] = dim
+        return out
+
+
+def _icon(kind, w=53, h=35):
+    g = Glyph(w, h)
+    cx, cy = w / 2.0, h / 2.0
+    if kind == 'quit':
+        g.line([(cx - 12, cy - 12), (cx + 12, cy + 12)], 4)
+        g.line([(cx + 12, cy - 12), (cx - 12, cy + 12)], 4)
+    elif kind == 'options':
+        g.text('?', 30, (cx, cy))
+    elif kind == 'attack':
+        g.circle((cx, cy), 11, 2)
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            g.line([(cx + dx * 8, cy + dy * 8), (cx + dx * 15, cy + dy * 15)], 2)
+        g.circle((cx, cy), 2, fill=True)
+    elif kind == 'save':
+        g.poly([(cx - 13, cy - 14), (cx + 10, cy - 14), (cx + 13, cy - 11), (cx + 13, cy + 14), (cx - 13, cy + 14)], 2)
+        g.poly([(cx - 7, cy - 14), (cx + 6, cy - 14), (cx + 6, cy - 5), (cx - 7, cy - 5)], 2)
+        g.poly([(cx - 8, cy + 3), (cx + 8, cy + 3), (cx + 8, cy + 14), (cx - 8, cy + 14)], 2)
+    elif kind == 'stop':
+        r = 15
+        g.poly([(cx + r * math.cos(math.radians(22.5 + 45 * k)), cy + r * math.sin(math.radians(22.5 + 45 * k))) for k in range(8)], 3)
+    elif kind in ('move', 'move_attack'):
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            g.arrow((cx + dx * 5, cy + dy * 5), (cx + dx * 16, cy + dy * 16 * (0.95 if dy else 1)), 2, 6)
+        if kind == 'move_attack':
+            g.poly([(cx + 3, cy - 8), (cx - 4, cy + 1), (cx + 1, cy + 1), (cx - 2, cy + 8), (cx + 5, cy - 1), (cx, cy - 1)], fill=True)
+    elif kind == 'waypoints':
+        pts = [(cx - 17, cy + 9), (cx - 3, cy - 9), (cx + 9, cy + 6), (cx + 18, cy - 8)]
+        g.line(pts[:3], 2)
+        g.arrow(pts[2], pts[3], 2, 6)
+        for p in pts[:3]:
+            g.poly([(p[0] - 3, p[1] - 3), (p[0] + 3, p[1] - 3), (p[0] + 3, p[1] + 3), (p[0] - 3, p[1] + 3)], fill=True)
+    elif kind == 'shovel':
+        g.line([(cx - 12, cy - 13), (cx + 4, cy + 3)], 3)
+        g.poly([(cx + 2, cy + 1), (cx + 13, cy + 12), (cx + 6, cy + 15), (cx - 1, cy + 8)], fill=True)
+    elif kind == 'turret':
+        g.poly([(cx - 14, cy + 13), (cx + 14, cy + 13), (cx + 9, cy + 4), (cx - 9, cy + 4)], 2)
+        g.arc(cx - 7, cy - 4, cx + 7, cy + 10, 180, 360, 2)
+        g.line([(cx, cy + 1), (cx + 16, cy - 11)], 3)
+    elif kind == 'mine':
+        g.circle((cx, cy + 2), 8, 2)
+        for k in range(8):
+            a = math.radians(45 * k)
+            g.line([(cx + 9 * math.cos(a), cy + 2 + 9 * math.sin(a)), (cx + 14 * math.cos(a), cy + 2 + 14 * math.sin(a))], 2)
+    elif kind == 'napalm':
+        g.poly([(cx, cy - 15), (cx + 7, cy - 6), (cx + 5, cy - 1), (cx + 12, cy - 3), (cx + 10, cy + 8), (cx + 4, cy + 14),
+                (cx - 4, cy + 14), (cx - 11, cy + 7), (cx - 9, cy - 3), (cx - 4, cy), (cx - 6, cy - 8)], 2)
+        g.poly([(cx, cy - 2), (cx + 4, cy + 4), (cx + 2, cy + 10), (cx - 2, cy + 10), (cx - 4, cy + 4)], fill=True)
+    elif kind == 'disease':
+        for k in range(3):
+            a = math.radians(-90 + 120 * k)
+            g.circle((cx + 6 * math.cos(a), cy + 1 + 6 * math.sin(a)), 7, 2)
+        g.circle((cx, cy + 1), 2.5, fill=True)
+    elif kind == 'deploy':
+        g.line([(cx, cy - 14), (cx, cy + 4)], 4)
+        g.poly([(cx - 11, cy + 2), (cx + 11, cy + 2), (cx, cy + 13)], fill=True)
+        g.line([(cx - 15, cy + 15), (cx + 15, cy + 15)], 2)
+    elif kind == 'steal':
+        g.text('$', 30, (cx, cy))
+    elif kind == 'allies':
+        # a dove (maintainer: "diplomacy button must have a pigeon instead of eternity sign")
+        g.ellipse(cx - 13, cy - 1, cx + 9, cy + 10, fill=True)                         # body
+        g.circle((cx + 11, cy - 3), 4.5, fill=True)                                     # head
+        g.poly([(cx + 15, cy - 3.5), (cx + 21, cy - 2), (cx + 15, cy - 1)], fill=True)  # beak
+        g.poly([(cx - 5, cy), (cx - 15, cy - 15), (cx - 4, cy - 11), (cx + 5, cy - 1)], fill=True)   # wing
+        g.poly([(cx - 12, cy + 2), (cx - 24, cy + 5), (cx - 23, cy + 11), (cx - 11, cy + 8)], fill=True)  # tail
+        g.line([(cx + 1, cy + 10), (cx + 3, cy + 15)], 1.6)                             # legs
+        g.line([(cx + 5, cy + 10), (cx + 6, cy + 15)], 1.6)
+    elif kind == 'peace':
+        g.circle((cx, cy), 13, 2.5)
+        g.line([(cx, cy - 13), (cx, cy + 13)], 2.5)
+        g.line([(cx, cy), (cx - 9.2, cy + 9.2)], 2.5)
+        g.line([(cx, cy), (cx + 9.2, cy + 9.2)], 2.5)
+    elif kind == 'eye':
+        g.poly([(cx - 16, cy), (cx - 8, cy - 9), (cx + 8, cy - 9), (cx + 16, cy), (cx + 8, cy + 9), (cx - 8, cy + 9)], 2.5)
+        g.circle((cx, cy), 5, fill=True)
+    elif kind == 'coins':
+        g.ellipse(cx - 12, cy - 4, cx + 12, cy + 4, 2.5)
+        g.line([(cx - 12, cy), (cx - 12, cy + 8)], 2.5)
+        g.line([(cx + 12, cy), (cx + 12, cy + 8)], 2.5)
+        g.arc(cx - 12, cy + 4, cx + 12, cy + 12, 0, 180, 2.5)
+        g.text('$', 12, (cx, cy))
+    elif kind == 'give':
+        g.line([(cx - 14, cy), (cx + 6, cy)], 3.5)
+        g.poly([(cx + 4, cy - 9), (cx + 16, cy), (cx + 4, cy + 9)], fill=True)
+    elif kind == 'objectives':
+        g.poly([(cx - 20, cy - 10), (cx - 1, cy - 7), (cx - 1, cy + 13), (cx - 20, cy + 10)], 2)
+        g.poly([(cx + 20, cy - 10), (cx + 1, cy - 7), (cx + 1, cy + 13), (cx + 20, cy + 10)], 2)
+        for k in range(3):
+            yy = cy - 3 + 5 * k
+            g.line([(cx - 16, yy - 1.5), (cx - 5, yy)], 1)
+            g.line([(cx + 5, yy), (cx + 16, yy - 1.5)], 1)
+    elif kind == 'inspire':
+        pts = []
+        for k in range(10):
+            r = 15 if k % 2 == 0 else 6.5
+            a = math.radians(-90 + 36 * k)
+            pts.append((cx + r * math.cos(a), cy + 1 + r * math.sin(a)))
+        g.poly(pts, 2)
+    elif kind == 'dropship':
+        g.ellipse(cx - 16, cy - 8, cx + 16, cy + 6, 2)
+        g.poly([(cx - 5, cy - 8), (cx + 5, cy - 8), (cx + 3, cy - 13), (cx - 3, cy - 13)], 2)
+        for x in (cx - 10, cx, cx + 10):
+            g.line([(x, cy + 6), (x, cy + 14)], 2)
+    elif kind == 'saucer':
+        g.ellipse(cx - 20, cy - 2, cx + 20, cy + 9, 2)
+        g.arc(cx - 9, cy - 11, cx + 9, cy + 3, 180, 360, 2)
+    elif kind == 'pause':
+        g.poly([(cx - 10, cy - 11), (cx - 4, cy - 11), (cx - 4, cy + 11), (cx - 10, cy + 11)], fill=True)
+        g.poly([(cx + 4, cy - 11), (cx + 10, cy - 11), (cx + 10, cy + 11), (cx + 4, cy + 11)], fill=True)
+    return g
+
+
+# BUTTON.SPR's neon idiom: a bright core with a softer glow, one hue per button (its own unit command
+# buttons are red, green, orange and blue).  Ramps = (bright, mid, dim) palette indices.
+NEON_RAMPS = {
+    'cyan': (138, 139, 141),          # (0,255,255) (0,203,203) (0,119,119) - the team-colour ramp, remapped in game
+    'green': (120, 121, 123),         # (103,255,0) (91,203,0) (51,119,0)
+    'red': (96, 97, 99),              # (255,31,31) (203,23,23) (119,11,11)
+    'orange': (78, 79, 129),          # (255,99,0) (255,75,0) (119,51,0)
+    'yellow': (74, 75, 130),          # (255,203,0) (255,175,0) (79,31,0)
+    'blue': (102, 103, 105),          # (87,147,255) (43,91,203) (11,43,119)
+    'white': (1, 31, 55),             # (255,255,255) (123,123,123) (65,65,65)
+}
+NEON_LO = (110, 45, 12)
+
+
+def _neon(kind, w=53, h=35, ramp='cyan'):
+    """A drawn icon in BUTTON.SPR's neon idiom (1.5-px core, a dim glow around it) in one of its hues.
+    Icons are designed on the 53x35 plate interior; a smaller area gets the design scaled down."""
+    b, m, d = NEON_RAMPS[ramp]
+    if (w, h) == (53, 35):
+        return _icon(kind, w, h).raster(bright=b, mid=m, dim=d, lo=NEON_LO)
+    s = min(w / 53.0, h / 35.0)
+    tw, th = max(1, int(round(53 * s))), max(1, int(round(35 * s)))
+    pts = _icon(kind, 53, 35).raster(bright=b, mid=m, dim=d, lo=NEON_LO, size=(tw, th))
+    ox, oy = (w - tw) // 2, (h - th) // 2
+    return {(x + ox, y + oy): v for (x, y), v in pts.items()}
+
+
+def _triangle(direction, size=16, center=None, ramp=RED):
+    """A clean symmetric outline triangle for the bar / dialog arrows (the stock 16x16 cells are
+    drawn at the top-left of a 20x19 button rect, so the bar's are centred on (9.5, 9))."""
+    g = Glyph(size, size)
+    cx, cy = center or (size / 2.0, size / 2.0)
+    if direction == 'up':
+        pts = [(cx, cy - 4.5), (cx + 5.5, cy + 4), (cx - 5.5, cy + 4)]
+    elif direction == 'down':
+        pts = [(cx, cy + 4.5), (cx + 5.5, cy - 4), (cx - 5.5, cy - 4)]
+    elif direction == 'left':
+        pts = [(cx - 4.5, cy), (cx + 4, cy + 5.5), (cx + 4, cy - 5.5)]
+    else:
+        pts = [(cx + 4.5, cy), (cx - 4, cy + 5.5), (cx - 4, cy - 5.5)]
+    g.poly(pts, 1.6)
+    return g.raster(bright=ramp[1], mid=ramp[3], dim=ramp[4])
+
+
+# MAINBUT cell -> glyph kind (from MAINE's textmsg lines: 62 Quit = cell 1, 63 Save Game = 4,
+# 64 Options = 0, 151 Allies Menu = 117, 196 Pause Button = 131, 202 Objectives = 118, 150 Stop = 62,
+# 33 Move Only = 63, 35 Move & Attack = 65, 36 Set waypoints = 66, 37 Deploy = 74, 139 Deploy Turret
+# = 68, 140 Deploy Mine = 69, 142 Steal Money = 75, 143/146 Second / Ground Attack = 2, 144 Napalm = 72,
+# 145 Disease = 73, 141 Inspire Troops = 121, 197 Drop Ship = 125, 198 Saucer = 126; 67 is unreferenced)
+ICON_CELLS = {0: 'options', 1: 'quit', 2: 'attack', 4: 'save', 62: 'stop', 63: 'move', 65: 'move_attack',
+              66: 'waypoints', 67: 'shovel', 68: 'turret', 69: 'mine', 72: 'napalm', 73: 'disease',
+              74: 'deploy', 75: 'steal', 117: 'allies', 118: 'objectives', 121: 'inspire',
+              125: 'dropship', 126: 'saucer', 131: 'pause'}
+# BUTTON.SPR cells whose neon icon is taken as it is (same meaning as the MAINBUT cell, checked
+# against MAINE's textmsg): '?', 'X', stop, move, move & attack, waypoints, deploy turret, deploy
+# mine, napalm, plague, deploy, steal money.  The maintainer kept these ("previous style ... was
+# ok, return them back") and asked for the same style on the Game Option tab, whose remaining cells
+# (save, allies, pause, objectives) BUTTON.SPR has no icon for: those are drawn in its idiom (_neon).
+FROM_BUTTON = (62, 63, 65, 66, 68, 69, 72, 73, 74, 75)
+PLATE_IDX = {40, 49, 55, 60, 65, 67, 0, BLK}          # BUTTON.SPR's grey plate: everything else is icon
+
+
+# ---------------------------------------------------------------- the frame
+def render_frame(width, height, game):
+    dx, dy = width - SRC_W, height - SRC_H
+    sy = hud_layout.slack_rows(height)
+    px_ = PANEL_X + dx
+    view_x1 = INSET_X + VIEW_W + dx - 1
+    view_y1 = INSET_Y + VIEW_H + dy - sy - 1
+    bar_top = view_y1 + 1
+    cv = Canvas(width, height)
+    font = Font(game)
+    button = spr.read_spr(find_file(game, 'INTRFACE', 'button.spr'))['cells']
+
+    def P(x):
+        return x + dx
+
+    def B(y):
+        return y + dy
+
+    # --- pipework over everything that is not the view
+    pw = Pipework(cv, seed=width * 10007 + height)
+    pw.region(px_ + 3, 0, width - 1, height - 1)                         # the panel column
+    pw.region(0, bar_top, view_x1 + 2, height - 1)                        # the bottom bar
+    # borders around the view: a tube [dark, band, band, light] from the screen edge to the hole
+    for i, c in enumerate((D11, BAND, BAND, LT)):
+        cv.vline(i, 0, height - 1, c)
+    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):
+        cv.hline(0, view_x1 + 3, i, c)
+    for i, c in enumerate((LT, BAND, D23)):                               # the view's right edge
+        cv.vline(view_x1 + 1 + i, 0, height - 1, c)
+    for i, c in enumerate((D11, BAND, BAND, LT)):                         # right screen edge
+        cv.vline(width - 1 - i, 0, height - 1, c)
+    for i, c in enumerate((D11, BAND, BAND, LT)):                         # bottom screen edge
+        cv.hline(0, width - 1, height - 1 - i, c)
+    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):              # panel top
+        cv.hline(px_, width - 1, i, c)
+    cv.hline(0, view_x1 + 2, bar_top, LT)                                 # the view's bottom edge
+    cv.hline(0, view_x1 + 2, bar_top + 1, BAND)
+    cv.hline(0, view_x1 + 2, bar_top + 2, D23)
+
+    # --- panel screens (black where the engine or the widgets paint)
+    x0, y0, x1, y1 = MINIMAP
+    cv.screen(P(x0), y0, P(x1), y1)
+    lx0, ly0, lx1, ly1 = LETTER_STRIP
+    cv.screen(P(lx0), ly0 - 1, P(lx1), ly1 + 1)
+    text = 'DARK COLONY'
+    th = font.width(text)
+    font.draw_vertical(cv, P(lx0) + (lx1 - lx0 + 1 - 10) // 2, ly0 + max(0, (ly1 - ly0 + 1 - th) // 2), text,
+                       remap={138: 122, 139: 122, 140: 123, 141: 123, 142: 124, 143: 125})
+    gx0, gy0, gx1, gy1 = GRID
+    cv.screen(P(gx0), gy0, P(gx1), gy1)                                   # tab row + button grid
+    sx0, sy0_, sx1, sy1_ = STATUS
+    cv.screen(P(sx0), B(sy0_), P(sx1), B(sy1_))
+    bx0, by0, bx1, by1 = BUILD
+    lobby_plate(bx1 - bx0 + 1, by1 - by0 + 1, cv, P(bx0), B(by0))
+    _build_caption(cv, game, P(bx0), B(by0), bx1 - bx0 + 1, by1 - by0 + 1)
+    tx = P(DAYS_TEXT[0])
+    cv.fill(tx - 2, B(DAYS_TEXT[1]) - 1, tx + font.width('DAYS') + 1, B(DAYS_TEXT[1]) + 10, BLK)
+    font.draw(cv, tx, B(DAYS_TEXT[1]), 'DAYS', remap={138: 121, 139: 121, 140: 122, 141: 122, 142: 123, 143: 124})
+    dx0, dy0, dx1, dy1 = DAYS_BOX
+    cv.screen(P(dx0), B(dy0), P(dx1), B(dy1))
+    mx0, my0, mx1, my1 = MONEY
+    cv.screen(P(mx0), B(my0), P(mx1), B(my1))
+    cx, cy, r = DIAL
+    _dial(cv, P(cx), B(cy), r)
+    # the dial's face from the first frame: clock_draw blits a cell only when its index changes (the
+    # first time up to a phase step after the start - maintainer: "day/night clock is not appearing
+    # instantly on game start"), so the frame carries the day's first cell (hand at 12) under the
+    # bezel, at the cell's measured place (608..635, 450..477 stock); the code's cells overwrite it.
+    flags, clock_cells, _ = build_clock(game)
+    cv.blit(clock_cells[0], P(608), B(450), transparent=(0,))
+
+    # --- bottom bar: arrow plates and the message screen
+    for ax0, ay0, ax1, ay1 in ARROWS:
+        lobby_plate(ax1 - ax0 + 1, ay1 - ay0 + 1, cv, ax0, B(ay0))
+    qx0, qy0, qx1, qy1 = MSG
+    cv.screen(qx0, B(qy0), qx1 + dx, B(qy1))
+
+    # --- the hole itself: exactly 254
+    cv.fill(INSET_X, INSET_Y, view_x1, view_y1, BLK)
+    return cv, dict(view=(INSET_X, INSET_Y, view_x1, view_y1), bar_top=bar_top, slack=sy)
+
+
+# The lobby's button captions are MFONTO5 glyphs drawn through `remap 0`, which turns the font's cyan
+# ramp red; sampled on the race-selection screen (28 Sep 2026) and mapped to the nearest palette
+# entries: core 139 -> 86 (143,0,0), highlight 140 -> 221 (159,55,0), 141 -> 99, 142 -> 100 (79,7,7),
+# shadow 143 -> 244 (47,15,0).
+LOBBY_CAPTION = {139: 86, 140: 221, 141: 99, 142: 100, 143: 244, 138: 86}     # the lobby's exact remap (kept for reference)
+CAPTION_RED = {138: 96, 139: 96, 140: 96, 141: 98, 142: 99, 143: 100}          # "BUILD button font must be just red": (255,31,31) core, (79,7,7) shadow
+
+
+def _build_caption(cv, game, x, y, w, h, text='BUILD'):
+    """BUILD as the lobby writes its buttons: MFONTO5, centred, in the caption red (maintainer:
+    "BUILD button font must be the same as in lobby")."""
+    font = Font(game, 'mfonto5.spr')
+    tw = font.width(text, spacing=1)
+    th = max((g['h'] for g in (font.glyph(ch) for ch in text) if g), default=12)
+    font.draw(cv, x + (w - tw) // 2, y + (h - th) // 2, text, remap=CAPTION_RED, spacing=1)
+
+
+def _paste_build_label(cv, cell, x, y, w, h):
+    """BUTTON.SPR cell 76's neon BUILD lettering (rows 3..14 of the 88x37 cell) centred in the button."""
+    cw, ch, px = cell['w'], cell['h'], cell['px']
+    xs, ys = [], []
+    for yy in range(3, 16):
+        for xx in range(3, cw - 3):
+            if px[yy * cw + xx] in GRN:
+                xs.append(xx)
+                ys.append(yy)
+    if not xs:
+        return
+    bx0, bx1, by0, by1 = min(xs), max(xs), min(ys), max(ys)
+    ox = x + (w - (bx1 - bx0 + 1)) // 2 - bx0
+    oy = y + (h - (by1 - by0 + 1)) // 2 - by0
+    to_red = {120: RED[0], 121: RED[1], 122: RED[2], 123: RED[3], 124: RED[4], 125: RED[5], WHITE: RED[0]}
+    for yy in range(by0, by1 + 1):
+        for xx in range(bx0, bx1 + 1):
+            v = px[yy * cw + xx]
+            if v in GRN or v == WHITE:
+                cv.put(ox + xx, oy + yy, to_red[v])                # red lettering (maintainer)
+
+
+def _dial(cv, cx, cy, r):
+    """The dial's bezel only: the face itself (day and night halves, the hand) is the code-drawn
+    28x28 cell of SPRITES/CLOCK.SPR (`clock` below), which lands centred in this ring."""
+    for yy in range(-r - 3, r + 4):
+        for xx in range(-r - 3, r + 4):
+            d2 = xx * xx + yy * yy
+            if d2 <= (r + 3) * (r + 3):
+                if d2 > (r + 2) * (r + 2):
+                    c = D11
+                elif d2 > (r + 1) * (r + 1):
+                    c = BAND
+                elif d2 > r * r:
+                    c = LT
+                else:
+                    c = BLK
+                cv.put(cx + xx, cy + yy, c)
+
+
+# ---------------------------------------------------------------- the day/night dial cells
+CLOCK_DAY, CLOCK_NIGHT, CLOCK_SUN, CLOCK_MOON = 55, 67, 74, 36    # (65,65,65) (11,11,11) (255,203,0) (115,115,115)
+
+
+def build_clock(game):
+    """SPRITES/CLOCK.SPR: the 36 hand cells of the stock SPRITES/CLOC.SPR (28x28, same flags and
+    offsets) redrawn - a disc whose right half is the day (light grey, a sun at 3 o'clock) and left
+    half the night (dark, a moon at 9 o'clock), a light rim, and the red hand sweeping clockwise
+    from 12 through 6 (cells 0..17, the day) back to 12 (18..35, the night), as the stock cells do."""
+    pal = read_palette(game)
+    stock = spr.read_spr(find_file(game, 'SPRITES', 'cloc.spr'))
+    cells = []
+    for i, c in enumerate(stock['cells']):
+        w, h = c['w'], c['h']
+        cv = Canvas(w, h, 0)                                  # index 0 = transparent
+        cx, cy, r = (w - 1) / 2.0, (h - 1) / 2.0, min(w, h) / 2.0 - 0.5
+        for y in range(h):
+            for x in range(w):
+                d = math.hypot(x - cx, y - cy)
+                if d > r:
+                    continue
+                if d > r - 1.2:
+                    cv.put(x, y, LT)
+                elif d > r - 2.2:
+                    cv.put(x, y, BAND)
+                else:
+                    cv.put(x, y, CLOCK_DAY if x > cx else CLOCK_NIGHT)
+        cv.vline(int(cx), int(cy - r + 3), int(cy + r - 3), G43)          # the day/night meridian
+        cv.vline(int(cx) + 1, int(cy - r + 3), int(cy + r - 3), G43)
+        # sun at 3 o'clock, moon at 9 o'clock
+        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1), (-1, 0), (2, 0), (0, -1), (1, -1), (0, 2), (1, 2)):
+            cv.put(int(cx) + 8 + dx, int(cy) + dy, CLOCK_SUN)
+        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            cv.put(int(cx) - 9 + dx, int(cy) + dy, CLOCK_MOON)
+        # the hand: 18 cells per half, clockwise from 12 o'clock
+        a = math.radians(180.0 * i / 18.0)
+        g = Glyph(w, h)
+        tip = (cx + 0.5 + 11 * math.sin(a), cy + 0.5 - 11 * math.cos(a))
+        g.line([(cx + 0.5, cy + 0.5), tip], 2.2)
+        g.circle((cx + 0.5, cy + 0.5), 1.6, fill=True)
+        for (x, y), v in g.raster(bright=RED[0], mid=RED[1], dim=RED[3]).items():
+            if math.hypot(x - cx, y - cy) <= r - 2:
+                cv.put(x, y, v)
+        cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=cv.px))
+    return stock['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
+
+
+def cmd_clock(args):
+    flags, cells, pal = build_clock(args.game)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    spr.write_spr(args.out, flags, cells, pal)
+    print('wrote %s: %d dial cells (day = right half, night = left half, hand clockwise from 12)' % (args.out, len(cells)))
+    return 0
+
+
+def cmd_frame(args):
+    cv, info = render_frame(args.width, args.height, args.game)
+    im = cv.image(read_palette(args.game))
+    im.save(args.out, format='GIF', version='GIF87a', interlace=False, optimize=False)
+    hole = info['view']
+    opaque = sum(1 for v in cv.px if v != BLK)
+    print('wrote %s  %dx%d, %d opaque px (%.1f%%), hole (%d,%d)-(%d,%d), bar from row %d%s'
+          % (args.out, args.width, args.height, opaque, 100.0 * opaque / (args.width * args.height),
+             hole[0], hole[1], hole[2], hole[3], info['bar_top'],
+             ', %d spare rows' % info['slack'] if info['slack'] else ''))
+    return 0
+
+
+# ---------------------------------------------------------------- the cell bank
+PLATE_W, PLATE_H = 59, 41
+ARROW_CELLS = {40: ('up', False), 50: ('up', True), 57: ('down', False), 76: ('down', True)}
+TAB_CELLS = (77, 78, 79)
+PAUSED_CELL = 132
+STRIP_CELL = 92
+SMALL_PLATES = (119, 120, 123, 124, 127)
+KNOBE_ARROWS = {'up': 12, 'up_pressed': 13, 'down': 10, 'down_pressed': 11, 'left': 14, 'left_pressed': 15,
+                'right': 16, 'right_pressed': 17}
+
+
+def _is_grey(rgb, lo=20, hi=200):
+    r, g, b = rgb
+    return abs(r - g) <= 12 and abs(g - b) <= 12 and abs(r - b) <= 12 and lo <= r <= hi
+
+
+def grey_frame(w, h):
+    """The portrait cells' plate: the lobby ring's geometry in the pipework greys (35-grey outside
+    and inside, the 107-grey light line between, 11-grey corners) on black - maintainer: "build
+    units and upgrades icons must have gray frame instead of red frame"."""
+    cv = Canvas(w, h)
+    x1, y1 = w - 1, h - 1
+    cv.ring(0, 0, x1, y1, 0, BAND)
+    for x, y in ((0, 0), (x1, 0), (0, y1), (x1, y1)):
+        cv.put(x, y, D11)
+    cv.ring(1, 1, x1 - 1, y1 - 1, 0, LT)
+    cv.ring(2, 2, x1 - 2, y1 - 2, 0, BAND)
+    for cx, cy, sx, sy in ((2, 2, 1, 1), (x1 - 2, 2, -1, 1), (2, y1 - 2, 1, -1), (x1 - 2, y1 - 2, -1, -1)):
+        cv.put(cx, cy, G43)
+        cv.put(cx + sx, cy, G65)
+        cv.put(cx, cy + sy, G65)
+    return cv
+
+
+def re_plate_portrait(cell, pal):
+    """Grey frame + the MAINBUT portrait pixel for pixel (its black background and the coloured
+    glow outlines of the upgrade cells included; only the metal bevel's 3-px rim goes)."""
+    w, h, px = cell['w'], cell['h'], cell['px']
+    out = grey_frame(w, h).px
+    for y in range(3, h - 3):
+        for x in range(3, w - 3):
+            v = px[y * w + x]
+            if v in (0, BLK):
+                continue
+            rgb = tuple(pal[v * 3:v * 3 + 3])
+            if (x < 5 or x > w - 6 or y < 5 or y > h - 6) and _is_grey(rgb, 60, 200):
+                continue                              # residual bevel grey at the rim
+            out[y * w + x] = v
+    return out
+
+
+def icon_cell(kind, w=PLATE_W, h=PLATE_H):
+    cv = lobby_plate(w, h)
+    for (x, y), v in _neon(kind, w - 6, h - 6).items():
+        cv.put(3 + x, 3 + y, v)
+    return cv.px
+
+
+def button_icon(cell, w=PLATE_W, h=PLATE_H):
+    """A BUTTON.SPR cell's neon icon and hot-key letter (every pixel that is not its grey plate) on
+    the lobby plate."""
+    out = grey_frame(w, h).px
+    px = cell['px']
+    for y in range(3, h - 3):
+        for x in range(3, w - 3):
+            v = px[y * w + x]
+            if v not in PLATE_IDX:
+                out[y * w + x] = v
+    return out
+
+
+def glyph_pixels(cell, box=None):
+    w, h, px = cell['w'], cell['h'], cell['px']
+    x0, y0, x1, y1 = box or (0, 0, w - 1, h - 1)
+    pts = {(x, y): px[y * w + x] for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)
+           if px[y * w + x] not in (0, BLK)}
+    if not pts:
+        return {}, 0, 0
+    mx, my = min(p[0] for p in pts), min(p[1] for p in pts)
+    gw = max(p[0] for p in pts) - mx + 1
+    gh = max(p[1] for p in pts) - my + 1
+    return {(x - mx, y - my): v for (x, y), v in pts.items()}, gw, gh
+
+
+def arrow_cell(direction, pressed, size=16, center=None, opaque=False):
+    """A symmetric outline triangle (red; green when pressed) in a size x size cell.  The bar's
+    16x16 cells are drawn at the top-left of the 20x19 button rects, so they are centred on
+    (9.5, 9) to sit in the middle of the frame's plate."""
+    cv = Canvas(size, size, BLK if opaque else 0)
+    for (x, y), v in _triangle(direction, size, center, GRN if pressed else RED).items():
+        cv.put(x, y, v)
+    return dict(w=size, h=size, ox=0, oy=0, px=cv.px)
+
+
+# the diplomacy rows' 24x17 plates: stock 119 = crossed circle (no pact), 120 = circle (pact), 123 =
+# "1000 =>" (pay), 124 = empty plate, 127 = small X - drawn here as clear glyphs in the state's hue
+SMALL_GLYPHS = {119: ('nopact', 'red'), 120: ('pact', 'green'), 123: ('pay', 'yellow'), 127: ('cross', 'red'), 124: (None, None)}
+
+
+def _small_glyph(kind, w, h):
+    g = Glyph(w, h)
+    cx, cy = w / 2.0, h / 2.0
+    if kind == 'pact':
+        g.circle((cx, cy), 5, 1.8)
+    elif kind == 'nopact':
+        g.circle((cx, cy), 5, 1.8)
+        g.line([(cx - 3.5, cy - 3.5), (cx + 3.5, cy + 3.5)], 1.6)
+        g.line([(cx + 3.5, cy - 3.5), (cx - 3.5, cy + 3.5)], 1.6)
+    elif kind == 'pay':
+        g.text('$', 11, (cx - 4, cy))
+        g.line([(cx + 1, cy), (cx + 7, cy)], 1.8)
+        g.poly([(cx + 6, cy - 3), (cx + 9.5, cy), (cx + 6, cy + 3)], fill=True)
+    elif kind == 'cross':
+        g.line([(cx - 4, cy - 4), (cx + 4, cy + 4)], 2)
+        g.line([(cx + 4, cy - 4), (cx - 4, cy + 4)], 2)
+    return g
+
+
+def _lum(pal, v):
+    r, g, b = pal[v * 3:v * 3 + 3]
+    return (r * 299 + g * 587 + b * 114) // 1000
+
+
+def _inverted_glyph(cell, pal, box):
+    """The stock cell's dark glyph inside `box` (dark on the metal plate), inverted to light greys
+    on nothing: luminance <= 35 -> white (1), <= 60 -> 205-grey (6), <= 80 -> 180-grey (11).
+    Returns {(x, y): index} relative to the glyph's bounding box, and its size."""
+    w, px = cell['w'], cell['px']
+    x0, y0, x1, y1 = box
+    pts = {}
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            v = px[y * w + x]
+            if v in (0, BLK):
+                continue
+            lm = _lum(pal, v)
+            if lm <= 35:
+                pts[(x, y)] = WHITE
+            elif lm <= 60:
+                pts[(x, y)] = 6
+            elif lm <= 80:
+                pts[(x, y)] = 11
+    if not pts:
+        return {}, 0, 0
+    mx, my = min(p[0] for p in pts), min(p[1] for p in pts)
+    return ({(x - mx, y - my): v for (x, y), v in pts.items()},
+            max(p[0] for p in pts) - mx + 1, max(p[1] for p in pts) - my + 1)
+
+
+def _coloured_pixels(cell, pal, box):
+    """The stock cell's coloured (non-grey) pixels inside `box`, e.g. the green pact marks."""
+    w, px = cell['w'], cell['px']
+    x0, y0, x1, y1 = box
+    out = {}
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            v = px[y * w + x]
+            if v in (0, BLK):
+                continue
+            r, g, b = pal[v * 3:v * 3 + 3]
+            if not _is_grey((r, g, b), 0, 255):
+                out[(x, y)] = v
+    return out
+
+
+def small_plate(cell, index, pal):
+    """24x17 diplomacy-row plates on the grey frame with the ORIGINAL marks (maintainer: "settings
+    for each user take original images for peace, vision and talk. invert colors for original
+    givemoney and use it"): 119 / 120 / 127 keep their green marks pixel for pixel; 123's dark
+    "1000 =>" is inverted to light grey; 124 stays an empty plate."""
+    w, h = cell['w'], cell['h']
+    if index != 123:
+        # exactly the original cells (maintainer: "other options use exactly original")
+        return dict(w=w, h=h, ox=cell['ox'], oy=cell['oy'], px=bytearray(cell['px']))
+    cv = grey_frame(w, h)
+    pts, gw, gh = _inverted_glyph(cell, pal, (3, 2, w - 4, h - 4))
+    ox, oy = (w - gw) // 2, (h - gh) // 2
+    for (x, y), v in pts.items():
+        cv.put(ox + x, oy + y, 15)                       # one light grey (172,172,172) - maintainer
+    return dict(w=w, h=h, ox=cell['ox'], oy=cell['oy'], px=cv.px)
+
+
+STRIP_COLUMNS = ((None, None), ('peace', 'yellow'), ('eye', 'cyan'), ('chat', 'green'), ('coins', 'red'))   # give money = the dollar
+
+
+def _column_icon(kind, w, h):
+    """The diplomacy header's column icons, drawn at their own size with thin (1.3-px) strokes so
+    they fill the column (maintainer: "too fat lines and signs are too small")."""
+    g = Glyph(w, h)
+    cx, cy = w / 2.0, h / 2.0
+    r = min(w, h) / 2.0 - 1.5
+    if kind == 'peace':
+        g.circle((cx, cy), r, 1.3)
+        g.line([(cx, cy - r), (cx, cy + r)], 1.3)
+        g.line([(cx, cy), (cx - r * 0.71, cy + r * 0.71)], 1.3)
+        g.line([(cx, cy), (cx + r * 0.71, cy + r * 0.71)], 1.3)
+    elif kind == 'eye':
+        rx, ry = w / 2.0 - 1, h / 2.0 - 4.5
+        g.ellipse(cx - rx, cy - ry, cx + rx, cy + ry, 1.3)
+        g.circle((cx, cy), ry * 0.55, 1.3)
+        g.circle((cx, cy), 1.3, fill=True)
+    elif kind == 'coins':
+        g.text('$', h + 2, (cx, cy))                        # give money
+    elif kind == 'chat':
+        # a speaker dot with sound waves (maintainer: the column is the chat action)
+        sx = cx - r * 0.75
+        g.circle((sx, cy), 2.6, fill=True)
+        for k in (0.5, 0.95, 1.4):
+            rr = r * k
+            g.arc(sx - rr, cy - rr, sx + rr, cy + rr, 318, 42, 1.4)
+    elif kind == 'give':
+        g.line([(cx - r, cy), (cx + r * 0.3, cy)], 1.6)
+        g.poly([(cx + r * 0.1, cy - r * 0.6), (cx + r, cy), (cx + r * 0.1, cy + r * 0.6)], 1.3)
+    return g
+
+
+STOCK_STRIP_BOXES = ((0, 21), (22, 45), (46, 69), (70, 93), (94, 117))   # the stock header's five boxes (x ranges), icons in rows 16..40
+
+
+def strip_cell(cell, font, pal):
+    """The 118x43 diplomacy header (MAINE picture 152, drawn above the player rows): a grey frame,
+    the word ALLIES across the top band, and the ORIGINAL header pictures - peace sign, eyes,
+    the talk figure, the vertical GIVE - inverted from dark-on-metal to light-on-dark, each centred
+    in its column (maintainer: "take original headers, invert colors and apply")."""
+    w, h = cell['w'], cell['h']
+    cv = grey_frame(w, h)
+    label = 'ALLIES'
+    # a clean terminal look: the lobby caption font's glyph shapes in one flat colour, the shadow
+    # and edge indices dropped (maintainer: "terminal clear font which looks great without alias")
+    tw = font.width(label)
+    font.draw(cv, (w - tw) // 2, 3, label, remap={138: 75, 139: 75, 140: 75, 141: 0, 142: 0, 143: 0})
+    cv.hline(3, w - 4, 15, G43)
+    col_w = (w - 6) / 5.0
+    # the header pictures: the drawn thin-stroke set (peace, eye, speaker with waves, dollar) - the
+    # maintainer preferred it over the inverted originals ("for headers your own last drawn
+    # pictures are most acceptable")
+    for k, (kind, ramp) in enumerate(STRIP_COLUMNS):
+        x0 = 3 + int(round(k * col_w))
+        x1 = 3 + int(round((k + 1) * col_w)) - 1
+        if k:
+            cv.vline(x0, 16, h - 4, G43)
+        if kind:
+            b, m, d = NEON_RAMPS[ramp]
+            iw, ih = x1 - x0 - 2, h - 4 - 17
+            for (x, y), v in _column_icon(kind, iw, ih).raster(bright=b, mid=m, dim=d).items():
+                cv.put(x0 + 1 + x, 17 + y, v)
+    return dict(w=w, h=h, ox=cell['ox'], oy=cell['oy'], px=cv.px)
+
+
+def grey_plate(w, h, canvas=None, x0=0, y0=0):
+    """An inactive button: the pipework's 35-grey plate with the light edge line."""
+    cv = canvas or Canvas(w, h)
+    x1, y1 = x0 + w - 1, y0 + h - 1
+    cv.fill(x0, y0, x1, y1, BAND)
+    cv.ring(x0, y0, x1, y1, 0, D11)
+    cv.ring(x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0, LT)
+    cv.ring(x0 + 2, y0 + 2, x1 - 2, y1 - 2, 0, G43)
+    return cv
+
+
+def tab_strip(font, active):
+    """124x16: the three tab buttons (pushb 0/1/2 at x 518 / 557 / 598, 40 / 41 / 40 wide, relative
+    to the strip's x 516) with the digits 1 2 3: the active one the lobby's red plate with a red
+    digit, the inactive ones grey plates with a light-grey digit (maintainer: "inactive tab buttons
+    must be gray. active button must be red")."""
+    cv = Canvas(124, 16)
+    spans = ((2, 41), (41, 81), (82, 121))
+    for k, (x0, x1) in enumerate(spans):
+        w = x1 - x0 + 1
+        if k == active:
+            lobby_plate(w, 16, cv, x0, 0)
+            remap = {138: RED[0], 139: RED[1], 140: RED[1], 141: RED[2], 142: RED[3], 143: RED[4]}
+        else:
+            grey_plate(w, 16, cv, x0, 0)
+            remap = {138: G115, 139: LT, 140: LT, 141: G82, 142: G65, 143: G43}
+        g = font.glyph(str(k + 1))
+        if g and g['w']:
+            cv.blit(g, x0 + (w - g['w']) // 2, 3, remap=remap)
+    return dict(w=124, h=16, ox=0, oy=0, px=cv.px)
+
+
+# ---------------------------------------------------------------- the action-button layout
+# BUTTON.SPR's unit action buttons (stop, move, ... - cells 62..75) share one layout: a rounded
+# hot-key box in the top-left corner with the key in light grey, a "circuit" line descending from
+# it, and the neon icon in the space to the right.  The maintainer asked for the Game Option tab
+# in exactly that style ("third tab buttons must be the same style as action buttons for units"),
+# so the template = the pixels those ten cells have in common, and the key letters are the ones
+# the shipped MAINBUT badges show (O Q D F11 J ESC and the return arrow).
+ACTION_TEMPLATE_CELLS = (62, 63, 65, 66, 68, 69, 72, 73, 74, 75)
+KEY_BOX = (4, 3, 13, 12)                     # where the key glyph goes (cell coordinates)
+ICON_AREA = (16, 3, 55, 37)                  # where the icon goes
+KEY_GREY = dict(bright=6, mid=11, dim=17)    # (205,205,205) (180,180,180) (164,164,156): BUTTON's key letters
+# (icon, hot-key, hue) - one hue per button like BUTTON's unit commands (maintainer: "images on the
+# buttons must be in different colors similar to unit command buttons")
+ACTION_CELLS = {0: ('options', 'O', 'cyan'), 1: ('quit', 'Q', 'orange'), 2: ('attack', 'D', 'red'),
+                4: ('save', 'F11', 'green'), 67: ('shovel', '', 'white'), 117: ('allies', '', 'yellow'),
+                118: ('objectives', 'J', 'blue'), 121: ('inspire', 'RET', 'yellow'),
+                125: ('dropship', 'D', 'blue'), 126: ('saucer', 'D', 'green'), 131: ('pause', 'ESC', 'red')}
+
+
+def action_template(button):
+    common = None
+    for i in ACTION_TEMPLATE_CELLS:
+        s = button[i]['px']
+        common = list(s) if common is None else [a if a == b else -1 for a, b in zip(common, s)]
+    return common
+
+
+def key_glyph(key):
+    """The hot-key mark for the corner box: one or three characters, or the return arrow."""
+    x0, y0, x1, y1 = KEY_BOX
+    w, h = x1 - x0 + 1, y1 - y0 + 1
+    g = Glyph(w, h)
+    if key == 'RET':
+        g.line([(w - 2.5, 2), (w - 2.5, h / 2.0 + 1), (3, h / 2.0 + 1)], 1.6)
+        g.poly([(1.2, h / 2.0 + 1), (4.2, h / 2.0 - 1.6), (4.2, h / 2.0 + 3.6)], fill=True)
+    elif len(key) == 1:
+        g.text(key, h + 1, (w / 2.0, h / 2.0))
+    elif key:
+        g.text(key, h - 2, (w / 2.0, h / 2.0))
+    return g.raster(lo=(120, 60, 25), **KEY_GREY)
+
+
+KEY_FONT = {138: 6, 139: 11, 140: 11, 141: 17, 142: 17, 143: 62}   # MFONTO7's cyan ramp -> BUTTON's key greys
+WIDE_BOX = (3, 3, 28, 16)                    # the hot-key box for a three-character key (F11, ESC): inside the plate ring
+WIDE_ICON_AREA = (18, 18, 55, 37)            # the icon then sits right of and below the box
+
+
+def action_cell(template, kind, key, ramp='cyan', font=None, w=PLATE_W, h=PLATE_H):
+    out = grey_frame(w, h)                    # grey like the portraits (maintainer, 28 Sep evening); red marks the active tab and BUILD
+    for y in range(3, h - 3):
+        for x in range(3, w - 3):
+            v = template[y * w + x]
+            if v not in (-1, 0, BLK):
+                out.put(x, y, v)
+    wide = len(key) == 3 and font is not None
+    if wide:
+        # a wider key box in the template's own box colours (dark red 101 between two 60 lines,
+        # 67 outside), the key written with the game's MFONTO7 glyphs so every letter is crisp
+        # (maintainer: "carefully write these action shortcuts (F11 and ESC)")
+        bx0, by0, bx1, by1 = WIDE_BOX
+        out.fill(bx0, by0, bx1 + 1, by1 + 1, BLK)
+        out.ring(bx0, by0, bx1, by1, 3, WARM)
+        out.ring(bx0 + 1, by0 + 1, bx1 - 1, by1 - 1, 2, 101)
+        tw = font.width(key, spacing=1)
+        font.draw(out, bx0 + (bx1 - bx0 + 1 - tw) // 2, by0 + 2, key, remap=KEY_FONT, spacing=1)
+        ix0, iy0, ix1, iy1 = WIDE_ICON_AREA
+    else:
+        kx, ky = KEY_BOX[0], KEY_BOX[1]
+        if key:
+            for (x, y), v in key_glyph(key).items():
+                out.put(kx + x, ky + y, v)
+        ix0, iy0, ix1, iy1 = ICON_AREA
+    for (x, y), v in _neon(kind, ix1 - ix0 + 1, iy1 - iy0 + 1, ramp).items():
+        out.put(ix0 + x, iy0 + y, v)
+    return out.px
+
+
+def paused_cell(font):
+    """123x137 PAUSED panel: a lobby plate, the pause glyph in red, the word in LED green."""
+    w, h = 123, 137
+    cv = lobby_plate(w, h)
+    cv.ring(5, 5, w - 6, h - 6, 0, L_OUT)
+    for (x, y), v in _icon('pause', 60, 60).raster().items():
+        cv.put(31 + x, 22 + y, v)
+    label = 'PAUSED'
+    tw = 2 * font.width(label, spacing=1)
+    x = (w - tw) // 2
+    for ch in label:
+        g = font.glyph(ch)
+        if g and g['w']:
+            for yy in range(g['h']):
+                for xx in range(g['w']):
+                    v = g['px'][yy * g['w'] + xx]
+                    if v in (0, BLK):
+                        continue
+                    c = CYAN_TO_GREEN.get(v, v)
+                    for sx in (0, 1):
+                        for sy in (0, 1):
+                            cv.put(x + 2 * xx + sx, 98 + 2 * yy + sy, c)
+            x += 2 * (g['w'] + 1)
+    return dict(w=w, h=h, ox=0, oy=0, px=cv.px)
+
+
+def build_bank(game):
+    pal = read_palette(game)
+    mainbut = spr.read_spr(find_file(game, 'INTRFACE', 'mainbut.spr'))
+    knobe = spr.read_spr(find_file(game, 'INTRFACE', 'knobe.spr'))['cells']
+    font = Font(game)
+    cells = []
+    button = spr.read_spr(find_file(game, 'INTRFACE', 'button.spr'))['cells']
+    template = action_template(button)
+    for i, c in enumerate(mainbut['cells']):
+        w, h = c['w'], c['h']
+        if i in FROM_BUTTON:
+            cells.append(dict(w=PLATE_W, h=PLATE_H, ox=c['ox'], oy=c['oy'], px=button_icon(button[i])))
+        elif i in ACTION_CELLS and (w, h) == (PLATE_W, PLATE_H):
+            kind, key, ramp = ACTION_CELLS[i]
+            cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=action_cell(template, kind, key, ramp, font)))
+        elif i in ICON_CELLS and (w, h) == (PLATE_W, PLATE_H):
+            cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=icon_cell(ICON_CELLS[i])))
+        elif i in TAB_CELLS:
+            cells.append(tab_strip(font, i - TAB_CELLS[0]))
+        elif i in ARROW_CELLS:
+            d, pressed = ARROW_CELLS[i]
+            cells.append(arrow_cell(d, pressed, center=(9.5, 9.0)))
+        elif i == PAUSED_CELL:
+            cells.append(paused_cell(font))
+        elif i == STRIP_CELL:
+            cells.append(strip_cell(c, Font(game, 'mfonto5.spr'), pal))
+        elif i in SMALL_PLATES:
+            cells.append(small_plate(c, i, pal))
+        elif (w, h) == (PLATE_W, PLATE_H):
+            cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=re_plate_portrait(c, pal)))
+        else:
+            cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=bytearray(c['px'])))   # digits, 99, 128, empty 122
+    return mainbut['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
+
+
+def cmd_bank(args):
+    flags, cells, pal = build_bank(args.game)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    spr.write_spr(args.out, flags, cells, pal)
+    portraits = sum(1 for i, c in enumerate(cells) if (c['w'], c['h']) == (PLATE_W, PLATE_H) and i not in ICON_CELLS)
+    print('wrote %s: %d cells (%d BUTTON.SPR neon icons, %d drawn neon icons, %d portraits on lobby plates, tabs, arrows, PAUSED)'
+          % (args.out, len(cells), len(FROM_BUTTON), len(set(ICON_CELLS) - set(FROM_BUTTON)), portraits))
+    return 0
+
+
+# ---------------------------------------------------------------- the dialog plates
+def _dialog_row(i, w, h):
+    """A 304x16 dialog row in the lobby's grey pipework (the maintainer: "battlefield menus are
+    still black"): 35-grey side tubes with the light outer edge, a band of compartments between
+    them (seeded per row index, so every row of one kind is identical), row 0 with the top tube,
+    row 2 with the bottom tube, rows 3 / 4 / 5 with the black list window between x 24 and 279."""
+    cv = Canvas(w, h, D11)
+    pw = Pipework(cv, seed=5000 + i)
+    if i == 0:
+        cv.fill(0, 0, w - 1, 4, BAND)
+        cv.hline(0, w - 1, 0, LT)
+        cv.hline(1, w - 2, 4, D23)
+        pw.band(6, 5, w - 7, h - 1)
+    elif i == 2:
+        pw.band(6, 0, w - 7, h - 6)
+        cv.fill(0, h - 5, w - 1, h - 1, BAND)
+        cv.hline(0, w - 1, h - 1, LT)
+        cv.hline(1, w - 2, h - 5, D23)
+    elif i in (3, 4, 5):
+        pw.band(6, 0, 22, h - 1)
+        pw.band(w - 23, 0, w - 7, h - 1)
+        cv.fill(24, 0, w - 25, h - 1, BLK)
+        cv.vline(23, 0, h - 1, LT)
+        cv.vline(w - 24, 0, h - 1, LT)
+        if i == 3:
+            cv.hline(23, w - 24, 0, LT)
+        if i == 5:
+            cv.hline(23, w - 24, h - 1, LT)
+        if i in (3, 5):
+            for k in range(3):
+                cv.hline(9, 17, 4 + 3 * k, RED[1])
+    else:
+        pw.band(6, 0, w - 7, h - 1)
+    for x0, x1 in ((1, 5), (w - 6, w - 2)):
+        cv.fill(x0, 0 if i != 0 else 5, x1, h - 1 if i != 2 else h - 6, BAND)
+    cv.vline(0, 0, h - 1, LT)
+    cv.vline(w - 1, 0, h - 1, LT)
+    cv.vline(5, 0 if i != 0 else 5, h - 1 if i != 2 else h - 6, D23)
+    cv.vline(w - 6, 0 if i != 0 else 5, h - 1 if i != 2 else h - 6, D23)
+    return cv
+
+
+def build_popp(game):
+    pal = read_palette(game)
+    popp = spr.read_spr(find_file(game, 'INTRFACE', 'popp.spr'))
+    cells = []
+    for i, c in enumerate(popp['cells']):
+        w, h = c['w'], c['h']
+        if not w or not h:
+            cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=bytearray()))
+            continue
+        cv = Canvas(w, h)
+        if (w, h) == (304, 16):
+            cv = _dialog_row(i, w, h)
+        elif (w, h) == (112, 24):                            # title plate: a lobby button plate
+            cv = lobby_plate(w, h)
+        elif (w, h) == (32, 32):                             # OK (7) / cancel (8): lobby plate + stock glyph
+            cv = lobby_plate(w, h)
+            for y in range(4, h - 4):
+                for x in range(4, w - 4):
+                    v = c['px'][y * w + x]
+                    rgb = tuple(pal[v * 3:v * 3 + 3])
+                    if v in (0, BLK) or _is_grey(rgb):
+                        continue
+                    cv.put(x, y, v)
+        elif (w, h) == (16, 16):                             # scroll / step arrows 10..13
+            d = {10: 'up', 11: 'down', 12: 'left', 13: 'right'}[i]
+            cv.px = arrow_cell(d, False, center=(8.0, 8.0), opaque=True)['px']
+        else:
+            cv.px = bytearray(c['px'])
+        cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=cv.px))
+    return popp['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
+
+
+def cmd_popp(args):
+    flags, cells, pal = build_popp(args.game)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    spr.write_spr(args.out, flags, cells, pal)
+    print('wrote %s: %d cells' % (args.out, len(cells)))
+    return 0
+
+
+# ---------------------------------------------------------------- preview
+def cmd_preview(args):
+    pal = read_palette(args.game)
+    cv, info = render_frame(args.width, args.height, args.game)
+    flags, cells, _ = build_bank(args.game)
+    maine = args.maine or find_file(args.game, 'INTRFACE', 'maine')
+    dx, dy = args.width - SRC_W, args.height - SRC_H
+    sy = hud_layout.slack_rows(args.height)
+    placed = set()
+    show = {41, 42, 43, 44, 97, 98, 205, 46, 48, 71, 49, 50, 47, 51, 52, 134, 3, 147, 149, 75}
+    if args.orders:
+        show = {62, 63, 64, 151, 196, 202, 3, 147, 149, 75}
+    for line in open(maine, 'rb').read().decode('latin1').splitlines():
+        t = line.split('%')[0].split()
+        if len(t) < 8 or t[0] not in ('pushb', 'checkb', 'count', 'picture', 'scount'):
+            continue
+        try:
+            x, y = int(t[3]), int(t[4])
+            cell = int(t[7])
+        except ValueError:
+            continue
+        if cell < 0 or cell >= len(cells) or int(t[1]) not in show:
+            continue
+        if t[0] == 'picture' and int(t[1]) in (3, 4, 5, 6):
+            x = 516
+            cell = 77 + (2 if args.orders else 0)
+        nx, ny = hud_layout.shift(x, y, dx, dy, sy) if args.maine is None else (x, y)
+        if (nx, ny) in placed:
+            continue
+        placed.add((nx, ny))
+        cv.blit(cells[cell], nx, ny)
+    cv.image(pal).convert('RGB').save(args.out)
+    print('wrote %s (%d widgets drawn)' % (args.out, len(placed)))
+    return 0
+
+
+# ---------------------------------------------------------------- apply: a whole set
+PICTURES = re.compile(rb'^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b', re.M | re.I)
+TAB_STRIP = re.compile(rb'^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)110([ \t]+)12(?=\s)', re.M)
+DIALOGS = ('LOPTE', 'LQCE', 'LSGE', 'LOBJE')
+DIALOG_COPIES = ('exp/intrf_hd/lopte', 'dc/intrf_hd/lopte', 'ozi_ns/intrf_hd/lopte')
+
+
+def edit_hud_script(data, width):
+    """MAINE: `pictures intrf_hd/mainbut`, and the tab strips `picture 3..6` (stock 110x12 at x 521)
+    as the 124x16 strips at the panel's left edge x 516 (+ W-640).  Idempotent; the patcher's
+    Edit-HudScript does the same."""
+    data = PICTURES.sub(rb'\1intrf_hd/\2', data)
+    x = 516 + width - SRC_W
+
+    def strip(m):
+        return m.group(1) + str(x).encode() + m.group(3) + b'96' + m.group(4) + b'124' + m.group(5) + b'16'
+    return TAB_STRIP.sub(strip, data)
+
+
+def edit_dialog_script(data):
+    return PICTURES.sub(rb'\1intrf_hd/\2', data)
+
+
+def _find(folder, name):
+    for fn in os.listdir(folder):
+        if fn.lower() == name.lower():
+            return os.path.join(folder, fn)
+    return None
+
+
+def cmd_apply(args):
+    game = args.game or args.target
+    hd = os.path.join(args.target, 'INTRF_HD')
+    if not os.path.isdir(hd):
+        sys.exit('%s: no INTRF_HD folder' % args.target)
+    pal = read_palette(game)
+    cv, info = render_frame(args.width, args.height, game)
+    gif = os.path.join(hd, 'INTRFACE.GIF')
+    cv.image(pal).save(gif, format='GIF', version='GIF87a', interlace=False, optimize=False)
+    print('wrote %s (%dx%d)' % (gif, args.width, args.height))
+    if not args.no_bank:
+        flags, cells, p = build_bank(game)
+        spr.write_spr(os.path.join(hd, 'MAINBUT.SPR'), flags, cells, p)
+        flags, cells, p = build_popp(game)
+        spr.write_spr(os.path.join(hd, 'POPP.SPR'), flags, cells, p)
+        flags, cells, p = build_clock(game)
+        sprites = _find(args.target, 'SPRITES') or os.path.join(args.target, 'SPRITES')
+        os.makedirs(sprites, exist_ok=True)
+        spr.write_spr(os.path.join(sprites, 'CLOCK.SPR'), flags, cells, p)
+        print('wrote %s, POPP.SPR and %s' % (os.path.join(hd, 'MAINBUT.SPR'), os.path.join(sprites, 'CLOCK.SPR')))
+    edits = 0
+    maine = _find(hd, 'MAINE')
+    if maine:
+        d = open(maine, 'rb').read()
+        n = edit_hud_script(d, args.width)
+        if n != d:
+            open(maine, 'wb').write(n)
+            edits += 1
+    for name in DIALOGS:
+        f = _find(hd, name)
+        if f:
+            d = open(f, 'rb').read()
+            n = edit_dialog_script(d)
+            if n != d:
+                open(f, 'wb').write(n)
+                edits += 1
+    for rel in DIALOG_COPIES:
+        f = os.path.join(args.target, *rel.split('/'))
+        if os.path.exists(f):
+            d = open(f, 'rb').read()
+            n = edit_dialog_script(d)
+            if n != d:
+                open(f, 'wb').write(n)
+                edits += 1
+    print('%d script(s) edited (pictures intrf_hd/mainbut|popp, tab strips at x %d 124x16)' % (edits, 516 + args.width - SRC_W))
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    p = sub.add_parser('apply')
+    p.add_argument('target', help='game folder or hd_sets/<WxH> fixture (must hold INTRF_HD)')
+    p.add_argument('--game', default=None, help='where MAINBUT.SPR, BUTTON.SPR, KNOBE.SPR, POPP.SPR, the font and PALETTE.GIF are read (default: target)')
+    p.add_argument('--width', type=int, default=1024)
+    p.add_argument('--height', type=int, default=768)
+    p.add_argument('--no-bank', action='store_true', help='frame + script edits only (fixtures: the banks ship once)')
+    p = sub.add_parser('frame')
+    p.add_argument('game')
+    p.add_argument('--width', type=int, default=1024)
+    p.add_argument('--height', type=int, default=768)
+    p.add_argument('--out', required=True)
+    p = sub.add_parser('bank')
+    p.add_argument('game')
+    p.add_argument('--out', required=True)
+    p = sub.add_parser('popp')
+    p.add_argument('game')
+    p.add_argument('--out', required=True)
+    p = sub.add_parser('clock')
+    p.add_argument('game')
+    p.add_argument('--out', required=True)
+    p = sub.add_parser('preview')
+    p.add_argument('game')
+    p.add_argument('--width', type=int, default=1024)
+    p.add_argument('--height', type=int, default=768)
+    p.add_argument('--maine', default=None, help='an already shifted MAINE (default: the stock one, shifted here)')
+    p.add_argument('--orders', action='store_true', help='show the Game Option tab buttons instead of the build tab')
+    p.add_argument('--out', default='hud_preview.png')
+    args = ap.parse_args(argv)
+    return {'frame': cmd_frame, 'bank': cmd_bank, 'popp': cmd_popp, 'clock': cmd_clock,
+            'preview': cmd_preview, 'apply': cmd_apply}[args.cmd](args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

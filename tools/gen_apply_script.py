@@ -114,11 +114,15 @@ def hd_data(g, mode=None):
             continue                                    # shipped per size (set_sources)
         if name.upper().endswith('SCENE.TXT'):
             continue                                    # the briefing lists come from GAMESTAT (below)
+        if name.upper().endswith('.SPR'):
+            files.append('INTRF_HD\\' + name)           # the console-style banks ship as they are (hud_console.py, doc 10.49)
+            continue
         src = os.path.join(GAME_DIR[g], 'INTRFACE', name)
         assert os.path.exists(src), src
         files.append('INTRFACE\\' + name)
     files += ['GAMESTAT\\' + x for x in ('HSCENE.TXT', 'GSCENE.TXT', 'HTSCENE.TXT', 'GTSCENE.TXT')]
     files += _tree(g, 'SPRITES', pattern=r'_HD\.SPR$') + _tree(g, 'ANIMATE', pattern=r'_HD\.FIN$')
+    files += ['SPRITES\\CLOCK.SPR']                     # the day/night hand cells with the redrawn dial face (fix clock, doc 10.49)
     if g == 'cw':
         files += ['exp\\intrface\\' + x for x in ('bintroe', 'introe', 'shumane')]
         files += ['exp\\gamestat\\' + x for x in ('hxscene.txt', 'gxscene.txt')]
@@ -389,8 +393,10 @@ def blocks_clock(g):
     t = plan(g, 'clock')
     m = re.search(r'y dword at file 0x([0-9a-f]+), x dword at file 0x([0-9a-f]+)', t)
     w, h = mode_wh(CUR_MODE)
+    b = re.search(r'hand bank path at file 0x([0-9a-f]+)', t)
     return [(int(m.group(1), 16), 4, 'clock_draw: imm32 of mov edx,ANCHOR_Y - bottom-right anchor y 450 (0x1C2) -> %d (0x%X)' % (h - 30, h - 30)),
-            (int(m.group(2), 16), 4, 'clock_draw: imm32 of mov eax,ANCHOR_X - bottom-right anchor x 608 (0x260) -> %d (0x%X)' % (w - 32, w - 32))]
+            (int(m.group(2), 16), 4, 'clock_draw: imm32 of mov eax,ANCHOR_X - bottom-right anchor x 608 (0x260) -> %d (0x%X)' % (w - 32, w - 32)),
+            (int(b.group(1), 16), 14, 'DGROUP string "sprites/cloc" -> "sprites/clock": the hand cells carry the dial face, SPRITES\\CLOCK.SPR is the face redrawn in the menu style (doc 10.49); the stock SPRITES\\CLOC.SPR stays for the original exe')]
 
 def blocks_movies(g):
     out = []
@@ -1966,6 +1972,8 @@ $SIZE2 = [regex] '(?m)^([ \t]*)size([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$'
 $SIZE4 = [regex] '(?m)^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)([ \t]*\r?)$'
 $BACKGROUND = [regex] '(?im)^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)'
 $BG_RETARGET = [regex] '(?im)^([ \t]*background[ \t]+)intrface/(\S+)'
+$PIC_RETARGET = [regex] '(?im)^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b'          # the console-style banks INTRF_HD\MAINBUT.SPR / POPP.SPR (doc 10.49)
+$TAB_STRIP = [regex] '(?m)^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)110([ \t]+)12(?=\s)'
 $FRAME_XY = [regex] '^([ \t]*)(\d+)([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$'
 $TOKENS = [regex] '\S+|[ \t]+'
 $POSITIONED = @('pushb', 'checkb', 'in_text', 'picture', 'list', 'scroll', 'gadget', 'label', 'count', 'scount')   # pad_background / paint_intro
@@ -2090,6 +2098,10 @@ function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
               if ($nx -eq $x -and $ny -eq $y) { return $null }
               return @($nx, $ny) }
     $t = Add-ChatLines (Edit-Widgets $Text $move $HUD_KINDS)
+    # hud_console.edit_hud_script (28 Sep 2026, console-style HUD, doc 10.49): the three tab strips
+    # `picture 3..6` (stock 110x12 at x 521) are the 124x16 BUTTON.SPR strips at the panel's left edge
+    $tx = [string](516 + $dx)
+    $t = $TAB_STRIP.Replace($t, { param($m) $m.Groups[1].Value + $tx + $m.Groups[3].Value + '96' + $m.Groups[4].Value + '124' + $m.Groups[5].Value + '16' })
     $m = $SIZE2.Match($t)
     if ($m.Success) { $t = $t.Substring(0, $m.Index) + ('{0}size{1}{2} {3}{4}' -f $m.Groups[1].Value, $m.Groups[2].Value, $W, $H, $m.Groups[6].Value) + $t.Substring($m.Index + $m.Length) }
     return $t
@@ -2148,7 +2160,9 @@ function Edit-SceneList([string] $Text, [int] $dx, [int] $dy) {
 }
 
 # split_hd_data: `background intrface/<gif>` -> `intrf_hd/<gif>` (every background of a generated script moved)
-function Set-BackgroundHd([string] $Text) { return $BG_RETARGET.Replace($Text, '$1intrf_hd/$2') }
+# hud_console.apply: MAINE's `pictures intrface/mainbut` and the four battlefield dialogs' `pictures intrface/popp`
+# -> `intrf_hd/...`, the console-style banks that ship in INTRF_HD (the stock banks stay for the original exe)
+function Set-BackgroundHd([string] $Text) { return $PIC_RETARGET.Replace($BG_RETARGET.Replace($Text, '$1intrf_hd/$2'), '$1intrf_hd/$2') }
 
 # split_hd_data.rename_dat_list: the per-screen FIN lists name the re-baked logo banks
 function Edit-DatList([string] $Text) {
@@ -2384,8 +2398,8 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
         if ($m4.Success -and -not $bg.Success) {
             $x = [int]$m4.Groups[3].Value; $y = [int]$m4.Groups[4].Value
             if ($x -eq 0 -and $y -eq 0) { continue }
-            # a sub-window dialog: rect and widgets +(dx,dy)
-            Write-Latin1 (Join-Path $hd $name) (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value)); $written++
+            # a sub-window dialog: rect and widgets +(dx,dy); `pictures intrface/popp` -> the console plates in INTRF_HD
+            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value))); $written++
             continue
         }
         if ($m4.Success -or -not $m2.Success -or -not $bg.Success) { continue }

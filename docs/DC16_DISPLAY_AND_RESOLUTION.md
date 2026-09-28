@@ -5164,3 +5164,245 @@ save/load/options **dialog** module (`intrface/lsg`, `lobj`, `lqc`, `lopt`), not
 `.SPR` palette starts at offset **8**, not at the first `3F 3F 3F` triple — assuming the latter puts
 the cell directory at 779 instead of 776, which by coincidence makes width/height look big-endian
 and fits some files but not others.
+
+#### 10.49 The battlefield in the menus' console style: frame, cell bank and dialog plates redrawn **(28 Sep 2026, maintainer: "battlefield interface and menus styles are bad. You must create the same style as in race selection, network lobby and other menus", then "use original sprites for buildings, units and upgrades", then "keep the icons and portraits, red-outlined button icons which mimics lobby button style everywhere"; `tools/hud_console.py`; data only, no exe byte; confirmed in a 1920×1200 training battle, both the HUD and the options / objectives dialogs)**
+
+**Final form (after two corrections the same evening).** Three rules, taken from the lobby screen:
+
+1. **Surfaces are grey pipework, not black.** `MULTIWIN.GIF` is 11-grey ground (67) with 35-grey
+   tubes (65) edged by a 107-grey light line (40), 43-grey compartment outlines (62), 23-grey plain
+   cells (66), vents (light dashes on 35-grey) and rounded tubes; black is only inside its read-out
+   screens (the maintainer: "lobby is not black, it is in different intensities of gray"). The frame
+   is therefore filled by a seeded generator (`Pipework`: horizontal bands of compartments / nested
+   outlines / vents / plain cells / rounded tubes separated by 4-7 px tube bands; seed
+   `W*10007+H`, so every run reproduces the shipped picture) over the panel column, the bottom bar
+   and the borders, and the screens - minimap, the whole tab row + button grid (black, so a hidden
+   button group leaves no hole), status, DAYS, money, dial, the message box, the DARK COLONY strip -
+   are black windows with the light edge line cut into it.
+2. **Every button is the lobby's plate.** The `KNOBE.SPR` ring measured on its cells 0, 4, 10 and
+   28: a 3-px ring on black, outer index 100 = (79,7,7) with 101 = (39,7,7) in the four corners, the
+   bright line 80 = (255,47,0), inner 100 with 98 / 99 softening its corners; pressed = the lobby's
+   green grid (125 fill, 124 lines every 8 px, 123 border), used for the lit tab. Unit / building /
+   upgrade cells keep their portrait pixels inside it; BUILD, the bar arrows' boxes, the dialogs'
+   title plate, OK / cancel, the diplomacy plates and PAUSED carry it; the arrows are `KNOBE`'s own
+   red triangles (cells 10..17); the tabs show the game font's digits 1 2 3 (green on the lit one).
+3. **Icons are clean single-colour red-outline glyphs**, like the lobby's arrows (the maintainer on
+   the first attempt's traced glyphs and `BUTTON.SPR` neon icons: "absolutely unacceptable ... messy
+   ... do not obey lobby style"). Each of the 21 order / option icons is drawn as vector shapes in
+   the tool (`_icon`: lines, polygons, circles, arcs, `?` and `$` from a bold TrueType font),
+   rasterised through an 8x coverage map into the red ramp 97 / 99 / 100, 2-3 px strokes on the
+   53x35 plate interior: quit X, save floppy, options `?`, allies (two rings), pause (two bars),
+   objectives (open book), stop (octagon), move (four arrows), move & attack (arrows + bolt),
+   waypoints, deploy (down arrow onto a line), deploy turret, deploy mine (spiked circle), napalm
+   (flame), disease (three rings), steal money `$`, second / ground attack (crosshair), inspire
+   (star), drop ship, saucer, and the unreferenced shovel. The cell-to-name mapping is `MAINE`'s own
+   `textmsg` list (`ICON_CELLS`).
+
+**Third round (maintainer: "up/down buttons of battlefield chat are skewed. day/night clock is old
+on top of new one, and on the new one day and night parts are indistinguishable. previous style of
+first tab was ok, return them back and create the same style buttons for third tab. battlefield menus
+are still black, you must update thy stiles too!").**
+
+* **Icons** - rule 3 above is superseded: the neon icons of `BUTTON.SPR` are the approved style. The
+  twelve cells it has an icon for (`?`, `X`, stop, move, move & attack, waypoints, deploy turret,
+  deploy mine, napalm, plague, deploy, steal money - `FROM_BUTTON`) carry them on the lobby plate
+  (every pixel that is not the grey plate, hot-key letters included); the nine it lacks (save, allies,
+  pause, objectives, crosshair, inspire, drop ship, saucer, shovel) are drawn in its idiom (`_neon`:
+  the vector shapes rasterised into the cyan ramp 138 / 139 / 141 with softer thresholds, a bright
+  core and a dim glow - cyan like its own `?`, so the team-colour remap treats them alike).
+* **The bar arrows** were the lobby's triangle glyphs cut out of `KNOBE` cells 10..13, whose bevelled
+  shading reads as skew at 16 px, placed at the cell's centre while the 16x16 cell is drawn at the
+  top-left of a 20x19 button rect. Now: a symmetric outline triangle drawn by the rasteriser
+  (`_triangle`), centred on (9.5, 9) of the cell = the middle of the frame's plate; pressed = green.
+  The dialogs' step / scroll arrows are the same triangle centred on (8, 8).
+* **The clock.** The hand is not a hand: each of the 36 `sprites/cloc` cells (28x28) is the whole
+  metal dial with the hand painted on, blitted by `clock_draw` over the frame - which is why the
+  stock face sat on top of the new one. Measured in game at 1920x1200 the cell lands at (1888..1915,
+  1170..1197), i.e. stock (608..635, 450..477): the "bottom-right anchor" of §10.15 is in fact the
+  cell's top-left. **`SPRITES/CLOCK.SPR`** (`hud_console.py clock`, 36 cells, stock flags and offsets)
+  is the dial redrawn: light rim, the right half the day (65-grey with a yellow sun at 3 o'clock),
+  the left half the night (11-grey with a grey moon at 9 o'clock), a 43-grey meridian, the red hand
+  sweeping clockwise from 12 (cells 0..17 the day half, 18..35 the night half, as the stock cells
+  do). The frame's dial is only the bezel now, centred on (621, 463) r 15. The patched exes read it
+  through a third edit of fix **`clock`** (`patch_clock.py`): the DGROUP path `sprites/cloc` (12
+  chars + four zero bytes, Classic file `0x83C68`, Ultimate `0x83E70`) becomes `sprites/clock` (14
+  bytes written); the stock `SPRITES/CLOC.SPR` stays for the original exe, `SPRITES\CLOCK.SPR` is
+  `hd_data`. **Every game build's reference hash changes**: 1024x768 Classic `88f59c1d…` (was
+  `bd86e63e…`), Ultimate `63ccbe88…` (was `5acee874…`); the game folder's 1920x1200 builds
+  `c7505258…` / `cdac7ca1…` (= the patcher's references for that size).
+* **Dialog rows** are grey pipework: `_dialog_row` fills each 304x16 row with a `Pipework` band
+  between 35-grey side tubes (seeded per row index, so equal rows tile), the top / bottom tubes on
+  rows 0 / 2, the black list window (x 24..279) on rows 3 / 4 / 5.
+
+**Fourth round (maintainer: "inactive tab buttons must be gray. active button must be red. build
+button must have red text. third tab buttons must be the same style as action buttons for units!").**
+The tab strips: the active tab is the lobby's red plate with a red digit, the inactive ones grey
+plates (35-grey fill, 107-grey edge line) with a light-grey digit (`grey_plate`); the green grid is
+no longer used. BUILD's lettering is `BUTTON` cell 76's, recoloured into the red ramp. The Game
+Option tab (and every other non-portrait cell `BUTTON.SPR` has no icon for: crosshair, inspire, drop
+ship, saucer, shovel) is built in the layout of BUTTON's unit action buttons: the pixels the ten
+action cells 62..75 have in common (`action_template`: the rounded hot-key box in the top-left
+corner and the circuit line descending from it) on the lobby plate, the hot-key in the box in
+BUTTON's light greys (6 / 11 / 17; the keys are the ones the shipped MAINBUT badges show: O options,
+Q quit, D attack / drop ship / saucer, F11 save, J objectives, ESC pause, the return arrow for
+inspire, none for allies), the cyan neon icon in the area to the right (`ACTION_CELLS`,
+`action_cell`). Confirmed in game.
+
+**Fifth round (maintainer: "BUILD button font must be the same as in lobby. day/night clock is not
+appearing instantly on game start").** BUILD is written like a lobby caption: `MFONTO5` glyphs
+(the font every lobby script names for its `label centre` captions), centred on the plate, in the
+colours the lobby's `remap 0` gives that font - sampled on the race-selection screen and mapped to
+palette entries 86 / 221 / 99 / 100 / 244 (`LOBBY_CAPTION`); `BUTTON` cell 76's neon lettering is no
+longer used. The clock: `clock_draw` blits a cell only when its index differs from the last drawn
+one, so after a start the dial stayed empty until the first phase step (about 45 s in training); the
+frame now carries the bank's first cell (day, hand at 12) at the cell's measured place under the
+bezel, and the code's own cells overwrite it from the first step on (a loaded game mid-day shows the
+12 o'clock hand for those seconds - data-only, accepted).
+
+**Sixth round (maintainer: "BUILD button font must be just red! third tab, images on the buttons
+must be in different colors similar to unit command buttons").** BUILD keeps the `MFONTO5` glyphs
+but in plain red (`CAPTION_RED`: core 96 = (255,31,31), shadow 100; the lobby's sampled remap stays
+in the tool as `LOBBY_CAPTION` for reference). The drawn icons take one hue each, as BUTTON's unit
+commands do (`NEON_RAMPS`, `ACTION_CELLS`): quit orange, save green, options cyan, allies yellow,
+pause red, objectives blue; crosshair red, inspire yellow, drop ship blue, saucer green, shovel white.
+Confirmed in game.
+
+**The shortcuts on the buttons (maintainer: "carefully write these action shortcuts (F11 and ESC)
+on the corresponding buttons").** Both keys are real, traced and pressed in game: the key translator
+(`0x0042FF75`ff, VK → the game's event codes) turns **F11** (VK `0x7A`, branch `0x00430610`) into
+function-key event `0x12`, which the client's key jump table (`0x0040A3F0`, index code−8) routes to
+`0x0040A5D9` → `0x00432708`, the save / load dialog (`intrface/lsg`); **ESC** (VK `0x1B`,
+`0x00430248`) becomes code `0x74`, whose client handler `0x0040A572` → `0x0040A38C` sends pause
+command 1 (or 2 = resume when `gs+0x46F51` is set) through `0x0040A1E8`; the game-state handler
+`0x0041E5E4`ff sets / clears the flag the PAUSED overlay follows - one command for every client of a
+network game. The other keys of the same handlers, read but not pressed: F1..F9 → codes `0x0B`..`0x10`
+(other client functions), PgUp / PgDn (`0x95` / `0x93`) step the mission-message ring, digits select
+groups, and the dialog key handler `0x004337F0`ff opens quit on `>` (Shift+.), save / load on `?`
+(Shift+/), options on `@` (Shift+2) and objectives on `0xCA` (`J` with a modifier, not traced).
+On the cells: a three-character key gets a wider hot-key box (`WIDE_BOX`, 26x14 inside the plate
+ring, the template's box colours 60 / 101) with the key written in `MFONTO7` glyphs recoloured to
+BUTTON's key greys (`KEY_FONT`), and the icon scaled into the space right of and below it
+(`WIDE_ICON_AREA`; `_neon` scales a design to a smaller area).
+
+**Seventh round (maintainer: "build units and upgrades icons must have gray frame instead of red
+frame" → "do the same gray frame for second and third tab buttons. do diplomacy button have a
+shortcut? diplomacy button must have a pigeon instead of eternity sign. under diplomacy header is
+quirky, make it clearer").** Every grid button - portraits, the unit order buttons, the Game Option
+tab - now carries a **grey frame** (`grey_frame`: the lobby ring's geometry in the pipework greys,
+35 / 107 / 35 with 11-grey corners); red is left to the active tab, BUILD and the dialogs' buttons.
+The Allies menu has **no shortcut**: the F1..F9 codes (`0x0B`..`0x10`, jump table `0x0040A3F0`)
+issue unit orders through `0x00409A00` (order codes 1..6, `0x2B`, `0x31`, `0x45`), F11 opens save /
+load, nothing routes to widget 151, and its shipped badge is blank too. Its icon is a dove (filled
+body, head, beak, wing, tail, yellow). The diplomacy header strip (`MAINE` picture 152, cell 92,
+118x43, shown above the player rows of group 153) is redrawn (`strip_cell`): a grey frame, `ALLIES`
+in `MFONTO7` (yellow-orange) across the top band, and one clear icon per column of the rows below -
+the drawn thin-stroke set `_column_icon` (peace sign yellow, oval eye cyan, speaker with sound
+waves green = the chat action, dollar red = give money), each at its column's size; `ALLIES`
+across the top band in the lobby caption font `MFONTO5` with only its core index kept, one flat
+colour (75), so it reads as clean terminal text without the pixel font's shadow ramp. The rows'
+24x17 plates (`small_plate`): 124 / 119 / 120 / 127 (empty, crossed circle = no pact, circle =
+pact, small X) are **the stock cells byte for byte**, metal bevel included; 123's dark "1000 ⇒" is
+inverted onto the grey frame in one light grey (index 15 = (172,172,172)). Settled after a side-by-
+side of stock and new (maintainer: "for headers your own last drawn pictures are most acceptable.
+for per user options - '1000 ->' icon is ok, but other options use exactly original" → "'ALLIES'
+text must be terminal clear font ... '1000 ->' must be light gray"); an intermediate form used the
+stock header pictures inverted (`_inverted_glyph`, still in the tool), whose talk figure lost its
+mid-grey body. The panel itself opens only in a multiplayer battle (the training mission ignored the Allies
+button), so the header is checked on the rendered sheet, the tab in game.
+
+The conduit-ring description below is the FIRST form (28 Sep afternoon: grey `BUTTON.SPR` plates and
+its neon icons on a black frame); it was built, tested in game and replaced. What still holds from it:
+the geometry, the palette findings, the script edits and the patcher rules.
+
+**Two visual languages in one game.** Every menu screen - race selection `SHUMAN.GIF`, the lobby
+`MULTIWIN.GIF` / `NET.GIF` / `SERVER.GIF`, story, victory, encyclopedia - is drawn as dark rounded
+conduits on black (palette 65 = (35,35,35) bands with a light centre line 40 = (106,106,106), dark
+gaps 67 = (11,11,11), warm corners 60), green LED read-outs (120..125) and neon-outlined buttons
+(`KNOBE.SPR`). The battlefield alone was brushed metal: the frame `INTRFACE.GIF`, the 133-cell bank
+`MAINBUT.SPR` (bevelled plates around the unit portraits, embossed order buttons, a chrome stopwatch
+for PAUSED) and the 14 dialog plates `POPP.SPR`. The stock data even holds the artists' console
+version of the HUD buttons: **`INTRFACE/BUTTON.SPR`**, 114 cells that no script and no exe string
+references (checked against every `pictures`/`text`/`background` line and the DGROUP strings), index
+for index the same buttons as `MAINBUT` 0..113 - black plates with the conduit ring and a hot-key
+badge, neon line icons, a neon BUILD plate (76, 88×37) and the three tab strips (77..79, 124×16,
+tabs 1 / 2 / 3 lit). `MAINBUT` re-used slots 3, 40, 50, 57, 70, 71 and 76 for other things (the bar
+arrows, PAUSED), and Council Wars added 114..132; otherwise the two banks agree cell by cell.
+
+**Palette.** A battle runs under the terrain palette (`DESERT.GIF` … `exp/jubjub.gif`), the menus
+under `PALETTE.GIF`. Measured over all nine: 99 indices are bit-identical everywhere and **every
+other index differs by at most 3 of 255** - the terrain palettes are re-quantisations of the same
+palette - so a frame drawn in `PALETTE.GIF` indices reads the same on every map. One thing the
+frame's palette does not decide: **the cyan ramp 128..143 is the team colour**. A cell drawn by a
+`pushb`/`count` widget has that ramp remapped to the player's colour (the human player's `?` and
+floppy came out red in the test), while `scount`/`in_text` glyphs drawn through the text path stay
+cyan (the money digits). `BUTTON.SPR`'s own icons are cyan for that reason; the traced glyphs of this
+tool follow it (observed in game; the remap itself is not traced in the code).
+
+**`tools/hud_console.py`** (Pillow + `spr.py` + the geometry of `hud_layout.py`):
+
+* `frame --width W --height H` - the HUD frame from geometry, no resampling: the view hole at (4,6)
+  exactly index 254, borders `[dark, band, band, light]` from the screen edge to the hole, the panel
+  column of 124 px with every screen where code or a widget paints at its stock place shifted like
+  `hud_layout.shift` shifts the widgets (minimap interior 518..614 × 6..89, tab row 92..111, grid
+  518..635 × 112..398, status 520..633 × 404..415, BUILD 516..601 × 422..448 with the lettering of
+  `BUTTON` cell 76 centred, `DAYS` in the game's own `MFONTO7` glyphs recoloured green (cell index =
+  `ord(ch) - 31`, cell 1 = the empty space), days box 609..634 × 433..444, money 521..598 × 456..472,
+  a dial of radius 17 at (620,461) with twelve green ticks for the code-drawn hand), a vertical
+  `DARK COLONY` in LED green beside the minimap, the free panel height between grid and bottom
+  cluster as a conduit rack (vent rails, shelves, dim read-outs), the bottom bar with the two arrow
+  boxes and the message screen 49..509+dx × 461..473, and the spare rows (§10.45) as a thin conduit
+  through the bar's top band. 3.1 % opaque at 1920×1200 (stock frame 8.9 % at 640×480).
+* `bank` - the 133-cell `INTRF_HD/MAINBUT.SPR`: cells 0, 1, 62, 63, 65, 66, 68, 69, 72, 73, 74, 75
+  taken from `BUTTON.SPR` (`?`, `X`, stop, move, move & attack, waypoints, deploy turret, deploy
+  mine, napalm, plague, deploy, steal money - each checked against `MAINE`'s `textmsg` for the cell);
+  **the unit, building and upgrade portraits of `MAINBUT` kept pixel for pixel** on a plain console
+  plate (the metal bevel and its 3-px rim go, the black behind the portrait and the coloured glow
+  outlines of the upgrade cells stay - maintainer's second instruction); the metal-only glyph cells
+  (crosshair 2, floppy 4, handshake 117, book 118, star 121, the Council Wars deploy variants 125/126,
+  the clock 131, detected as "more than 40 % of the interior is mid grey") traced to neon lines
+  (dark pixels → the bright shade, their metal neighbours → a dim glow); the four bar arrows 40 / 50
+  / 57 / 76 as hollow triangles; the tab strips 77..79 from `BUTTON`; the 24×17 diplomacy plates
+  119 / 120 / 123 / 124 / 127 ringed and their glyphs green (124 was a console plate already); the
+  118×43 diplomacy strip 92 as four conduit boxes with cyan icons; PAUSED 132 as a 123×137 conduit
+  panel with two pause bars and the word in 2× `MFONTO7`; digits 104..113, 99 and 128 unchanged.
+* `popp` - `INTRF_HD/POPP.SPR`: the 304×16 rows as conduit sides (0 rounded top, 2 rounded bottom,
+  3/5 with the list glyph, 3/4/5 with the inset window lines), the 112×24 title plate, OK / cancel
+  with their green tick and red cross on a ringed black plate, 16×16 scroll arrows.
+* `apply TARGET [--game SRC] --width W --height H [--no-bank]` - writes the frame, the two banks and
+  the script edits into a game folder or an `hd_sets/<WxH>` fixture: `INTRF_HD/MAINE` `pictures
+  intrface/mainbut` → `intrf_hd/mainbut` and the tab-strip pictures `picture 3..6` from 110×12 at
+  x 521 to **124×16 at x 516 (+ W−640)** (the strip is the panel's full width, the cell is drawn
+  whole); the four dialogs `LOPTE LQCE LSGE LOBJE` and the three `lopte` copies `pictures
+  intrface/popp` → `intrf_hd/popp`. Idempotent.
+* `preview` - frame + one widget group composited to a PNG, for a look without the game.
+
+The stock `INTRFACE/MAINBUT.SPR` and `POPP.SPR` stay for the original exe (the §10.17 rule); the
+patched exes reach the new banks through the script paths, no code change (the `pictures` line is
+resolved like `background`: `intrf_hd/mainbut` opened the bank in the test). **640×480 builds keep
+the metal HUD** - at that size the scripts are the stock `INTRFACE/` ones.
+
+**Patcher.** `Edit-HudScript` applies the tab-strip rule (`$TAB_STRIP`), `Set-BackgroundHd` also
+retargets `pictures intrface/(mainbut|popp)` and is now applied to the sub-window dialogs too (their
+branch of `Write-InterfaceSet` had skipped it - found by the fixture comparison), `Write-MusicDialogs`
+inherits the line through `INTRF_HD/LOPTE`; the two banks are `hd_data` entries of their own
+(`INTRF_HD\MAINBUT.SPR`, `INTRF_HD\POPP.SPR`, shipped, not generated - a folder without them shows
+the display fixes as `[RESOURCES NOT FOUND]`); the seven shipped `INTRF_HD\<WxH>\INTRFACE.GIF` are
+`hud_console.py frame` output (1024×768, 1280×1024, 1280×720, 1280×800, 1920×1080, 1920×1200,
+3840×1080). Verified on a clean `git archive HEAD` copy plus the new files: `-All -Resolution
+1024x768` under pwsh 7 and `1920x1200` under PowerShell 5.1 give the same exes as before (data only:
+Classic `bd86e63e…` / Ultimate `5acee874…`, 1920×1200 `9d2c60a5…` / `2dec194f…`) and sets identical
+to the six `hd_sets` fixtures (55 of 57 files; `HSCENE`/`GSCENE` name the DC endings because the
+clean copy has `AVI\DC*.AVI`, the fixtures were made without - known since §10.26). The 1024×768
+fixture's `exp/intrf_hd/introe` had missed the 25 Sep menu lift and was refreshed from the repository.
+
+**Game test** (Classic 1920×1200 build from the game folder, `drive.py`: DPI-aware `SendInput` and
+`ImageGrab`; TRAINING → name → START TRAINING → NEXT → battle): the frame, the minimap inside its
+screen, the tab strip with tab 1 lit, the unit portrait on its plate, `BUILD`, `DAYS 000`, the money
+`1500`, the dial, the message line; the Game Option tab's `X` / floppy / `?` / clock / book cells;
+the Options dialog on the new plates (title plate, four rows, tick and cross) and the Objectives
+dialog; `error.log` empty. The cyan glyphs render in the team colour (above). Not run: Ultimate,
+the other sizes (same code path), a battle with a selected unit's order buttons, the PAUSED cell in
+game (previewed only), the pressed/greyed states of the new cells.
+
+**Lesson:** before drawing a new look, list the interface banks nothing references - the artists had
+already drawn this one.

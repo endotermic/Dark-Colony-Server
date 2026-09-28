@@ -34,6 +34,11 @@ import sys
 
 AUTO_VA_TO_FILE = 0x400C00
 STOCK = (608, 450)                  # bottom-right anchor of the hand at 640x480
+# The hand cells carry the stock metal dial face.  Since 28 Sep 2026 (doc 10.49, the HUD in the
+# menus' style) the patched exes read a redrawn bank: the DGROUP path string `sprites/cloc` (12
+# chars, followed by four zero bytes) becomes `sprites/clock` = SPRITES/CLOCK.SPR (hud_console.py
+# clock), the stock SPRITES/CLOC.SPR stays for the original exe.
+BANK_OLD, BANK_NEW = b'sprites/cloc\0\0', b'sprites/clock\0'
 PATTERN = re.compile(
     rb'\xBA(....)'                              # mov edx, ANCHOR_Y
     rb'\x66\x8B\x58\x06'                        # mov bx, word ptr [eax+6]   (cell height)
@@ -72,6 +77,17 @@ def find_site(data):
     return yoff, xoff, (x, y), rptr + m.start() + AUTO_VA_TO_FILE
 
 
+def find_bank(data):
+    """(file offset of the bank path string, True if it is still the stock `sprites/cloc`)."""
+    i = data.find(BANK_OLD)
+    if i >= 0:
+        return i, True
+    i = data.find(BANK_NEW)
+    if i >= 0:
+        return i, False
+    raise SystemExit('the clock bank path string (sprites/cloc) was not found')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=('verify', 'plan', 'apply'))
@@ -83,22 +99,27 @@ def main(argv=None):
 
     data = bytearray(open(a.exe, 'rb').read())
     yoff, xoff, cur, va = find_site(data)
+    boff, stock_bank = find_bank(data)
     state = ('stock (640x480)' if cur == STOCK else
              'patched for %dx%d' % (cur[0] - STOCK[0] + 640, cur[1] - STOCK[1] + 480))
     print('%s: clock hand anchor (%d, %d) - %s' % (a.exe, cur[0], cur[1], state))
     print('  clock_draw anchor site VA %#x: y dword at file %#x, x dword at file %#x' % (va, yoff, xoff))
+    print('  hand bank path at file %#x: %s' % (boff, 'sprites/cloc (stock SPRITES/CLOC.SPR)' if stock_bank
+                                                else 'sprites/clock (redrawn SPRITES/CLOCK.SPR)'))
     if a.command == 'verify':
         return 0
     print('  -> anchor (%d, %d) for %dx%d' % (target[0], target[1], a.width, a.height))
+    print('  -> bank path %#x: sprites/cloc -> sprites/clock (SPRITES/CLOCK.SPR, the dial redrawn in the menu style)' % boff)
     if a.command == 'plan':
         return 0
-    if cur == target:
+    if cur == target and not stock_bank:
         print('nothing to do')
         return 0
     bak = a.exe + '.clock.bak'
     shutil.copyfile(a.exe, bak)
     struct.pack_into('<I', data, xoff, target[0])
     struct.pack_into('<I', data, yoff, target[1])
+    data[boff:boff + len(BANK_NEW)] = BANK_NEW
     open(a.exe, 'wb').write(data)
     print('written %s; backup %s' % (a.exe, bak))
     return 0

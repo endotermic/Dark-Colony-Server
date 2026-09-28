@@ -4,7 +4,9 @@
 The HUD is three files (docs/DC16_DISPLAY_AND_RESOLUTION.md section 6.1): the layout script
 INTRFACE/MAINE, the frame artwork INTRFACE/INTRFACE.GIF, and the widget cells INTRFACE/MAINBUT.SPR.
 Only the frame has to be redrawn -- the cells are reused unchanged -- and the script transform is
-mechanical. This tool does everything except the drawing:
+mechanical. This tool does everything except the drawing (since 28 Sep 2026 the shipped frames, the
+cell bank and the dialog plates are drawn in the menus' console style by hud_console.py, doc 10.49;
+`build` below is the mechanical metal splice it replaced, `maine` is still the script transform):
 
     spec       what the frame's regions are, where they move to, and which can be tiled
     extract    cut the frame into per-region layers, plus tracing masks (section 10 stage 5 step 1)
