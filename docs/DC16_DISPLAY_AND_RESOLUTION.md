@@ -4596,7 +4596,7 @@ button.c lines 532/536) into a 16-byte record at `widget+0x28`: `{n, m, ids*, bu
 The runtime `0x4279EC`, called from `0x427AE4` for every widget of type `0x0C` when the screen opens,
 is a **blocking loop** that pumps the interface (`0x424294`) while `i < n`:
 
-* when plate `k`'s animation state (`0x425034`) is 2 = finished, it **starts plate `k+1`**
+* when plate `k`'s animation **frame** (`0x425034`; §10.47 corrects the 25 Sep reading: this getter returns the frame index, `0x4250CC` the mode, and the modes are 0 loop / 1 one-shot / 2 stopped = finished) is 2, it **starts plate `k+1`**
   (`0x425164(ip, g[k+1], 1)`, plus display method `+0x7C(0xBA, 1)`, the same call it makes on entry)
   and advances `k`;
 * when plate `i`'s own state (`0x4250CC`) is 2, it finalises it (`0x42436C(ip, g[i], 0)`), advances
@@ -4847,6 +4847,110 @@ Linux machine here).
 
 **The bevel plate (maintainer, next: "fill the bar rows with bevel texture and test").** `hud_layout.cmd_build` now splices the spare rows in as a bevelled plate instead of repeating the bar's two black top rows (`_bevel_plate`): one highlight row (stock bar row 458, palette value 255), a body of the two brushed rows 459/460 (98/115) alternating, one shadow row (461, 47), each row one colour across the whole bar width (sampled at `BAR_SAMPLE_X` = 200 inside the message box's frame, so the plate is plain above the arrow buttons as well), placed at the bar's top edge; below it the stock bar follows unchanged (its three black rows, the box frame, the buttons), and the panel's column is painted by the right-panel region as before. At 1920×1200 the plate is rows 1158-1173 (highlight 1158, shadow 1173), the stock black rows 1174-1176, the box frame from 1177 - the map view now meets a grey frame instead of a black gap. Rebuilt: the three frames `hd_sets/1280x720|1920x1080|1920x1200/INTRF_HD/INTRFACE.GIF` = the shipped `INTRF_HD\<WxH>\INTRFACE.GIF` of those sizes (the patcher copies the shipped picture, nothing to regenerate there) and the game folder's active 1920×1200 `INTRF_HD/INTRFACE.GIF`. Confirmed in a 1920×1200 training battle from the `subst` copy: terrain to row 1157, the grey plate under it, the message line and the arrow buttons in place, `error.log` empty. The 1280×720 and 1920×1080 frames were built by the same code and checked in the picture only. **Other sizes (maintainer: "check other resolutions if they need the same fix"):** spare rows exist only where `H − 32` is not a multiple of 32 - 1280×720 (16), 1920×1080 (24), 1920×1200 (16) and **3840×1080 (24)**; 640×480, 1024×768, 1280×800, 1280×1024 and 5120×1440 have none and are untouched by both the chat-line rule and the plate. The shipped `INTRF_HD\3840x1080\INTRFACE.GIF` was rebuilt as well (it differs from the previous file in rows 1030-1053 left of the panel only); its `MAINE` is written by the patcher, whose `Edit-HudScript` puts the chat lines at 1001 / 1016 against a view ending at 1030. No 32:9 panel here, so that frame is checked in the picture only.
 
+#### 10.46 Why every screen loads slower at a higher resolution: the palette conversion makes 512 full-surface round trips **(28 Sep 2026, maintainer: "investigate, why higher resolutions leads to longer load of every menu?"; investigation only, nothing changed; measured in game at 1024×768 and 1920×1200)**
+
+**Symptom.** Every screen change of the patched game (main menu → ACADEMY → name → START TRAINING → briefing → NEXT, the hall, the battle load) takes visibly longer the larger the resolution: about 1.5 s at 1024×768, about 3.5 s at 1920×1200 (the 3-4.5 s black screen before the hall of F71 / §16 entry of 28 Sep is the same thing). The script parse, the background GIF decode and the file loads are not it: together they are under 0.2 s per screen at both sizes.
+
+**Cause: `set_palette` (`ddex4.c`, Classic `0x42F320`, Ultimate `0x42F380`; the function §10.16 calls `remap`).** `load_interface` ends in `window_draw` (`0x422D84` / `0x422DE4`), which loads the script's `palette` through `ctx+0x34` = `load_palette` (`0x42BAF8` / `0x42BB58`: reads the 768 palette bytes into `screen->palette+0x301`, then screen slot `+0x118`). `set_palette` converts the 256 entries to 16-bit pixels the portable 1997 way - **per entry** `GetDC(back buffer 0x48971C)` → `SetPixel(hdc, 0, 0, RGB(r,g,b))` → `ReleaseDC` → `Lock(NULL rect = the whole surface, DDLOCK_WAIT)` → read the 16-bit word at `lpSurface` → `Unlock`, stored at `screen->palette+0x602+2i` - and only then builds the three component tables at `0x4DEC90` (256 × {R,G,B} words: component value → its 5/6-bit field, from the masks `0x4DFF18/28/24` and the format flag `screen+0x14`, `0x235` = RGB565, `0x22B` = RGB555, both set by `create_surfaces` `0x42EB60`ff) that `make_colour` `0x42F2D0` (slot `+0x150`) uses. The same function is also the palette change at battle start (terrain palette) and runs twice during start-up. Every menu script names a palette (`palette palette`), so it runs for every screen, unchanged palette or not.
+
+**Where the time goes (main-thread stack sampler, ~800 Hz, Ultimate build, three screen changes per size):**
+
+| | 1024×768 (0.79 Mpx) | 1920×1200 (2.30 Mpx) |
+|---|---|---|
+| `set_palette` per screen change | 1.41 / 1.49 / 1.53 s | 3.54 / 3.23 / 3.19 s |
+| `ReleaseDC`, per entry | 2.7-2.9 ms | 6.1-7.0 ms |
+| `Unlock`, per entry | 2.7-2.9 ms | 6.1 ms |
+| `GetDC`, per entry | 0.03-0.11 ms | 0.17-0.23 ms |
+| `SetPixel`, `Lock`, the loop's own code | ≈ 0 | ≈ 0 |
+| start-up (two runs) | 1.5 s | 3.2 s |
+
+The thread sits in `win32u.dll` (kernel transitions), `ntdll.dll` and `igd9trinity32.dll` (Intel's D3D9 user-mode driver). On Windows 11 DirectDraw is emulated over D3D9 (the `DWM8And16BitMitigation` layer, §10.44): a surface DC is a system-memory copy of the surface, so **`ReleaseDC` writes the whole surface back**, and **`Unlock` of a NULL-rect lock uploads the whole surface** as well - 512 transfers of W×H×2 bytes (4.6 MB at 1920×1200) per palette, about 2.7 ns per pixel per transfer, i.e. the time is proportional to the pixel count plus a small constant. The stock 640×480 game pays the same 512 round trips (about 0.6 s extrapolated, not measured); on a 1997 driver with a real 16-bit mode these calls cost nothing measurable, which is why the code was acceptable then.
+
+**The read-back computes nothing.** Read out of the running game at 1920×1200 (RGB565): all 256 `LUT[i]` equal `((r>>3)<<11) | ((g>>2)<<5) | (b>>3)` - plain truncation, which is what GDI's `SetPixel` does on a 16-bit surface - and all 256 equal `R[r] | G[g] | B[b]` from the function's own `0x4DEC90` tables (a rounding variant differs in 212). So `make_colour(r, g, b)` gives the same value without touching the surface.
+
+**Fix outline (not done; a new exe fix, both games):** rewrite the loop body Classic `0x42F4C7..0x42F538` (Ultimate +0x60; 113 bytes: the five calls and the pixel read) as arithmetic - either build the component tables first (the existing tail code, run once as its own 256-loop) and fill the LUT with `R[r]|G[g]|B[b]`, or shift by the format flag directly (about 40 bytes). Nothing moves, no new import; the four HIGHLOW `.reloc` entries of the overwritten operands (`0x42F4CC`, `0x42F501`, `0x42F509`, `0x42F525`) become type 0; the three `ddraw` skip jumps of §10.16 inside `set_palette` become dead code but stay harmless (the loading-screen `Flip` skip is still needed); patcher order after `ddraw`. Expected gain: every screen change about 1.4 s faster at 1024×768 and 3.3 s at 1920×1200, start-up twice that, the battle load the same, the black screen before the hall (F71) under a second. Verification: the same `ReadProcessMemory` comparison of the 256 LUT words against the truncation formula after the patch, then the menu walk-through (no click-path code is touched, §10.33's rule does not apply).
+
+**Method and rig (28 Sep 2026).** `subst V:` on the game folder itself (no copy; menu-only runs write nothing but `error.log`) with a `DWM8And16BitMitigation` layer entry for `V:\Dark Colony Ultimate.exe`, removed afterwards; a pre-existing `X:` mapping from another session was left alone. The 1024×768 comparison ran from a scratch copy of the folder without `AVI\` (224 MB, `robocopy /XD AVI`), built by the patcher on the command line (`-Original ENGEXP16.EXE -All -Resolution 1024x768 -Output ...`, byte-identical to the published `7abb952a…`, interface set written into the copy). Sampler: `SuspendThread` / `Wow64GetThreadContext` / `ReadProcessMemory` of 16 KB of stack / `ResumeThread` at ~800 Hz from a DPI-aware Python process that also drives the game with `SendInput` (ACADEMY (864,773) at 1920×1200, (416,501) at 1024×768; then `TEST`, START TRAINING, NEXT at the stock coordinates + (dx,dy)). Attribution: the five calls have fixed return-address slots below `set_palette`'s frame (`X-12` GetDC/ReleaseDC/Unlock, `X-20` SetPixel, `X-24` Lock, `X+0x49C` = the function's own return into `load_palette`), the live call is the highest valid slot, and the live frame of a window is the `X` with the most validated samples - `set_palette` runs at a different stack depth for each screen (five distinct frames per run), so a fixed `X` fails. Two false starts worth remembering: (1) the first pass classified by the innermost stale AUTO dword on the stack and with **Classic** addresses on the **Ultimate** exe (all of `ddex4.c` is +0x60 there) - it still pointed at the right function, by luck; (2) `SP_RET`-style slot checks need the frame's own depth, not a global constant. Scratch scripts `menuprobe2.py`, `analyze2.py`, `lutcheck.py` in the 28 Sep session scratchpad.
+
+#### 10.47 The main menu opens in a new order: DC logo, DARK COLONY title, the button wave, the credits **(28 Sep 2026, maintainer: "main menu items must initiate in different order. first must be 'DC' logo, second 'DARK COLONY' logo, then buttons, then credentials. suggest use best practices for initiating game main screen"; fix `menuorder` = `tools/patch_menu_order.py`, both games, `Requires nocd`; confirmed in game at 1920x1200 in both builds)**
+
+**What the stock code does (main.c `bintro`, Classic `0x00404E80..0x00405060`, Council Wars the same
+addresses - main.c is identical up to the CD-check branch, only the callees sit at +0x60).** After
+`load_interface` the menu init runs, in this order: create the credits TTY (`0x00428448`, before the
+screen is even loaded), `0x00424DB4(ip, 15, 1)` = hide the title gadget (`gadget+0xB2`), the display's
+`+0x70` and `+0x7C(0x86, 1)` (menu sound), **`run_banims` `0x00427AE4`** - the blocking button wave of
+§10.40 - then `0x00424770(ip)` = draw every button (types 2/3) + display `+0x54`, then
+`start_anim(ip, 14, 1)` = the DC logo one-shot (`DCUK`, 12 frames), then the CD-less greying block
+(dead since `nocd`), then the menu loop `0x00404F87`: `0x0042411C(ip, &ev)` polls; a press dispatches;
+otherwise, **when the logo shows frame 10** (`0x00425034 == 0xA`), `0x00424F80(ip, 15, 0)` +
+`start_anim(ip, 15, 1)` start the title (`DCUT`, 4 frames); and every pass runs the TTY update
+`0x00427B44(display, 0, 0)`, which paints and scrolls the credits box. So the player saw buttons,
+logo, title, credits (measured 25 Sep 2026 in §10.40: "logo, title and credits drawn after the wave").
+
+**The animation object** (gadget `+0xA0`; `animate.c`): `+0` the gadget it belongs to, `+4` frame,
+`+5` delay countdown, `+6` mode - **0 = `anim_loop`, 1 = `anim_oneoff`, 2 = `anim_stopped`** (the
+keyword table `0x00484914/20/2C` is parsed by the `gadget` creator into `gadget+0xA8` at
+`0x00424AA3..0x00424B04` and applied once at creation by `0x0042626C(anim, gadget, mode)` from
+`0x00424C59`). A one-shot that runs out of frames sets mode 2 and frame 0 (`0x004262C6`), so **2 is
+both "stopped" and "finished"**; the getter `0x0042670C` (via `0x004250CC(ip, id)`) returns the mode,
+`0x004266FC` (via `0x00425034`) the frame. `start_anim` `0x00425164(ip, id, mode)` → `0x0042626C`:
+no-op when the anim already belongs to that gadget in that mode, otherwise frame 0, delay 0, mode
+set. The first build of this fix "parked" the first plate with mode 0 and the plate LOOPED under
+the logo; the getters' 0/1/2 had been read as stopped/running/finished in §10.40 - corrected there.
+
+**Why the data-only route fails.** Listing the logo and title as the first two `banim` plates would
+chain them, but the wave hides every finished plate (`0x0042436C(ip, id, 0)` clears the visible
+byte and erases it) - the logo would vanish - and the chain steps on **frame 2** of the previous
+plate, so the buttons would start two frames into the logo anyway. The reorder has to be code.
+
+**The fix - three blocks rewritten in place inside `bintro`, 194 bytes, no `.reloc` entry in any
+of them (checked by the tool against the whole table), same layout in both exes:**
+
+| block | VA (both exes) | bytes | was | now |
+|---|---|---|---|---|
+| A | `0x00404EF6` | 41 | run wave, draw buttons, start logo, dead CD flag read | `esi = ip`; read the `banim` widget (**id 18**, type `0x0C` checked; the id every menu script has used since 1997) → its record `{n, m, plates*, buttons*}` → first plate into `edi` (or -1); **park it: `start_anim(ip, plate, 2)`** = frame 0, stopped, before the first interface pump; `jmp` over `nocd`'s `EB 66` at `0x00404F1F` |
+| B | `0x00404F21` | 102 | the six `set_greyed` calls of the CD-less path (dead since `nocd`) | `start_anim(ip, 14, 1)`; loop `pump 0x00424294(ip, &ev)` until `mode(14) == 2`; `0x00424F80(ip, 15, 0)`; `start_anim(ip, 15, 1)`; loop pump until `frame(15) >= 2`; `jmp` C+2 |
+| C | `0x00404FB0` | 51 | the loop's "logo frame 10 → start title" check | `jmp 0x00404FE3` (the loop's else path = TTY update, so the loop is unchanged in effect); tail entered from B: `start_anim(ip, first plate, 1)` unless -1, `run_banims`, `0x00424770`, `jmp 0x00404F87` |
+
+Why the first plate must be parked and restarted: the script gives it `anim_oneoff`, which starts it
+at creation; pumped during the logo it would fly in alone and be **finished** by the time the wave
+runs, and `run_banims` chains plate k+1 on `frame(k) == 2` - a finished plate sits at frame 0, so the
+wave would never advance (a blocking loop = the menu hangs). Parking it (mode 2 = exactly the state
+an `anim_stopped` plate is created in) and starting it just before `run_banims` keeps **the shipped
+scripts unchanged**, and an older exe with the same data behaves as before. Immediates
+`push imm8; pop reg` save the bytes that make B fit; `esi`/`edi` are callee-saved and the function
+saves them itself (`0x00404DC8`). The callees are located by their bodies (`run_banims`,
+`0x00424770`, `0x00424F80` by its assert line 255, the pump / getters / `start_anim` through the
+`banim` runtime), so `verify`/`plan` work on stock, `nocd`-only and patched exes; `plan` on the
+untouched original describes the same bytes as after `nocd` (block A stops before the CD branch),
+`apply` refuses without `nocd`. Fix id `menuorder`, patcher order `..., music, menuorder, movies,
+sounds | ozi, icon`; the generator parses the tool's three plan lines (`blocks_menuorder`).
+
+**Measured (28 Sep 2026, 1920x1200 builds of both games from a `subst X:` copy with the intro AVIs
+renamed away, 17-19 Hz screen-DC capture from a DPI-aware process, per-region MD5 change runs, the
+cursor parked at (5,5) - the game's cursor sprite otherwise shows as a permanently "changing"
+region; scratch `menuseq.py`).** Ultimate, seconds after the menu background is drawn: logo
+animates **+0.44 .. +0.97**, title **+1.02 .. +1.14**, the first plate starts **+1.09** (title frame 2),
+the ten plates settle +1.84 .. +2.49 in the §10.40 order, the credits box paints from **+2.49** and
+scrolls on; the parked plate shows exactly one redraw at +0.44 (its frame 0 with the first pump).
+Classic: logo +0.37 .. +0.87, title +0.98 .. +1.04, wave +1.04 .. +2.27, credits from +2.34.
+`error.log` empty in both; the 0.44 s between background and logo is the stock gap before the first
+pump (the `+0x7C(0x86, 1)` sound and the pump's timer init), unchanged. Not run: 640x480 and the
+other HD sizes (the code has no size dependence), and no click during the wave.
+
+**The staging, and why it is this way ("best practices").** Title screens are normally staged as a
+cascade: brand mark → title → the interactive elements → secondary text, each step starting as the
+previous settles, the whole under ~2.5 s, and never a pause with nothing moving. That is what the
+blocks implement: the logo runs alone (0.5 s), the title starts when it has finished (sequential, as
+asked), the wave starts at the title's second frame (a 0.1 s overlap so nothing stands still), the
+labels appear as their plates settle, the credits come last because nobody reads them before the
+buttons exist. Two knobs are single bytes in block B: `TITLE_FRAME_WAVE` (2) - raise it to 3 for a
+strictly sequential title, lower to 0 to overlap fully - and the logo condition could be `frame >=
+10` (the stock overlap) instead of `mode == 2` at the cost of 15 bytes B has not got. Not done, and
+worth a fix of its own if wanted: **a click or key during the cascade jumps to the finished menu**
+(the pump swallows input during the waits exactly as the stock wave did; the whole cascade is 2.5 s
+after a 3-4 s screen load at 1920x1200, so the first thing to shorten is §10.46's palette loop).
+
 ## 11. Risks
 
 | Risk | Assessment |
@@ -4889,6 +4993,8 @@ Linux machine here).
 | `0x00428968` / `0x00428B8C` | TTY glyph placement / PIC per-frame draw |
 | `0x00424A40` | `gadget` keyword creator (keyword table `0x00489588`, `{name, creator}` pairs; `label` = `0x00426BD4`, `banim` = `0x00427854`, §10.40) |
 | `0x00427854` | `button.c` `create_banim`: n plate ids + m button ids at `widget+0x28`; the opening wave runs in `0x004279EC` (from `0x00427AE4`, type `0x0C`) (§10.40) |
+| `0x00404E80`ff | main.c `bintro` menu init: credits TTY create, `load_interface("intrface/bintro")` `0x00404EC4`, then (stock) wave `0x00404EFE` → buttons `0x00404F0B` → logo `0x00404F13`; loop head `0x00404F87`, title-at-frame-10 `0x00404FB0`, TTY update `0x00404FE3`; fix `menuorder` rewrites `0x00404EF6..0x00404F1E`, `0x00404F21..0x00404F86`, `0x00404FB0..0x00404FE2` (§10.47) |
+| `0x0042626C` / `0x00426294` | `animate.c` anim start `(anim, gadget, mode)` / anim step; anim object at `gadget+0xA0` (`+4` frame, `+6` mode 0 loop / 1 one-shot / 2 stopped=finished); getters `0x004266FC` frame, `0x0042670C` mode, wrapped by `0x00425034` / `0x004250CC(ip, id)`, starter `0x00425164(ip, id, mode)` (§10.47) |
 | `0x00403732` | briefing screen: `intrface/epic` marker at `(gs+0x14E0, gs+0x14DC)` from `GAMESTAT/*SCENE.TXT` (`scenario.c 0x00429B67`) |
 | `0x0041EB34` / `0x0041EB63` | `proto.c`: `"intrface/main"` → `load_interface`, HUD handle to `0x004AB1C4` — same function as the map view rect below |
 | `0x0041ED1E`ff | `proto.c` initial camera + map view screen rect |

@@ -163,6 +163,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
            'ddraw': 'patch_ddraw_lost.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
+           'menuorder': 'patch_menu_order.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -172,7 +173,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music',
+           'music': 'music', 'menuorder': 'menu_order',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'icon': 'icon'}
@@ -311,6 +312,15 @@ def blocks_longpath(g):
         assert len(old) == len(new) == int(m.group(3)) and len(old) in (20, 14, 22, 4, 1)
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     assert len(out) == 5, (g, len(out))                                   # two open sites, the open_read stub, the error-exit operand, the name byte
+    return out
+
+def blocks_menuorder(g):
+    t = plan(g, 'menu_order'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2}); (.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (41, 102, 51), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ': ' + m.group(6).rstrip(), old, new))
+    assert len(out) == 3, (g, len(out))                                   # the three in-place blocks of main.c bintro
     return out
 
 def blocks_widemap(g):
@@ -708,6 +718,25 @@ REQUIRES the eight tracks from the repository (encoded from the CD images at 192
 MUSIC\\TRACK02.MP3 .. TRACK05.MP3 for Dark Colony, exp\\music\\track02.mp3 .. track05.mp3 for
 Council Wars (Dark Colony Ultimate needs both sets).  Without a TRACK02 file the game simply stays
 silent, as it does today.'''),
+ dict(id='menuorder', name='Main menu opens in order: DC logo, DARK COLONY title, buttons, credits', date='28 Sep 2026',
+      tool='tools/patch_menu_order.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.47', blocks=blocks_menuorder,
+      requires=['nocd'],
+      desc='''When the main menu opens, the original runs the button wave first (the plates fly in one after
+another and each label appears as its plate settles), then shows every button, then plays the DC
+logo animation and, when the logo is nearly done, the DARK COLONY title; the credits box scrolls
+from the first pass of the menu loop.  So the player sees buttons, logo, title, credits - the brand
+mark last.  This fix reorders the opening the way title screens are normally staged: the DC logo
+plays first, the title follows when the logo has finished, the button wave runs as soon as the
+title shows its second frame (top to bottom, labels as the plates settle, the plate sound per plate
+as before), and the credits box appears after the wave.  Everything is rewritten in place in the
+menu's own set-up code: the wave, the button show and the logo start move into the room left by the
+six "grey the buttons when no CD is found" calls (dead code since the "No CD" fix, which is
+therefore required) and the loop's "start the title at logo frame 10" check, which the new order
+makes pointless, becomes the tail that runs the wave.  The menu script's first plate (marked
+anim_oneoff so the wave has something to chain from) is put back to its first frame before the
+first screen update and started again when the wave begins, so the interface files need no change
+and an older exe with the same files behaves as before.  Relative calls and register-relative
+operands only; nothing moves, no relocation entry changes; the same three blocks in both games.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
@@ -873,11 +902,11 @@ BUILDS = [
  dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe)',
       source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'movies', 'sounds', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'movies', 'sounds', 'icon']),
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'ozi', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'ozi', 'icon']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
