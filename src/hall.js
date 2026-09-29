@@ -23,6 +23,7 @@ import { STATE, SLOT_TYPE, SLOTS, VAR_DEFAULTS } from './constants.js';
 import { Client, readCommands, packPayloads } from './client.js';
 import { formatScenarioTitle } from './config.js';
 import { VERSION_SHORT } from './version.js';
+import { roomsPayload, enterBlocker } from './online.js';
 
 export const HALL_TITLE_PREFIX = '>'; // the map line shows the selected room; a room's own title never starts with it
 export const HALL_FILE = 'D8PLAY01.SCN'; // never loaded: no game starts from the hall
@@ -230,6 +231,10 @@ export class Hall {
   refresh(only = null) {
     for (const client of this.players()) {
       if (only && client !== only) continue;
+      if (client.online) {
+        this.sendRooms(client, true); // the ONLINE WAR table, only when it changed (plan §20)
+        continue;
+      }
       const rows = this.rowsFor(client);
       const title = this.titleFor(client);
       const payloads = [];
@@ -341,6 +346,15 @@ export class Hall {
           break;
         }
 
+        case T.LIST: // an ONLINE WAR client (the patched Ultimate exe, plan §20): the room table instead of the lobby view
+          client.online = true;
+          this.sendRooms(client, false);
+          break;
+
+        case T.ENTER:
+          this.enter(client, decode(cmd).id);
+          break;
+
         case T.INIT_ME: {
           client.initMeCount++;
           if (client.initMeCount > 1) {
@@ -418,6 +432,47 @@ export class Hall {
     // the room dump replaces the rows with real players; the client is present-not-ready there
     // (its READY button stays pressed, F36, so its first click in the room is a no-op)
     room.adopt(client, client.slot, false);
+    return undefined;
+  }
+
+  // ---- ONLINE WAR (plan §20) ----------------------------------------------------------------
+
+  /** 0x51 ROOMS to an online client; with `onlyIfChanged` nothing goes out while the table is the same as last sent. */
+  sendRooms(client, onlyIfChanged) {
+    const payload = roomsPayload(this.pool.rooms);
+    if (onlyIfChanged && client.roomsSent && payload.equals(client.roomsSent)) return;
+    client.roomsSent = payload;
+    client.send(payload);
+  }
+
+  refuse(client, text) {
+    this.log.info('online refused', { id: client.id, reason: text });
+    client.send(build.refused(text));
+    this.sendRooms(client, false);
+  }
+
+  /**
+   * 0x52 ENTER: seat the client in room `id` with a slot chosen NOW - a random seatable slot of that
+   * room (never 0, a fake in the way is moved, §17.5) - then 0x54 ENTERING, both sequence counters
+   * back to 0 (the game's own connection through the exe's proxy starts fresh, F80) and the stock
+   * join sequence with the 'd' handshake. The hall slot picked at accept is irrelevant here (F77).
+   */
+  enter(client, id) {
+    const room = this.pool.rooms[id - 1];
+    if (!room) return this.refuse(client, `There is no room ${id}; rooms are 1..${this.pool.rooms.length}.`);
+    const why = enterBlocker(room);
+    if (why) return this.refuse(client, `Room ${room.id}: ${why}.`);
+    const free = room.seatableSlots();
+    const slot = free[this.random(free.length)].slot;
+    this.clients.delete(client);
+    client.send(build.entering(slot));
+    client.seqOut = 0;
+    client.seqIn = 0;
+    client.online = false;
+    client.firstMessageAt = 0; // the game's own connection starts now: its first lobby message gets the join grace again (F71)
+    client.joinedAt = this.now();
+    this.log.info('online -> room', { id: client.id, slot, name: client.name, room: room.id, waiting: this.clients.size });
+    room.adopt(client, slot, true);
     return undefined;
   }
 

@@ -1,6 +1,8 @@
 // Entry point: TCP listener, timers, optional health listener.
 
 import net from 'node:net';
+import tls from 'node:tls';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -27,8 +29,19 @@ export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
   // the battle engine (plan §18) is loaded in the background; rooms start as plain relays until then
   const engineReady = config.SYNC_CHECK !== 'off' ? loadEngine(log).then((e) => pool.setEngine(e)) : Promise.resolve();
   // HALL=false: the 2.0 behaviour, straight into room 1
-  const server = net.createServer((socket) => (config.HALL ? hall.accept(socket) : pool.rooms[0].accept(socket)));
+  const onConnection = (socket) => (config.HALL ? hall.accept(socket) : pool.rooms[0].accept(socket));
+  const server = net.createServer(onConnection);
   server.on('error', (err) => log.error('listen error', { err: err.message }));
+  // the optional TLS listener for self-hosted relays (plan §20; on Fly the proxy terminates TLS)
+  let secure = null;
+  if (config.TLS_PORT) {
+    secure = tls.createServer({ cert: fs.readFileSync(config.TLS_CERT), key: fs.readFileSync(config.TLS_KEY), minVersion: 'TLSv1.2' }, onConnection);
+    secure.on('error', (err) => log.error('tls listen error', { err: err.message }));
+    secure.on('tlsClientError', (err, socket) => {
+      log.warn('tls handshake failed', { err: err.message, address: socket?.remoteAddress });
+    });
+    secure.listen(config.TLS_PORT, '0.0.0.0');
+  }
 
   const stepTimer = setInterval(() => {
     const now = performance.now();
@@ -66,6 +79,7 @@ export function startServer(config, log = createLogger(config.LOG_LEVEL)) {
       clearInterval(watchdogTimer);
       for (const c of [...hall.clients, ...pool.clients()]) c.destroy();
       await new Promise((resolve) => server.close(() => resolve()));
+      if (secure) await new Promise((resolve) => secure.close(() => resolve()));
       if (health) await new Promise((resolve) => health.close(() => resolve()));
     },
   };
@@ -82,6 +96,7 @@ if (isMain) {
       ...(srv.config !== config ? { mode: 'replay' } : {}),
       version: VERSION,
       port: addr.port,
+      tlsPort: config.TLS_PORT || undefined,
       hall: srv.config.HALL,
       rooms: srv.config.ROOM_LIST.map((m) => `${m.index}:${m.file} ${m.name}`),
       hallRefreshMs: config.HALL_REFRESH_MS,

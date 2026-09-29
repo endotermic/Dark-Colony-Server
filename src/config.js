@@ -5,6 +5,14 @@ import { resolveMap } from './maps.js';
 export const DEFAULTS = Object.freeze({
   PORT: 8888,
   HEALTH_PORT: 0, // 0 = no health listener
+  // A TLS listener beside the plain one (plan §20): the patched Ultimate exe's ONLINE WAR connects
+  // with TLS to port 8889 by default. On Fly the proxy terminates TLS (fly.toml: port 8889 with the
+  // "tls" handler forwards plaintext to 8888), so these stay 0 / empty there; a self-hosted relay sets
+  // TLS_PORT=8889 and the PEM files of its certificate and key (a certificate the players' Windows
+  // trusts - the exe validates the chain against the host name in DEFAULT_SERVER.TXT).
+  TLS_PORT: 0,
+  TLS_CERT: '',
+  TLS_KEY: '',
   // Rooms, one map each (plan §17): SCENARIO/MPLAYER file names, optionally FILE:Name[:terrain].
   // The 2nd character of a file name is the map's player count; it caps the room (F22). At most seven:
   // the rooms are shown in the lobby rows that are not the player's own (F33), numbered 1..7 in
@@ -172,6 +180,7 @@ export function loadConfig(env = process.env, overrides = {}) {
 
 function validate(cfg) {
   if (cfg.TICK_MS < 1) throw new Error('TICK_MS must be >= 1');
+  if (cfg.TLS_PORT && !(cfg.TLS_CERT && cfg.TLS_KEY)) throw new Error('TLS_PORT needs TLS_CERT and TLS_KEY (PEM files)');
   if (cfg.ROOM_LIST.length < 1 || cfg.ROOM_LIST.length > MAX_ROOMS) throw new Error(`ROOMS must list 1..${MAX_ROOMS} maps`);
   if (!(cfg.HALL_REFRESH_MS >= 50)) throw new Error('HALL_REFRESH_MS must be >= 50');
   if (cfg.FAKE_PLAYERS < 1 || cfg.FAKE_PLAYERS > 7) throw new Error('FAKE_PLAYERS must be 1..7');

@@ -54,6 +54,14 @@ export const T = Object.freeze({
   MREADY: 0x76, // 'v'
   GVERSION: 0x77, // 'w'
   INIT_ME: 0x79, // 'y'
+  // ONLINE WAR messages between the patched Ultimate exe and the relay, before the client is seated
+  // (protocol doc §4.4, plan §20): small numbers without an in-game handler, never seen by the game's
+  // own lobby code (the exe's module consumes them and hands the connection over after ENTERING)
+  LIST: 0x50,
+  ROOMS: 0x51,
+  ENTER: 0x52,
+  REFUSED: 0x53,
+  ENTERING: 0x54,
 });
 
 export const TYPE_NAME = Object.freeze(Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k])));
@@ -79,7 +87,13 @@ const FIXED = new Map([
   [T.VERSION, 4], [T.META_VERSION, 4], [T.MREADY, 3], [T.GROUP, 4], [T.GVERSION, 4], [T.VAR, 4],
   [T.INTRO, 2], [T.OUTRO, 2], [T.READY, 2], [T.RACE, 2], [T.TYPE, 2], [T.COLOUR_CYCLE, 2],
   [T.COLOUR_SET, 2], [T.TEAM_CYCLE, 2], [T.TEAM_SET, 2], [T.INIT_ME, 1], [T.NUKE, 1], [T.KEEPALIVE, 0],
+  [T.LIST, 0], [T.ENTER, 1], [T.ENTERING, 1],
 ]);
+
+/** Room states on the wire (ROOMS `state` byte, protocol doc §4.4). */
+export const ROOM_STATE = Object.freeze({ OPEN: 0, FULL: 1, STARTING: 2, IN_BATTLE: 3 });
+export const ROOM_STATE_TEXT = Object.freeze(['open', 'full', 'starting', 'in battle']);
+export const MAX_ROOM_ROW = 56; // the ONLINE WAR screen's list is 56 monospace columns (MFONTO5 advances 8 px, 448 px)
 
 export function typeName(type) {
   return TYPE_NAME[type] ?? `0x${type.toString(16).padStart(2, '0')}`;
@@ -149,6 +163,22 @@ export function commandLength(buf, off) {
       const e1 = cstrEnd(buf, off + 1, name);
       const e2 = cstrEnd(buf, e1 + 1, name);
       return e2 - off + 1;
+    }
+    case T.REFUSED:
+      need(rest >= 1, name);
+      return cstrEnd(buf, off + 1, name) - off + 1;
+    case T.ROOMS: {
+      // u8 count, then per room u8 id, state, seats, players, bots + three strings
+      need(rest >= 1, name);
+      const n = buf[off + 1];
+      if (n > 7) throw new ProtocolError(`${name}: ${n} rooms`);
+      let p = off + 2;
+      for (let i = 0; i < n; i++) {
+        need(p + 5 <= buf.length, name);
+        p += 5;
+        for (let k = 0; k < 3; k++) p = cstrEnd(buf, p, name) + 1;
+      }
+      return p - off;
     }
     default:
       throw new ProtocolError(`unknown command type ${name}`);
@@ -226,6 +256,26 @@ export function decode(cmd) {
       const e1 = b.indexOf(0, 1);
       return { file: b.toString('latin1', 1, e1), title: readCstr(b, e1 + 1) };
     }
+    case T.ENTER:
+    case T.ENTERING:
+      return { id: b[1] };
+    case T.REFUSED:
+      return { reason: readCstr(b, 1) };
+    case T.ROOMS: {
+      const rooms = [];
+      let p = 2;
+      for (let i = 0; i < b[1]; i++) {
+        const r = { id: b[p], state: b[p + 1], seats: b[p + 2], players: b[p + 3], bots: b[p + 4] };
+        p += 5;
+        for (const key of ['terrain', 'name', 'row']) {
+          const e = b.indexOf(0, p);
+          r[key] = b.toString('latin1', p, e);
+          p = e + 1;
+        }
+        rooms.push(r);
+      }
+      return { rooms };
+    }
     default:
       return {};
   }
@@ -274,6 +324,17 @@ export const build = Object.freeze({
   mready: (player, state) => Buffer.concat([u8(T.MREADY), i16(player), u8(state)]),
   initMe: (player) => u8(T.INIT_ME, player),
   nuke: (player) => u8(T.NUKE, player),
+  // ONLINE WAR (plan §20)
+  list: () => u8(T.LIST),
+  enter: (id) => u8(T.ENTER, id),
+  entering: (slot) => u8(T.ENTERING, slot),
+  refused: (reason) => Buffer.concat([u8(T.REFUSED), cstr(reason, MAX_TEXT)]),
+  /** rooms = [{ id, state, seats, players, bots, terrain, name, row }] */
+  rooms: (rooms) =>
+    Buffer.concat([
+      u8(T.ROOMS, rooms.length),
+      ...rooms.map((r) => Buffer.concat([u8(r.id, r.state, r.seats, r.players, r.bots), cstr(r.terrain, 16), cstr(r.name, 64), cstr(r.row, MAX_ROOM_ROW)])),
+    ]),
   // in-game
   tick: (n) => u8(T.TICK, n),
   until: (a, until) => Buffer.concat([u8(T.UNTIL), i32(a), i32(until)]),

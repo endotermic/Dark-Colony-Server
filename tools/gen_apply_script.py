@@ -172,15 +172,17 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe']),
-           # the high-resolution icon, last in every build (it appends a section); the .ico is in the game folder
-           'icon': ('patch_icon.py', ['--ico', ICON_FILE])}
+           # the high-resolution icon, last but one in the Ultimate build, last in the others (it appends a section); the .ico is in the game folder
+           'icon': ('patch_icon.py', ['--ico', ICON_FILE]),
+           # ONLINE WAR (29 Sep 2026, Ultimate only): appends the code section .dccode after .dcicon, so it follows icon
+           'online': 'patch_online.py'}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
            'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
-           'icon': 'icon'}
+           'icon': 'icon', 'online': 'online'}
 PLAN_ARGS = {'maped': ['--fix', 'all'], 'icon': ['--ico', ICON_FILE]}      # plan-time arguments per plan name (default: none)
 _plans = {}
 
@@ -207,7 +209,7 @@ def replay(g, steps, mode=None):
     open(orig_copy, 'wb').write(orig)
     for step in steps:
         key = (g, PLAN_OF[step], mode if step in MODE_STEPS else None)
-        if key in _plans:
+        if key in _plans or step in PLAN_ON_PATCHED:
             continue
         tool, _args = tool_of(step)
         extra = mode_args(mode) if step in MODE_STEPS else []
@@ -216,9 +218,15 @@ def replay(g, steps, mode=None):
     for step in steps:
         tool, args = tool_of(step)
         extra = mode_args(mode) if step in MODE_STEPS else []
+        if step in PLAN_ON_PATCHED:
+            # this tool describes its edits only on the state it requires (ozi + icon applied): plan on the work file
+            key = (g, PLAN_OF[step], mode if step in MODE_STEPS else None)
+            _plans[key] = run_tool(tool, 'plan', work, PLAN_ARGS.get(PLAN_OF[step], []) + extra)
         run_tool(tool, 'apply', work, list(args) + extra)
         states.append((step, open(work, 'rb').read()))
     return orig, states
+
+PLAN_ON_PATCHED = {'online'}   # plans taken on the exe as the previous steps left it, not on the original
 
 def runs_of(prev, nxt):
     offs = [i for i in range(len(prev)) if prev[i] != nxt[i]]
@@ -432,20 +440,28 @@ def blocks_maped(fix):
         return out
     return blocks
 
-def blocks_icon(g):
-    """The four header edits of patch_icon.py (the appended section is taken from the replay, see attribute())."""
-    t = plan(g, 'icon'); out = []
+def blocks_appending(g, step, plan_name, n_edits, what):
+    """The header/code edits of a fix that appends a section (icon, online); the appended bytes are taken from
+    the replay in attribute() and checked against the sha256 the tool's plan prints (APPENDS)."""
+    t = plan(g, plan_name); out = []
     for m in re.finditer(r'^\s+(.+?)\s+file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2})\s*$', t, re.M):
         old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
         assert len(old) == len(new) == int(m.group(3))
         out.append((int(m.group(2), 16), len(old), m.group(1).strip(), old, new))
-    assert len(out) == 4, (g, len(out))
+    assert len(out) == n_edits, (g, step, len(out))
     m = re.search(r'^\s+append at file 0x([0-9a-f]+) (\d+) bytes sha256 ([0-9a-f]{64}): (.+)$', t, re.M)
     assert m, t
-    ICON_APPEND[g] = dict(at=int(m.group(1), 16), n=int(m.group(2)), sha=m.group(3), note=m.group(4).strip())
+    APPENDS.setdefault(g, {})[step] = dict(at=int(m.group(1), 16), n=int(m.group(2)), sha=m.group(3), note=m.group(4).strip(), what=what)
     return out
 
-ICON_APPEND = {}
+def blocks_icon(g):
+    return blocks_appending(g, 'icon', 'icon', 4, 'the resource directory and the images of DC_HD.ICO')
+
+def blocks_online(g):
+    # 3 header edits + the menu id filter byte + the id chain tail jump
+    return blocks_appending(g, 'online', 'online', 5, 'the ONLINE WAR module, compiled from tools/online/online.c (see the fix description)')
+
+APPENDS = {}   # (build) -> step -> the appended section of an appending fix
 
 def blocks_hdpaths(g):
     t = plan(g, 'hd_paths'); out = []
@@ -953,9 +969,42 @@ showed a picture shrunk to two thirds in the top-left corner, and only 1920x1080
 the screen.  A per-monitor-aware process is never scaled by Windows, so the picture is shown 1:1 at
 every resolution.  The map editor gets no manifest (its dialogs would shrink).
 
-No code changes.  The file grows by the new section (about 75 KB), which is why this fix is always
-applied last.  The appended bytes are written below in Base64 (they are the icon images, the manifest
-and the directory that lists them); their SHA-256 is checked like every other edit.'''),
+No code changes.  The file grows by the new section (about 75 KB), which is why this fix is applied
+last - after it only `online` (Dark Colony Ultimate), which appends its own section behind this one.
+The appended bytes are written below in Base64 (they are the icon images, the manifest and the
+directory that lists them); their SHA-256 is checked like every other edit.'''),
+ dict(id='online', name='ONLINE WAR: a room browser for the relay server in the main menu, TLS to port 8889 (Dark Colony Ultimate only)', date='29 Sep 2026',
+      tool='tools/patch_online.py (module: tools/online/online.c, built by tools/online/build.cmd)',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.51; docs/RELAY_SERVER_PLAN.md section 20; docs/DC16_NETWORK_PROTOCOL.md sections 4.4 and 6.9',
+      blocks=blocks_online, cw_only=True, requires=['ozi', 'icon'],
+      desc='''The main menu of Dark Colony Ultimate gets an eleventh button, ONLINE WAR (top of the right column;
+MULTI PLAYER WAR and ENCYCLOPEDIA move two rows down, the second row stays empty for a future replay
+button).  It opens a room browser built from the LOAD GAME screen that lists the rooms of the Dark
+Colony Server relay - map, terrain, seats, players, bots, status - and joins the room you pick; the
+relay then chooses a free slot for you.  The address of the relay comes from DEFAULT_SERVER.TXT beside
+the exe (plain text with C++-style comments; the shipped file names dark-colony-server.fly.dev and
+explains how to point the game at another relay or at an unencrypted LAN relay).  The connection is
+TLS-encrypted with Windows' own Schannel (port 8889; the certificate is checked against the host
+name), and the game's stock lobby and battle code then run unchanged through a small loopback proxy
+inside the process, so MULTI PLAYER WAR and the network play itself are untouched.
+
+What is changed in the exe:
+  * a NEW SECTION ".dccode" is appended at the end of the file (after fix icon's ".dcicon", which is
+    why this fix comes last): it holds the module compiled from tools/online/online.c - the screen
+    logic on the game's own interface engine, the DEFAULT_SERVER.TXT parser, the TLS client, the room
+    list dialogue with the relay (messages 0x50..0x54) and the proxy thread.  The module imports
+    nothing: it takes LoadLibraryA and GetProcAddress from the exe's own import table and resolves
+    the Windows socket, TLS and kernel functions at run time.  Three header edits register the
+    section (section count, section header, image size).
+  * the menu's accepted-id filter `cmp edx,7` -> `cmp edx,8` (button id 8 = ONLINE WAR), and the
+    seven NOP bytes at the end of the menu's id chain become a jump into the section (ids other than
+    8 return to the menu loop as before).  Nothing else in the code changes.
+
+Data: the screen script INTRF_HD\ONLINE (INTRFACE\ONLINE at 640x480) is derived from LOADGE by
+this script (list widened to 56 columns, header and status lines, ENTER / BACK), and
+DEFAULT_SERVER.TXT is written beside the exe when it is missing - an existing file is never
+overwritten, so your own relay address stays.  The appended bytes are written below in Base64 with
+their SHA-256; the C source they were compiled from is in the Dark-Colony-Server repository.'''),
 ]
 
 # Names of the patched builds and their desktop shortcuts since 25 Sep 2026 (maintainer: "resulting files and
@@ -971,7 +1020,7 @@ BUILDS = [
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon', 'online']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
@@ -1034,13 +1083,13 @@ def attribute(g, step, cur, nxt, mode):
                 assert (old, new) == (blk_[3], blk_[4]), (g, step, hex(off), note, old.hex(), blk_[3].hex())
             assert old != new or n == 0, (g, step, hex(off), note)
             edits.append(('bytes', off, old, new, note)); covered.update(range(off, off + n))
-        if step == 'icon':
-            # model: four header edits + the new section appended at the end of the file
-            ap = ICON_APPEND[g]
-            assert ap['at'] == len(cur) and len(nxt) == len(cur) + ap['n'], (g, ap['at'], len(cur), len(nxt))
+        if step in APPENDS.get(g, {}):
+            # model: a few header/code edits + the new section appended at the end of the file (icon, online)
+            ap = APPENDS[g][step]
+            assert ap['at'] == len(cur) and len(nxt) == len(cur) + ap['n'], (g, step, ap['at'], len(cur), len(nxt))
             tail = nxt[len(cur):]
-            assert hashlib.sha256(tail).hexdigest() == ap['sha'], g
-            special = dict(kind='append', offset=len(cur), bytes=tail, sha=ap['sha'], note=ap['note'])
+            assert hashlib.sha256(tail).hexdigest() == ap['sha'], (g, step)
+            special = dict(kind='append', offset=len(cur), bytes=tail, sha=ap['sha'], note=ap['note'], what=ap['what'])
         leftover = [(o, n) for o, n in runs_of(cur, nxt[:len(cur)]) if not any(i in covered for i in range(o, o + n))]
         for o, n in leftover:
             if step == 'ozi':
@@ -1284,7 +1333,7 @@ $ErrorActionPreference = 'Stop'
 #  One special edit kind (OZI patch only): @{ Insert = <offset>; Bytes = '<16 bytes>'; Before = '<the
 #  16 bytes found there before>'; SectionEnd = <offset>; Note = ... } - inserts Bytes at Insert and
 #  drops the 16 zero bytes just before SectionEnd, so the file size does not change.
-#  And one that grows the file (icon patch only, always the last fix): @{ Append = <offset = the file's
+#  And one that grows the file (the icon and online fixes, the last ones of a build): @{ Append = <offset = the file's
 #  length before>; Sha256 = '<of the appended bytes>'; Length = <n>; Base64 = '<the appended bytes>' }.
 # =================================================================================================
 $Builds = @(
@@ -1368,7 +1417,7 @@ for bd in build_data:
         if pd['special'] and pd['special'].get('kind') == 'append':
             sp = pd['special']
             W(f'                    # {sp["note"]}')
-            W(f'                    # (Base64 of the {len(sp["bytes"])} appended bytes; decode it to see them - it is the resource directory and the images of DC_HD.ICO)')
+            W(f'                    # (Base64 of the {len(sp["bytes"])} appended bytes; decode it to see them - {sp["what"]})')
             W(f'                    @{{ Append = 0x{sp["offset"]:X}; Sha256 = {ps_str(sp["sha"])}; Length = {len(sp["bytes"])}')
             W(f'                       Base64 = {ps_str(base64.b64encode(sp["bytes"]).decode())} }}')
         elif pd['special']:
@@ -2229,14 +2278,17 @@ function Get-TextmsgLine([int] $N, [string] $Text) {
 }
 
 function Edit-OziMenu([string] $Text) {
-    $cols = @(@(1, 6, 7, 0, 2, 16, 4), @(3, 5, $null, $null, $null, $null, 12))
+    # right column: ONLINE WAR (8, 29 Sep 2026), an empty row reserved for a replay button, MULTI PLAYER WAR, ENCYCLOPEDIA, QUIT
+    $cols = @(@(1, 6, 7, 0, 2, 16, 4), @(8, $null, 3, 5, $null, $null, 12))
     $gapAfter = @(1, 3, 5)
     $stockButtons = @(0, 1, 2, 3, 4, 5, 12, 16)
-    $stockGadgets = @(8, 9, 10, 11, 13, 17)
-    $newButtons = @(6, 7)
-    $renum = @{ 6 = 19; 7 = 20 }
-    $gadgetOf = @{ 0 = 19; 1 = 20; 2 = 8; 3 = 9; 4 = 10; 5 = 11; 6 = 21; 7 = 22; 12 = 13; 16 = 17 }
-    $labelOf = @{ 6 = 9; 7 = 10 }
+    $stockGadgets = @(9, 10, 11, 13, 17)   # 8 is renumbered (see $renum)
+    $newButtons = @(6, 7, 8)
+    # widget ids are one object space for every kind: the plates 6, 7 and 8 of buttons 0, 1 and 2 move to
+    # 19, 20 and 24 so that the button ids 6, 7 (Dark Colony) and 8 (ONLINE WAR) are free
+    $renum = @{ 6 = 19; 7 = 20; 8 = 24 }
+    $gadgetOf = @{ 0 = 19; 1 = 20; 2 = 24; 3 = 9; 4 = 10; 5 = 11; 6 = 21; 7 = 22; 8 = 23; 12 = 13; 16 = 17 }
+    $labelOf = @{ 6 = 9; 7 = 10; 8 = 11 }
     $template = @{ 'pushb' = 16; 'gadget' = 17 }
     $banimId = 18
     # `banim` = the menu's opening wave: the first listed plate carries anim_oneoff, each finished
@@ -2246,7 +2298,7 @@ function Edit-OziMenu([string] $Text) {
     $textTemplate = 8
     $stockTopLimit = 218
     $labels = @{ 1 = 'COUNCIL WARS'; 2 = 'ACADEMY'; 3 = 'LOAD CW GAME'; 5 = 'LOAD OZI GAME'
-                 8 = 'OZI MISSIONS'; 9 = 'DARK COLONY'; 10 = 'LOAD DC GAME' }
+                 8 = 'OZI MISSIONS'; 9 = 'DARK COLONY'; 10 = 'LOAD DC GAME'; 11 = 'ONLINE WAR' }
     $xy = @{}
     foreach ($m in ([regex] '(?m)^\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s').Matches($Text)) { $xy[[int]$m.Groups[1].Value] = @([int]$m.Groups[2].Value, [int]$m.Groups[3].Value) }
     $gadgets = @{}
@@ -2254,14 +2306,12 @@ function Edit-OziMenu([string] $Text) {
     $missing = @()
     foreach ($need in $stockButtons) { if (-not $xy.ContainsKey($need)) { $missing += "pushb $need" } }
     foreach ($need in $stockGadgets) { if (-not $gadgets.ContainsKey($need)) { $missing += "gadget $need" } }
-    # the stock grid has the two plates as 6 and 7, this function's own output as 19 and 20
-    $haveOld = $true; $haveNew = $true
-    foreach ($k in $renum.Keys) { if (-not $gadgets.ContainsKey([int]$k)) { $haveOld = $false } }
-    foreach ($v in $renum.Values) { if (-not $gadgets.ContainsKey([int]$v)) { $haveNew = $false } }
-    if (-not ($haveOld -or $haveNew)) { $missing += 'gadget 6/19, gadget 7/20' }
+    # the stock grid has the plates as 6, 7 and 8, this function's own output as 19, 20 and 24 (the 23 Sep
+    # form as 19, 20 and 8): each pair needs one of its two ids
+    foreach ($k in @($renum.Keys | Sort-Object)) { if (-not ($gadgets.ContainsKey([int]$k) -or $gadgets.ContainsKey([int]$renum[$k]))) { $missing += ('gadget {0}/{1}' -f $k, $renum[$k]) } }
     $b = ([regex] '(?m)^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s').Match($Text)
-    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + $newButtons.Count))
-    if (-not $b.Success -or $b.Groups[1].Value -ne $b.Groups[2].Value -or -not ($pairs -contains $b.Groups[1].Value)) { $missing += 'banim 18 with 8 or 10 pairs' }
+    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + 2), [string] ($stockButtons.Count + $newButtons.Count))   # stock grid, the 23 Sep form, this form
+    if (-not $b.Success -or $b.Groups[1].Value -ne $b.Groups[2].Value -or -not ($pairs -contains $b.Groups[1].Value)) { $missing += 'banim 18 with 8, 10 or 11 pairs' }
     if ($missing.Count) { throw ("bintroe: not Classic's 2x4 button grid (missing " + ($missing -join ', ') + ')') }
     $xs = @($xy.Values | ForEach-Object { $_[0] } | Sort-Object -Unique)
     $ys = @($xy.Values | ForEach-Object { $_[1] } | Sort-Object -Unique)
@@ -2329,7 +2379,7 @@ function Edit-OziMenu([string] $Text) {
             $id = [int] $m.Groups[2].Value
             if ($kind -eq 'pushb' -and ($dropPushb -contains $id)) { continue }     # re-emitted below
             if ($kind -eq 'gadget' -and ($dropGadget -contains $id)) { continue }
-            if ($kind -eq 'gadget' -and $renum.ContainsKey($id)) {                  # free ids 6 and 7
+            if ($kind -eq 'gadget' -and $renum.ContainsKey($id)) {                  # free ids 6, 7 and 8
                 $line = Set-ScriptTokens $line @{ 2 = [string] $renum[$id] }
                 $id = [int] $renum[$id]
             }
@@ -2594,6 +2644,66 @@ function Write-MusicDialogs([string] $GameDir, [string] $Mode) {
     return $lines
 }
 
+# The ONLINE WAR room screen (fix online, Dark Colony Ultimate): LOADGE -> ONLINE, the same edits as
+# patch_online.online_script (byte-identical output): the list widened from 392 to 448 px (56 columns of
+# MFONTO5, 8 px each), scroll bar / UP / DOWN and their plates 56 px further right, a read-only header
+# line above the list and a status line below it (in_text 30 / 17), the title "Online War", the buttons
+# ENTER / BACK, the save-mode widgets (label 18, pushb 21, the groups, textmsg 4 / 5) and the scope
+# animation (gadget 11, which repainted over the header) removed.  Idempotent on its own output.
+function Edit-OnlineScript([string] $Text) {
+    $m = [regex]::Match($Text, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s')
+    if (-not $m.Success) { throw 'LOADGE: no list 0 line' }
+    $lx = [int]$m.Groups[1].Value; $ly = [int]$m.Groups[2].Value; $lw = [int]$m.Groups[3].Value; $lh = [int]$m.Groups[4].Value
+    $already = ($lw -eq 448)
+    if ($lw -ne 392 -and $lw -ne 448) { throw ('LOADGE: list width {0}, expected 392' -f $lw) }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in $Text.Split("`n")) {
+        $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
+        $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
+        $w = [regex]::Match($line, '^\s*(\w+)\s+(\d+)\s')
+        if ($w.Success) {
+            $kind = $w.Groups[1].Value; $id = [int]$w.Groups[2].Value
+            $drop = ($kind -eq 'label' -and $id -eq 18) -or ($kind -eq 'pushb' -and $id -eq 21) -or ($kind -eq 'group') -or
+                    ($kind -eq 'textmsg' -and ($id -eq 4 -or $id -eq 5)) -or ($kind -eq 'in_text' -and $id -eq 30) -or ($kind -eq 'gadget' -and $id -eq 11)
+            if ($drop) { continue }
+            if ($kind -eq 'list' -and $id -eq 0) { $line = Set-ScriptTokens $line @{ 6 = '448' } }
+            elseif ((-not $already) -and (($kind -eq 'scroll' -and $id -eq 1) -or ($kind -eq 'pushb' -and ($id -eq 2 -or $id -eq 3)) -or ($kind -eq 'gadget' -and ($id -eq 7 -or $id -eq 8)))) {
+                $x = [int]([regex]::Match($line, '^\s*\w+\s+\d+\s+\d+\s+(\d+)').Groups[1].Value)
+                $line = Set-ScriptTokens $line @{ 4 = [string]($x + 56) }
+            }
+            elseif ($kind -eq 'in_text' -and $id -eq 17) {
+                $out.Add(('in_text  17  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 8)) + $cr)
+                $out.Add(('in_text  30  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly - 18)) + $cr)
+                continue
+            }
+            elseif ($kind -eq 'textmsg' -and $id -eq 1) { $line = Get-TextmsgLine 1 'Online War' }
+            elseif ($kind -eq 'textmsg' -and $id -eq 2) { $line = Get-TextmsgLine 2 'ENTER' }
+        }
+        $out.Add($line + $cr)
+    }
+    return ($out -join "`n")
+}
+
+# DEFAULT_SERVER.TXT as the repository ships it (the same bytes as patch_online.DEFAULT_SERVER_TEXT).
+$DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server that ONLINE WAR connects to.', ' *', ' * Dark Colony Ultimate reads this file when you press ONLINE WAR in the main menu.', ' * It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay, https://github.com/endotermic/Dark-Colony-Server), shows the rooms the', ' * relay offers - map, terrain, seats, players, bots, status - and joins the room you pick.', ' *', ' * Usage:', ' *   - one address, optionally with a port:      my.relay.example.org:8889', ' *   - the word "plain" after the address turns the encryption off, for a relay on your own', ' *     network without a certificate (the plain relay port is 8888):', ' *                                                 192.168.1.10 plain', ' *   - comments in the C++ style are ignored: "//" to the end of a line, or a block like this one.', ' *', ' * Keep one address in the file. MULTI PLAYER WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
+
+function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
+    $stock = ($Mode -eq '640x480')
+    $sub = if ($stock) { 'INTRFACE' } else { 'INTRF_HD' }
+    $src = Find-CI (Join-Path $GameDir $sub) 'LOADGE'
+    if (-not $src) { return @('ONLINE screen NOT written: LOADGE is missing') }
+    $t = Edit-OnlineScript (Read-Latin1 $src)
+    $dst = Find-CI (Join-Path $GameDir $sub) 'ONLINE'
+    if (-not $dst) { $dst = Join-Path (Join-Path $GameDir $sub) 'ONLINE' }
+    Write-Latin1 $dst $t
+    $lines = @(('wrote {0}\ONLINE (the ONLINE WAR room screen, derived from LOADGE)' -f $sub))
+    if (-not (Find-CI $GameDir 'DEFAULT_SERVER.TXT')) {
+        Write-Latin1 (Join-Path $GameDir 'DEFAULT_SERVER.TXT') $DefaultServerText
+        $lines += 'wrote DEFAULT_SERVER.TXT (dark-colony-server.fly.dev; an existing file is never overwritten)'
+    }
+    return $lines
+}
+
 # Desktop shortcut to a patched exe (the window's "Desktop shortcut" checkbox, -DesktopShortcut on the
 # command line).  The game opens its data files relative to its working folder, so the shortcut's
 # "Start in" is the game folder - a COPY of the exe on the desktop would not find anything.  Made with
@@ -2660,6 +2770,11 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     if ($Mode -and $Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'music' })) {
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
         try { $generated += Write-MusicDialogs $dir $Mode } catch { $generated += 'options dialog copies NOT written: ' + $_.Exception.Message }
+    }
+    # Dark Colony Ultimate's `online` fix: the ONLINE WAR screen for the size and DEFAULT_SERVER.TXT when missing
+    if ($Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'online' })) {
+        $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
+        try { $generated += Write-OnlineScreen $dir $Mode } catch { $generated += 'ONLINE screen NOT written: ' + $_.Exception.Message }
     }
     return @{
         Generated = $generated

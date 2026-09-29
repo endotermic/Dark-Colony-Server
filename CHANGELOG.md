@@ -6,6 +6,20 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **ONLINE WAR** (29 Sep 2026, maintainer; plan §20, protocol doc §4.4 / §6.9): five relay-only
+  messages for the patched Dark Colony Ultimate exe - `0x50 LIST` asks for the room table, `0x51 ROOMS`
+  carries it (id, state, seats, players, bots, terrain, name and the ready-made 64-column list row,
+  `src/online.js`) at once and whenever it changes, `0x52 ENTER` joins a room with a slot the relay
+  picks **at that moment** (a random seatable slot; `0x53 REFUSED` with a reason otherwise) and
+  `0x54 ENTERING` hands the connection to the game's own lobby client with both sequence counters
+  reset. An optional TLS listener (`TLS_PORT`, `TLS_CERT`, `TLS_KEY`) for self-hosted relays; on Fly
+  port 8889 is now TLS-terminated by the proxy (`fly.toml` `handlers = ["tls"]`), so the plain
+  fallback the stock game had on 8889 is gone there. `tools/fakeclient.js --online [--tls]` speaks the
+  dialogue. Stock clients and the classic hall are unchanged. Exe side (game repo): fix `online` =
+  `tools/patch_online.py` + `tools/online/online.c` (Dark Colony Ultimate only; doc §10.51): the ONLINE
+  WAR button, the room screen, `DEFAULT_SERVER.TXT`, TLS through Windows Schannel and the loopback
+  proxy that lets the stock lobby and battle code run over the encrypted connection. Confirmed in game
+  against a local relay and against Fly.
 - **Bottom bar filler is a bevel plate** (28 Sep 2026, maintainer report "black line right over comment
   creation line"; doc §10.45): at the sizes whose bar absorbs spare rows (1280x720, 1920x1080, 1920x1200)
   `tools/hud_layout.py` fills them with the bar's own frame rows instead of its black top rows; the shipped

@@ -1,0 +1,5 @@
+# build outputs of build.cmd; the module ships embedded in ../patch_online.py
+online.dll
+*.obj
+*.lib
+*.exp

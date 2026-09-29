@@ -2,6 +2,13 @@
 //
 //   node tools/fakeclient.js --port 8888 --count 3 [--host 127.0.0.1] [--ready-after 1000]
 //        [--tick-ms 33] [--behave noEcho,noKeepalive,...] [--duration 20000] [--room 2] [--ready-policy auto|hold|follow]
+//        [--online] [--tls] [--servername dark-colony-server.fly.dev]
+//
+// --online: the ONLINE WAR dialogue of the patched Ultimate exe (plan §20): 0x50 LIST right after
+// connecting, the 0x51 ROOMS table is printed, 0x52 ENTER --room (or the first open room) is sent,
+// and after 0x54 ENTERING the client continues as a stock lobby client from the 'd' handshake, with
+// its sequence counters reset like the game's own connection through the exe's proxy. --tls wraps
+// the connection in TLS (port 8889 on Fly; --servername for the certificate check, default = host).
 //
 // Behaviours: silent, noKeepalive, noEcho, noProgress, noMready, badSeq, garbage, cheat, speed, foreign
 //
@@ -15,6 +22,7 @@
 // which READY is pressed again after --ready-after.
 
 import net from 'node:net';
+import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { FrameDecoder, encodeFrame } from '../src/frame.js';
 import { splitCommands, decode, build, T } from '../src/commands.js';
@@ -34,6 +42,12 @@ export class FakeClient extends EventEmitter {
     this.peerSlots = opts.peerSlots ?? new Set(); // follow: slots of the other scripted clients in the room
     this.announceName = opts.announceName ?? false; // send the name after the handshake, as if typed
     this.readyWanted = 1; // follow: the status last sent
+    this.online = opts.online ?? false; // ONLINE WAR dialogue before the lobby (plan §20)
+    this.tls = opts.tls ?? false;
+    this.servername = opts.servername ?? null;
+    this.rooms = []; // the last ROOMS table (online)
+    this.refusals = [];
+    this.enteredSlot = -1; // the slot 0x54 ENTERING announced
     this.behave = new Set(opts.behave ?? []);
     this.log = opts.log ?? (() => {});
     this.state = 'connecting';
@@ -64,9 +78,21 @@ export class FakeClient extends EventEmitter {
 
   connect() {
     return new Promise((resolve, reject) => {
-      this.sock = net.connect(this.port, this.host);
+      if (this.tls) {
+        this.sock = tls.connect({ host: this.host, port: this.port, servername: this.servername ?? this.host, minVersion: 'TLSv1.2' });
+        this.sock.once('secureConnect', () => {
+          this.log(`${this.name}: TLS ${this.sock.getProtocol()} ${this.sock.getCipher()?.name}, certificate ${this.sock.authorized ? 'valid' : `NOT valid (${this.sock.authorizationError})`}`);
+          if (this.online) this.startOnline();
+          resolve();
+        });
+      } else {
+        this.sock = net.connect(this.port, this.host);
+        this.sock.once('connect', () => {
+          if (this.online) this.startOnline();
+          resolve();
+        });
+      }
       this.sock.setNoDelay(true);
-      this.sock.once('connect', () => resolve());
       this.sock.on('error', (err) => {
         this.log(`${this.name}: socket error ${err.message}`);
         reject(err);
@@ -126,8 +152,48 @@ export class FakeClient extends EventEmitter {
     for (const f of frames) this.onFrame(f.payload);
   }
 
+  /** ONLINE WAR: ask for the room table and keep the connection alive while browsing. */
+  startOnline() {
+    this.state = 'online';
+    this.send(build.list());
+    this.every(700, () => this.send(build.keepalive()));
+  }
+
+  onOnlineFrame(payload) {
+    for (const c of splitCommands(payload)) {
+      const d = decode(c);
+      if (c.type === T.ROOMS) {
+        this.rooms = d.rooms;
+        this.emit('rooms', d.rooms);
+        for (const r of d.rooms) this.log(`${this.name}: room ${r.row}`);
+        if (this.enteredSlot < 0 && !this.enterSent) {
+          const pick = this.room > 0 ? d.rooms.find((r) => r.id === this.room) : d.rooms.find((r) => r.state === 0);
+          if (pick) {
+            this.enterSent = true;
+            this.log(`${this.name}: ENTER room ${pick.id} (${pick.name})`);
+            this.send(build.enter(pick.id));
+          }
+        }
+      } else if (c.type === T.REFUSED) {
+        this.refusals.push(d.reason);
+        this.log(`${this.name}: refused: ${d.reason}`);
+        this.emit('refused', d.reason);
+        this.enterSent = false;
+      } else if (c.type === T.ENTERING) {
+        this.enteredSlot = d.id;
+        this.log(`${this.name}: ENTERING slot ${d.id}; the game's connection starts at sequence 0`);
+        this.clearTimers(); // the module's keep-alives stop; the lobby client's own start after 'd'
+        this.seqOut = 0; // the game's own stream through the proxy (F80)
+        this.state = 'connecting';
+        this.emit('entering', d.id);
+      }
+      // everything else (the hall's lobby dump at accept) is ignored, as the exe's module does
+    }
+  }
+
   onFrame(payload) {
     if (payload.length === 0) return;
+    if (this.state === 'online') return this.onOnlineFrame(payload);
     if (this.state === 'connecting') return this.onHandshake(payload);
     if (this.state === 'lobby') return this.onLobbyFrame(payload);
     if (this.state === 'loading' || this.state === 'game') return this.onGameFrame(payload);
@@ -138,6 +204,7 @@ export class FakeClient extends EventEmitter {
     const cmds = splitCommands(payload);
     const v = cmds.find((c) => c.type === T.VERSION);
     if (!v) {
+      if (this.online) return; // the hall dump that arrived before LIST was answered
       this.emit('error', new Error(`first frame is not 'd' but ${payload[0]}`));
       return;
     }
@@ -311,10 +378,14 @@ if (isMain) {
       tickMs: Number(args['tick-ms'] ?? 33),
       room: Number(args.room ?? 0),
       readyPolicy: args['ready-policy'] ?? 'auto',
+      online: args.online === 'true',
+      tls: args.tls === 'true',
+      servername: args.servername,
       behave: i === count - 1 ? behave : [], // only the last client misbehaves
       log: (m) => console.log(m),
     });
     c.on('chat', (t) => console.log(`${c.name} <chat> ${t}`));
+    c.on('title', (t) => console.log(`${c.name} <map> ${t.split('\n')[0]}`));
     c.on('disconnect', (p) => console.log(`${c.name} <disconnect> slot ${p}`));
     clients.push(c);
   }

@@ -1,4 +1,8 @@
-# Fly.io app configuration (unchanged app name and region; port 8889 added: dc16.exe retries it when 8888 fails)
+# Fly.io app configuration (unchanged app name and region). Port 8888 is the plain relay port of the
+# stock game; port 8889 is TLS since 29 Sep 2026 (plan §20): the Fly proxy terminates TLS with the
+# app's dark-colony-server.fly.dev certificate and forwards plaintext to the same relay, which is what
+# the patched Dark Colony Ultimate exe's ONLINE WAR connects to (DEFAULT_SERVER.TXT). Until then 8889
+# was a second plain port (dc16.exe retries it when 8888 fails; that fallback is gone on Fly).
 app = "dark-colony-server"
 primary_region = "iad"
 
@@ -28,6 +32,7 @@ primary_region = "iad"
     port = 8888
   [[services.ports]]
     port = 8889
+    handlers = ["tls"]
 
 # Optional, only once the basics work. Never a check on 8888 (a probe would take a lobby slot).
 # [checks.health]

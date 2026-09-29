@@ -112,6 +112,10 @@ checks done while writing this plan. The game folder, the full disassembly (`dc1
 | F75 | **The battlefield's look is three data files, and the stock data already holds a console-style button bank nobody uses.** `INTRFACE.GIF` (frame), `MAINBUT.SPR` (133 cells) and `POPP.SPR` (14 dialog plates) are the only metal-styled art; `INTRFACE/BUTTON.SPR` (114 cells, referenced by no script or exe string) is the same button set in the menus' style, index for index. A `pictures intrf_hd/<bank>` script line is resolved like `background`, so the patched exes take new banks from `INTRF_HD/` without a code change; the terrain palettes differ from `PALETTE.GIF` by at most 3 of 255 per index, and the cyan ramp 128..143 is remapped to the player's team colour in widget-drawn cells. | scripts + exe strings + palettes measured 28 Sep 2026; game test at 1920×1200; `DC16_DISPLAY_AND_RESOLUTION.md` §10.49 | `tools/hud_console.py` (frame / bank / popp / apply), patcher rules `$TAB_STRIP`, `$PIC_RETARGET`, banks as `hd_data`; relay unaffected |
 | F74 | **The in-game chat has no sound and shows two lines; the single-player mission message is a different module with a sound.** Chat `0x0E` → handler `0x41DA2C` → six-entry ring in the net object (`+0x310` count, `+0x314` index, `+0x318` 88-byte entries) → client display `0x40B10D` shows entries `index`, `index-1` in `MAINE` `in_text 203/204` (ids `0xCB+i`), drops the oldest after 7.5 s (2.5 s while more than two queued), plays nothing. Mission messages (trigger `msg`, action 11 of `0x43D904` → `0x44D88C`, object `gs+0x46FBC`) are drawn by `0x433C44` into bar widget 148 only in campaign modes (`gs+0x14F0` 0/3) and play sound table entry 187 = `SOUND\MSG.WAV` through `[display+0x7C](187, 1)`. Every `0x0E` whose mask includes the local player counts as "sent comment", the relay's bot lines included. | `dc16.asm` 28 Sep 2026: `0x0040B10D..0x0040B221`, `0x0041DA2C`, `0x0043D967`, `0x0044D88C`, `0x00433C44`, `0x00433D4E`; `DC16_DISPLAY_AND_RESOLUTION.md` §10.48 | fix `chat` (`tools/patch_chat.py`, both games, `Requires palette`): six lines (widgets 203, 204, 207..210, drawn only if the widget exists), sound 187 on every arriving line via a marker in `+0x314`; `MAINE` gets `in_text 207..210`; relay unchanged - its bot chat lines now beep on the client like the players' |
 | F76 | **A mode switch changes the monitor's DPI, so a SYSTEM-DPI-aware full-screen game is bitmap-scaled by the desktop window manager in every mode whose scale step differs from the desktop's.** Windows allows only certain scale steps per resolution: on a 1920×1200 panel at 150 % the game window's `GetDpiForWindow` reads 96 at 1024×768, 1280×720 and 1280×800 (100 %), 120 at 1280×1024, 144 at 1920×1080 and 1920×1200. The 27 Sep `<dpiAware>true</dpiAware>` manifest (system-aware, laid out for 144) therefore showed those modes as a two-thirds picture in the top-left corner (683×512 at 1024×768); an unaware process is scaled by `monitor/96` instead, i.e. 1.5× exactly where the DPI stays 144 (§10.44's 1920-wide symptom). Only a per-monitor-aware process is never scaled. | measured 28 Sep 2026 with a per-monitor-aware probe (`EnumDisplaySettings`, window rect, `GetDpiForWindow`, screenshots) on nine builds; `DC16_DISPLAY_AND_RESOLUTION.md` §10.50 | `patch_icon.MANIFEST` = `dpiAwareness PerMonitorV2, PerMonitor` + `dpiAware true/pm`; every game build's hash changed; relay unaffected |
+| F77 | **The lobby client's slot comes from the `'d'` handshake and nothing else, so a client that has not yet shown a lobby screen can be seated anywhere.** The hall pre-assigns a slot at connect (F30) only because the hall IS a lobby screen; a room browser that runs before the lobby code (the ONLINE WAR screen, §20) lets the relay pick the slot at join time. | `0x4108DB` (join wait reads `'d'`), §6.8 of the protocol doc | `0x52 ENTER` seats the client in a random seatable slot of the chosen room and then sends `'d'` with that slot (§20.4) |
+| F78 | **The game opens its own socket inside the network entry `0x40122C`** (`connect` through the net object's vtable slot `+0x64`, the 16 KiB send buffer allocated there), so a connection made by any other code cannot be handed to the lobby client. The address argument is `{u16 port; u32 pad; char *host}` (CONNECT handler `0x405C0A`: port 8888, `[ebp-0x18]`). | `0x40139D`, `0x405BEB..0x405C16` | The ONLINE WAR module keeps its relay connection and lets the game connect to a loopback proxy thread inside the process that pipes the bytes (and does the TLS) - §20.5 |
+| F79 | **The relay has no way to tell an ONLINE WAR connection from a stock one until the client speaks**: the stock client sends nothing before `'d'` (the CD report `'o'` follows the `'d'`), and the hall's dump goes out at accept. | `hall.accept`, F23 | The module ignores every frame until `ROOMS`/`ENTERING`; the relay marks the connection at `0x50 LIST` and stops sending it hall rows |
+| F80 | **The game's own frame reader is strict about the sequence nibble and the game's stream through the proxy starts at 0** (F1); the frames the module exchanged before the hand-over count on the relay's counters. | `0x43AE8C` strict=1 on the client | The relay resets `seqOut`/`seqIn` to 0 at `ENTERING`, so `'d'` goes out as sequence 0 and the game's first frame is expected as 0 |
 
 | F46 | **Krusty's inputs** are all in the engine's state: objects (position, type, team, life, weapon/defence class), the player's own vision bits of the ground layer (`0x40000000 >> p`), `GS.ALLIANCE`, the path families and the routing matrix, the production queues, `dep_check_building/troop`, the unit cap. It uses its own `rand()` draws from the shared game RNG (defend re-route, bomber targets), everything else is deterministic. | `DC16_AI.md` §5–§15 | The bot reads `room.sync.engine` through the engine's accessors and uses a private RNG (§19.3) |
 
@@ -1916,6 +1920,8 @@ played the Council Wars briefings for `mission/h1..h7.wav`; its call at `0x00405
 
 **28 Sep 2026, maintainer: "patcher is broken. all graphical modes (except 1920x1200) are showing picture in left upper corner"** - F76, `tools/patch_icon.py` (fix `icon`, both games), `DC16_DISPLAY_AND_RESOLUTION.md` §10.50. Not the patcher's edits or data: the maintainer's game folder held the 1280x800 patcher builds, byte-identical to the references, with a matching set, and a 1024x768 build without the `icon` fix filled the screen. The 27 Sep manifest (`<dpiAware>true</dpiAware>`) makes the process SYSTEM-DPI-aware, and the mode switch changes the monitor's DPI (96 at 1024x768 / 1280x720 / 1280x800, 120 at 1280x1024, 144 at the 1920-wide modes on this 150 % panel), so the DWM bitmap-scaled the game window - and the 16-bit surface the mitigation layer presents through it - by 96/144: a 683x512 picture in the corner at 1024x768, 854x533 at 1280x800; the two 1920-wide modes the 27 Sep test used keep 144 and were never affected. Fix: the manifest declares per-monitor awareness (`dpiAwareness PerMonitorV2, PerMonitor`, `dpiAware true/pm` fallback; 589 bytes, exe sizes unchanged) - a per-monitor-aware process is never scaled by Windows; the game receives `WM_DPICHANGED` it never reads. Generator/README/HOWTO texts updated, patcher regenerated: every game reference changed (1024x768 Classic `928bb8d0…` / Ultimate `98fe5e95…`, 1280x800 `bc4c0537…` / `e7392a4d…`, 1920x1200 `7abeb48b…` / `58265655…`, full list in §10.50; editor unchanged), PowerShell 7 = 5.1, the 1024x768 exes staged from a scratch build, the maintainer's game folder rebuilt at 1280x800 with the new patcher, `dc16.asm` / `dcexp16.asm` regenerated. **Confirmed in game** from a `subst X:` copy (probe: display mode, window rect, `GetDpiForWindow`, DPI-aware screenshots, real click): the per-monitor builds fill the screen at 1024x768, 1280x800, 1920x1080 and 1920x1200 (Classic) and 1280x800 (Ultimate), TRAINING / ACADEMY clicks open the name screen; the final patcher outputs re-run at 1024x768 (scratch) and 1280x800 (game folder), `error.log` empty. Not run: 640x480, 1280x720, 1280x1024, 3840x1080, a battle. Relay unaffected. Lesson: a display fix tested only at the desktop's own size proves nothing about the switched modes; and the three DPI-awareness levels are not interchangeable for a program that switches modes.
 
+**29 Sep 2026, maintainer: "MULTI PLAYER WAR set to third button from the top right column. ENCYCLOPEDIA set as fourth from the top on right column. first button on the right column add ONLINE WAR, it must lead to the form of room selection based on LOAD GAME form and it must contain maps from relay server. relay server name must be located in separate file DEFAULT_SERVER.TXT ... Connection must happen to 8889 port which must use standard ssh encryption. When map is selected and entering the room, relay must select free slot for the client" → "use TLS, ultimate only, row 2 empty (reserved for future implementation of replay), one row per room ... [map name]+[terrain]+[slot count]+[clients count]+[bot count]+[status]"** - §20, F77-F80, protocol doc §4.4 / §6.9, `DC16_DISPLAY_AND_RESOLUTION.md` §10.51. Relay: five messages `0x50 LIST` / `0x51 ROOMS` / `0x52 ENTER` / `0x53 REFUSED` / `0x54 ENTERING` (`commands.js`, `online.js` formats the 56-column rows), the hall answers LIST with the table and re-sends it on every change instead of lobby rows, ENTER seats the client in a random seatable slot chosen at that moment, sends ENTERING, resets both sequence counters and both join clocks (`firstMessageAt`, `joinedAt` - the first build evicted the game 3 s after joining) and runs the stock `'d'` join; `TLS_PORT`/`TLS_CERT`/`TLS_KEY` for a self-hosted relay's own TLS listener; on Fly port 8889 is now `handlers = ["tls"]` (the proxy terminates TLS with the `*.fly.dev` Let's Encrypt certificate and forwards to 8888 - `openssl s_client` TLS 1.3, verify ok; the stock game's plain fallback to 8889 no longer works there, 8888 is unchanged). `fakeclient.js --online [--tls]` speaks the dialogue; 8 new tests (259). **Deployed to Fly 29 Sep 2026** (machine version 243). Exe: fix `online` (`patch_online.py` + the C module `tools/online/online.c`, Ultimate only, last in the build after `icon`), menu layout `OZI_COLUMNS` right column `8, -, 3, 5, -, -, 12` with plate 8 renumbered to 24; details, hashes (Ultimate 1024x768 `5b9efed6…`, 640x480 `1ddb37b0…`) and the game tests in §10.51 - confirmed against a local relay (lobby, READY, battle through the proxy) and against Fly over TLS (room 1, slot 1). Lessons for the relay: the game's stream through the exe's proxy is a fresh connection for the game but not for the relay (counters and clocks must restart at ENTERING); a `LIST` client must never get lobby rows (the module ignores them, but the refresh would waste frames). Known limitation: with the Fly proxy terminating TLS, the relay logs the proxy's internal address (`172.16.x.x`) for 8889 clients, not the player's - Fly's `proxy_proto` handler would carry it, but the relay would have to strip a PROXY header first (not done).
+
 ## 17. Multi-room: seven rooms and the room-selection lobby (version 2.1)
 
 Added 7 Sep 2026 from the maintainer's proposal (§16). The game gives a player no way to pick a
@@ -2707,3 +2713,86 @@ always teamed with client with shared vision until either player looses connecti
 * **Performance.** A think is ~800 objects × 8 vision lookups plus zone scans of 256×(neighbours),
   well under a millisecond in Node for one bot; seven bots spread over the 32-tick window add at most
   one think per server step.
+
+
+## 20. ONLINE WAR: room selection in the game, TLS on 8889, slot chosen at join (29 Sep 2026)
+
+Maintainer, 29 Sep 2026: "MULTI PLAYER WAR set to third button from the top right column.
+ENCYCLOPEDIA set as fourth from the top on right column. first button on the right column add
+ONLINE WAR, it must lead to the form of room selection based on LOAD GAME form and it must contain
+maps from relay server. relay server name must be located in separate file DEFAULT_SERVER.TXT
+which supports standard c++ comments and contains dark-colony-server.fly.dev as a server address
+and a comment about content and usage. Connection must happen to 8889 port which must use
+standard ssh encryption. When map is selected and entering the room, relay must select free slot
+for the client, so client slot is not predefined." Decisions the same day: TLS (Windows Schannel
+in the exe, the Fly proxy's TLS handler on the server) instead of SSH; Dark Colony Ultimate only;
+row 2 of the right column stays empty (reserved for a replay button); one list row per room with
+`[map name] [terrain] [seats] [players] [bots] [status]`.
+
+### 20.1 What changes where
+
+| Part | Change |
+|---|---|
+| Relay `commands.js` | five message types `0x50 LIST`, `0x51 ROOMS`, `0x52 ENTER`, `0x53 REFUSED`, `0x54 ENTERING` (protocol doc §4.4) |
+| Relay `hall.js` | `LIST` marks the client (`client.online = true`), answers `ROOMS`, re-sends `ROOMS` on every change of the table (the step timer, `HALL_REFRESH_MS`) instead of lobby rows; `ENTER` joins with a slot chosen now (§20.4); the classic hall (chat commands, READY) is unchanged for stock clients |
+| Relay `index.js` / `config.js` | an optional TLS listener `TLS_PORT` (default 0 = none) with `TLS_CERT` / `TLS_KEY` (PEM) for self-hosted relays; on Fly the proxy terminates TLS: `fly.toml` port 8889 gets `handlers = ["tls"]` and forwards plaintext to 8888 (the app's `dark-colony-server.fly.dev` certificate) |
+| Relay `tools/fakeclient.js` | `--online [--tls]`: the scripted client speaks the ONLINE WAR dialogue (LIST, pick a room, ENTER) and continues as a stock lobby client |
+| Game data | `DC - Council wars/DEFAULT_SERVER.TXT` (§20.2); the room screen script `INTRF_HD/ONLINE` (HD) / `INTRFACE/ONLINE` (640x480), derived from the LOAD GAME picker `LOADGE` by the patcher and by `tools/patch_online.py` |
+| Exe (Ultimate) | fix `online` = `tools/patch_online.py`: an appended code section `.dccode` with the compiled C module `tools/online/online.c` (Schannel TLS client, DEFAULT_SERVER.TXT parser, room list screen on the game's own interface engine, loopback proxy thread), plus two edits in `AUTO` (menu id filter 7 -> 8, the 7 NOP bytes at the end of the id chain -> `jmp` into the section); `DC16_DISPLAY_AND_RESOLUTION.md` §10.51 |
+| Menu layout | `build_ozi_overlay.py` / patcher `Edit-OziMenu`: right column = ONLINE WAR (8), empty, MULTI PLAYER WAR (3), ENCYCLOPEDIA (5), empty, empty, QUIT (12); new plate gadget 23 and `textmsg 11 ONLINE WAR`; 11 `banim` pairs |
+
+### 20.2 `DEFAULT_SERVER.TXT`
+
+A text file beside the exe, read when ONLINE WAR is pressed. `//` line comments and `/* ... */`
+block comments are stripped, the rest is whitespace-separated tokens: the first token is
+`host[:port]`, an optional token `plain` switches TLS off (a LAN relay without a certificate; the
+port then defaults to 8888). Default port 8889 with TLS. Shipped content: the address
+`dark-colony-server.fly.dev` and a comment explaining what the file is for and how to point the
+game at another relay. The patcher writes the file only when it is missing (a player's edit is never
+overwritten); the repo carries it as game content.
+
+### 20.3 The room screen
+
+The LOAD GAME picker (`intrf_hd/loadg` + `e` = `LOADGE`, code `0x40388C`) is the template: a `list`
+widget (monospace `MFONTO5`, 7 px per character), scroll bar, UP/DOWN, two buttons, a title. The
+ONLINE WAR screen `ONLINE` widens the list to 448 px = 64 columns, adds a read-only header line
+and a status line (`in_text`), titles it "Online War" and labels the buttons ENTER and BACK. One
+list row per room, formatted by the relay (so the format can change without an exe rebuild):
+`name (24) terrain (9) seats (5) players (7) bots (4) status (9)` with single spaces = 63 columns;
+status = `open`, `full`, `starting`, `in battle`. A row is entered with ENTER; a room that is not
+`open` is shown and refused by the relay with a reason that appears in the status line. The list is
+refreshed from every `ROOMS` frame.
+
+### 20.4 Joining: the slot is chosen at ENTER
+
+`Hall.enter(client, id)`: refuse when the room is not in LOBBY, is full or has no seatable slot;
+otherwise `slot = seatable[random]` (never slot 0 = Mercenary, F14; a fake in that slot is moved,
+§17.5), send `ENTERING slot`, reset `client.seqOut = client.seqIn = 0`, `room.adopt(client, slot,
+true)` (the `'d'` handshake + dump of §6.1). The hall's own `pickSlot()` at accept still runs (the
+stock hall needs it) but is irrelevant for an online client.
+
+### 20.5 The exe side in one paragraph
+
+`online_war(ui, gs)` (C, cdecl; the `.dccode` dispatch converts the game's register call): set the
+Dark Colony prefix mode and music source ALL exactly as MULTI PLAYER WAR does (`stub_dc_set`
+`0x47F340`, `[0x5327F4] = 2`, `gs+0x14F0 = 2`); read the config; `WSAStartup`; resolve and connect;
+TLS handshake through `secur32` (`AcquireCredentialsHandleA`, `InitializeSecurityContextA` loop,
+`EncryptMessage`/`DecryptMessage`, automatic chain validation against the host name, TLS 1.2+);
+send `LIST`; run the room screen with the game's interface calls (`load_interface 0x423248`,
+`0x427B44`, `list_set 0x42A5B8`, `list_selected 0x42A828`, `set_text 0x423ED4`, the event pump
+`0x42417C`: kind 1 = button, 7 = list selection; `unload 0x423210`; pool bookmark `0x40C0FC` /
+`0x40C26C` around it like the picker); on ENTER send `0x52`, read until `ENTERING`; open a
+listening socket on `127.0.0.1:0`, start the proxy thread (`CreateThread`), call `0x40122C(ui,
+{port, "127.0.0.1"}, gs, 0, 0)` - the stock network entry that connects, runs the lobby and the
+battle - and, when it returns, close the listening socket (the thread ends when either side
+closes). Errors show the game's own LOST dialog (`0x410460`, e.g. 11 UNABLE TO CONNECT) or a
+module message in the status line. Every Windows function but `LoadLibraryA`/`GetProcAddress`
+(IAT `0x4804B0` / `0x480480`) is resolved at run time, so the exe imports nothing new.
+
+### 20.6 Test plan (done 29 Sep 2026 except the last item)
+
+Unit tests for the messages and the hall (`LIST` -> `ROOMS`, refresh on change, `ENTER` -> random
+seatable slot, refusal reasons, sequence reset, a stock client unaffected). `fakeclient.js
+--online` against a local relay and against Fly over TLS. The game: a local relay (`plain` in
+`DEFAULT_SERVER.TXT`) for the screen and the join; the Fly relay for the TLS path; a stock
+Ultimate client joining the same room to see both slot assignments.

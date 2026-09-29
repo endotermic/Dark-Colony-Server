@@ -39,7 +39,7 @@ Before that it creates the in-process mailbox sub-network for the host's own con
 Accept (`0x42DE88`, vtable `accept`): `select(readfds={s}, timeout 0)`; if readable, `accept(s, NULL, NULL)`. The new connection record is initialised as `{net, seq_out=0, seq_in=0, socket, pending=0}`. Return codes of `bind`/`listen` are **not checked**.
 
 ### 2.3 Client side (`0x42DC8C`, vtable `connect_to_server`)
-Address argument: `struct { uint16 port; uint32 pad; char *host; }`.
+Address argument: `struct { uint16 port; uint16 pad; char *host; }` (8 bytes, the host pointer at +4: `0x405BEB..0x405C16` writes the port at `[ebp-0x18]` and the pointer at `[ebp-0x14]`; corrected 29 Sep 2026, it said `uint32 pad` before).
 1. If the network object has a mailbox sub-network (`priv[4] != NULL`, i.e. we are the host) → connect through it instead of TCP.
 2. `socket(AF_INET, SOCK_STREAM, 0)`; on failure prints `Died in socket`.
 3. `sin_port = htons(port)`; `sin_addr = inet_addr(host)`. If `inet_addr` fails, `gethostbyname(host)` and every address in `h_addr_list` is tried in turn.
@@ -236,6 +236,25 @@ Order codes observed at the call sites (the `order` byte of `0x05`/`0x16`):
 
 Selection is replicated over the network (`0x14`/`0x15`) so that later "selected" commands are unambiguous on every machine. In-game `player` values are **game player indices** (0..7, assigned at game start, §6.3), not lobby slots; `DISCONNECT` carries the network slot and is translated through `gs->net_id[player]` (`gs+0xCA0+player*0xE34`).
 
+### 4.4 ONLINE WAR messages (relay-only, 29 Sep 2026)
+
+Five message types that exist only between the patched **Dark Colony Ultimate** exe and the relay
+server, before a client is seated in a room (server plan §20). The type bytes `0x50..0x54` are
+small numbers without an in-game handler (the table `0x48949C` ends at `0x1B`) and are never seen
+by the game's own lobby code: the exe's ONLINE WAR module speaks them itself and hands the
+connection to the stock lobby client only after `0x54 ENTERING`. Field order is wire order, integers
+little-endian, strings NUL-terminated as in §3.1.
+
+| Type | Name | Payload | Sent by | Meaning |
+|---|---|---|---|---|
+| `0x50` | `LIST` | — | client → relay | "I am an ONLINE WAR client: send the room table now and again whenever it changes, and no hall lobby view." Marks the connection; the hall's lobby dump that went out at accept (§17.2 of the plan) is ignored by the module. |
+| `0x51` | `ROOMS` | `u8 count`, then per room `u8 id` (1..7), `u8 state` (0 open, 1 full, 2 starting, 3 in battle), `u8 seats`, `u8 players` (real people), `u8 bots`, `string terrain`, `string name`, `string row` | relay → client | The room table. `row` is the line the client shows in its list, formatted by the relay for the 64-column monospace list of the ONLINE WAR screen (`[map name] [terrain] [seats] [players] [bots] [status]`, plan §20.3); the structured fields are for a future client that formats itself. Sent as an answer to `LIST`, after every change of any room (players, bots, state) and after a refusal. |
+| `0x52` | `ENTER` | `u8 id` | client → relay | Join room `id`. The relay picks a free slot for the client **now** (a random seatable slot of that room, never 0, a fake in the way is moved - `Room.seatableSlots`), answers `0x54 ENTERING`, resets both sequence counters of the connection to 0 and runs the normal join sequence of §6.1 (`'d' 15, slot` + the room dump) as for a fresh connection. |
+| `0x53` | `REFUSED` | `string reason` | relay → client | The room cannot be entered (full, in battle, unknown id); a fresh `ROOMS` follows. |
+| `0x54` | `ENTERING` | `u8 slot` | relay → client | The last frame of the ONLINE WAR dialogue: everything after it belongs to the game's lobby client, starting with `'d'`. The module stops reading here and starts forwarding. |
+
+Keep-alives: while the room list is shown the module sends `'q'` every 700 ms like the lobby loop, so the hall's keep-alive deadline (`KEEPALIVE_TIMEOUT_MS`) applies unchanged.
+
 ---
 
 ## 5. Server behaviour (`server.c`)
@@ -347,6 +366,33 @@ Found while building the room-selection lobby of server 2.1 (Sep 2026; server pl
 * **The READY button is a checkbox.** Control 133 (`checkb 133` in MULTIE). Its click handler (`0x4115A9`–`0x411636`) sends `'h'(2, own)` on the checked event and `'h'(1, own)` on any other event, after a client-side refusal when the own colour is locked (`0x4272A8(ui, 0x85, 0)` at `0x411608`). Only the click and that refusal change the button's state. The `'h'` handler (`0x40F23C`) stores the status, maintains the colour-lock table (`ss+0x248`, `0x40F315`) and drives the **row** checkbox `16 + player` (`0x4272A8` at `0x40F38B`); the lobby refresh only enables or disables control 133 (`0x424514` at `0x40FF96`/`0x40FFC5`). No message can un-press the button.
 * **Screen layout** (`INTRFACE/MULTIE`): eight 16-character name fields (`in_text`, `immediate`), 6-character read-only type and race columns derived from the slot values, a 55-character map line (the `'i'` title, whose free part is 42 characters, §4.1), a 41 × 10 chat window and a 255-character chat input.
 * **Map names.** Every `SCENARIO/MPLAYER/*.SCN` starts with the terrain file, the base name and the display name that the host puts into the `'i'` title; Classic ships 56 maps (the table is `src/maps.js` of the server).
+
+### 6.9 ONLINE WAR: room selection in the exe, join with a relay-chosen slot (29 Sep 2026)
+
+The patched Dark Colony Ultimate exe has a main-menu button ONLINE WAR (id 8) whose handler lives in
+an appended code section `.dccode` (fix `online`, `DC16_DISPLAY_AND_RESOLUTION.md` §10.51). Flow:
+
+```
+exe module                                   relay (hall)
+  read DEFAULT_SERVER.TXT (host[:port], `plain`)
+  TCP connect, TLS handshake (Schannel) ---->|  (Fly terminates TLS on 8889 and forwards to 8888;
+  |<--- 'd' + hall dump (ignored) -----------|   a self-hosted relay listens itself, TLS_PORT/TLS_CERT/TLS_KEY)
+  |--- 0x50 LIST --------------------------->|
+  |<-- 0x51 ROOMS ---------------------------|  room screen (list, ENTER, BACK); 'q' every 700 ms
+  |<-- 0x51 ROOMS on every change -----------|
+  |--- 0x52 ENTER id ----------------------->|  slot = random seatable slot of the room
+  |<-- 0x54 ENTERING slot -------------------|  seqOut = seqIn = 0
+  |<-- 'd' 15, slot + room dump -------------|  (the stock §6.1 join, in one write)
+  module: listen on 127.0.0.1:<ephemeral>, start the proxy thread, call the game's own
+  network entry 0x40122C with host "127.0.0.1" and that port; the game connects to the proxy,
+  which pipes bytes both ways (encrypting/decrypting when TLS is on) until either side closes.
+```
+
+The game's connection through the proxy is a fresh stream for the game (its own sequence counters
+start at 0), which is why the relay resets its counters at `ENTERING`. Any `ROOMS` frame that was
+already in flight when `ENTER` was sent is consumed by the module, which reads frames until it sees
+`ENTERING`; plaintext that arrived in the same TLS record as `ENTERING` is handed to the proxy and
+forwarded first. `0x53 REFUSED` returns the module to the list.
 
 ## 7. Constants
 
