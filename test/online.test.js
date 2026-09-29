@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HallHarness, cmdsOf } from './helpers.js';
+import { encodeFrame } from '../src/frame.js';
 import { T, build, splitCommands, decode, ROOM_STATE, ROOM_STATE_TEXT, MAX_ROOM_ROW } from '../src/commands.js';
 import { STATE } from '../src/constants.js';
 import { rowText, HEADER, COLUMNS, roomEntry, roomsPayload, terrainName } from '../src/online.js';
@@ -184,4 +185,108 @@ test('cmdsOf decodes ROOMS entries with their rows', () => {
   const cmds = cmdsOf(roomsPayload(h.pool.rooms));
   assert.equal(cmds[0].rooms[1].name, 'Armageddon');
   assert.ok(cmds[0].rooms[1].row.startsWith('Armageddon'));
+});
+
+// The hand-over race (29 Sep 2026, maintainer: "when using online war connecting to a selected lobby, often I
+// have connection lost"; Fly log: "client left ... reason: sequence 12, expected 0" 60 ms after "online -> room").
+// The exe module sends 'q' every 700 ms and keeps doing so until it has READ ENTERING (one relay round trip after
+// ENTER), while the relay restarts the counter for the game's stream the moment it seats the client (F80): a
+// keep-alive in flight then arrived as the "game's first frame" with the module's sequence number.  Since F81 the
+// module's frames are stragglers until the game's first frame, whatever their sequence.
+test('hand-over: a module keep-alive arriving after ENTERING is dropped; the game\'s frame 0 is then accepted (F81)', () => {
+  const h = new HallHarness();
+  const p = h.enter('Exe');
+  p.take();
+  p.send(build.list());
+  for (let i = 0; i < 10; i++) p.keepalive(); // 7 s in the list: the module's counter is at 11
+  p.send(build.enter(1)); // sequence 11
+  const cmds = p.takeCmds();
+  const entering = cmds.find((c) => c.type === T.ENTERING);
+  assert.ok(entering);
+  const room = h.pool.rooms[0];
+  const client = room.slots[entering.id].client;
+  assert.equal(client.seqIn, 0);
+  // the keep-alive the module sent 100 ms after ENTER, before ENTERING reached it: module sequence 12
+  h.advance(100);
+  p.keepalive(); // sequence 12 - the frame that evicted the player before the fix
+  assert.ok(!p.gone, 'a straggler is not a sequence violation');
+  assert.equal(client.seqIn, 0, 'and it does not count');
+  assert.equal(client.firstMessageAt, 0, 'nor does it end the join grace of the game\'s own connection');
+  assert.ok(room.slots[entering.id].client === client, 'still seated');
+  // the game connects through the proxy and speaks from 0
+  h.advance(4000); // a 1920x1200 lobby screen takes 3-4.5 s to come up
+  h.tick();
+  assert.ok(!p.gone, 'the 15 s join grace applies, not the 3 s keep-alive deadline');
+  p.seq = 0;
+  p.cdReport();
+  assert.ok(!p.gone, 'the game\'s first frame, sequence 0, is accepted');
+  assert.equal(client.seqIn, 1);
+  assert.equal(client.firstMessageAt, 0, 'the CD report is a VAR: it does not start the keep-alive clock (F71)');
+  p.keepalive(); // sequence 1: the game's own keep-alive now counts as usual
+  assert.equal(client.seqIn, 2);
+  assert.notEqual(client.firstMessageAt, 0, "the game's first non-VAR frame starts it");
+  p.send(build.keepalive(), 7); // a real violation after the hand-over is still one
+  assert.ok(p.gone, 'strict sequence check again once the game speaks');
+});
+
+test('hand-over: a keep-alive in the same chunk as ENTER, a straggler that happens to carry sequence 0, and a second ENTER are all dropped', () => {
+  // same chunk: the module's keep-alive timer fired in the loop iteration right after the click
+  {
+    const h = new HallHarness();
+    const p = h.enter('Exe');
+    p.take();
+    p.send(build.list());
+    p.take();
+    p.raw(Buffer.concat([encodeFrame(build.enter(2), 1), encodeFrame(build.keepalive(), 2)]));
+    const cmds = p.takeCmds();
+    const entering = cmds.find((c) => c.type === T.ENTERING);
+    assert.ok(entering, 'seated');
+    const client = h.pool.rooms[1].slots[entering.id].client;
+    assert.ok(!p.gone);
+    assert.equal(client.firstMessageAt, 0, 'the straggler behind ENTER did not start the keep-alive clock');
+    assert.equal(client.seqIn, 0);
+    p.seq = 0;
+    p.cdReport();
+    assert.ok(!p.gone);
+    assert.equal(client.seqIn, 1);
+  }
+  // sequence 0 by chance (one case in 16): it must not be taken for the game's frame 0, or the real one is a "duplicate"
+  {
+    const h = new HallHarness();
+    const p = h.enter('Exe');
+    p.take();
+    p.send(build.list());
+    for (let i = 0; i < 13; i++) p.keepalive();
+    p.send(build.enter(1)); // sequence 14
+    p.take();
+    const client = h.pool.rooms[0].players()[0];
+    p.keepalive(); // sequence 15
+    p.keepalive(); // sequence 0 - two stragglers, the second with the number the game will use
+    assert.ok(!p.gone);
+    assert.equal(client.seqIn, 0);
+    p.seq = 0;
+    p.cdReport();
+    assert.equal(client.seqIn, 1, 'the game\'s frame 0 was read, not skipped as a duplicate');
+    assert.ok(!p.gone);
+  }
+  // a second ENTER click while the first answer is on its way
+  {
+    const h = new HallHarness();
+    const p = h.enter('Exe');
+    p.take();
+    p.send(build.list());
+    p.take();
+    p.send(build.enter(3));
+    p.take();
+    const room = h.pool.rooms[2];
+    const client = room.players()[0];
+    p.send(build.enter(3));
+    assert.ok(!p.gone, 'the repeated ENTER is dropped, not answered and not a violation');
+    assert.equal(room.players().length, 1);
+    assert.equal(p.take().length, 0, 'nothing was sent for it');
+    p.seq = 0;
+    p.cdReport();
+    assert.ok(!p.gone);
+    assert.equal(client.seqIn, 1);
+  }
 });

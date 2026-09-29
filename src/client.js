@@ -5,7 +5,7 @@
 // socket events are wired once and dispatched to whatever `owner` is at the time.
 
 import { FrameDecoder, encodeFrame, checkSeq, MAX_FRAME } from './frame.js';
-import { splitCommands } from './commands.js';
+import { splitCommands, T } from './commands.js';
 import { ChatView } from './chat.js';
 
 /**
@@ -65,6 +65,7 @@ export class Client {
     this.rows = null; // row texts last sent
     this.flags = null; // CD icons ("joinable") last sent
     this.online = false; // an ONLINE WAR client (sent 0x50 LIST): gets the room table, not the lobby view (plan §20)
+    this.handover = false; // set at ENTER: the module's stragglers (keep-alives) are dropped until the game's first frame (F81)
     this.roomsSent = null; // the ROOMS payload last sent to an online client
     this.chat = new ChatView(); // the client's lobby chat window as the server paints it (chat.js)
   }
@@ -130,6 +131,20 @@ export function readCommands(client, chunk, strictSeq) {
     return { batches, resyncs, error: `bad frame: ${err.message}` };
   }
   for (const frame of frames) {
+    let cmds;
+    try {
+      cmds = splitCommands(frame.payload);
+    } catch (err) {
+      return { batches, resyncs, error: `bad command: ${err.message}` };
+    }
+    // ONLINE WAR hand-over (plan F81): between the exe module's ENTER and its receipt of ENTERING the
+    // module keeps its 700 ms keep-alives going (a second ENTER click is possible too), and those frames
+    // reach the relay after `enter()` has restarted the counter for the game's own stream.  Until the
+    // game's first frame they are stragglers of the dialogue: dropped, whatever their sequence number.
+    if (client.handover) {
+      if (isModuleFrame(cmds)) continue;
+      client.handover = false;
+    }
     const verdict = checkSeq(client.seqIn, frame.seq);
     if (verdict === 'duplicate') continue;
     if (verdict === 'mismatch') {
@@ -137,11 +152,12 @@ export function readCommands(client, chunk, strictSeq) {
       resyncs.push({ got: frame.seq, expected: client.seqIn });
     }
     client.seqIn = (frame.seq + 1) & 15;
-    try {
-      batches.push({ seq: frame.seq, cmds: splitCommands(frame.payload) });
-    } catch (err) {
-      return { batches, resyncs, error: `bad command: ${err.message}` };
-    }
+    batches.push({ seq: frame.seq, cmds });
   }
   return { batches, resyncs, error: null };
+}
+
+/** A frame the ONLINE WAR module (not the game) can have sent: keep-alives, LIST, ENTER only. */
+export function isModuleFrame(cmds) {
+  return cmds.every((c) => c.type === T.KEEPALIVE || c.type === T.LIST || c.type === T.ENTER);
 }

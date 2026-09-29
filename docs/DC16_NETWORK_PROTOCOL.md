@@ -249,11 +249,11 @@ little-endian, strings NUL-terminated as in §3.1.
 |---|---|---|---|---|
 | `0x50` | `LIST` | — | client → relay | "I am an ONLINE WAR client: send the room table now and again whenever it changes, and no hall lobby view." Marks the connection; the hall's lobby dump that went out at accept (§17.2 of the plan) is ignored by the module. |
 | `0x51` | `ROOMS` | `u8 count`, then per room `u8 id` (1..7), `u8 state` (0 open, 1 full, 2 starting, 3 in battle), `u8 seats`, `u8 players` (real people), `u8 bots`, `string terrain`, `string name`, `string row` | relay → client | The room table. `row` is the line the client shows in its list, formatted by the relay for the 64-column monospace list of the ONLINE WAR screen (`[map name] [terrain] [seats] [players] [bots] [status]`, plan §20.3); the structured fields are for a future client that formats itself. Sent as an answer to `LIST`, after every change of any room (players, bots, state) and after a refusal. |
-| `0x52` | `ENTER` | `u8 id` | client → relay | Join room `id`. The relay picks a free slot for the client **now** (a random seatable slot of that room, never 0, a fake in the way is moved - `Room.seatableSlots`), answers `0x54 ENTERING`, resets both sequence counters of the connection to 0 and runs the normal join sequence of §6.1 (`'d' 15, slot` + the room dump) as for a fresh connection. |
+| `0x52` | `ENTER` | `u8 id` | client → relay | Join room `id`. The relay picks a free slot for the client **now** (a random seatable slot of that room, never 0, a fake in the way is moved - `Room.seatableSlots`), answers `0x54 ENTERING`, resets both sequence counters of the connection to 0 and runs the normal join sequence of §6.1 (`'d' 15, slot` + the room dump) as for a fresh connection. **From `ENTER` until it has read the answer (`ENTERING` or `REFUSED`) the module sends nothing - no keep-alive, no second `ENTER`** (29 Sep 2026, plan F81): the relay restarts its counter the moment it seats the client, so any module frame still in flight would be read as the game's first frame and fail the sequence check (`sequence N, expected 0`, the "connection lost" of the first day). The relay in turn drops module-only frames (keep-alive, `LIST`, `ENTER`) that arrive after `ENTERING` until the game's first frame, whatever their sequence number, so an exe built before the fix joins too. |
 | `0x53` | `REFUSED` | `string reason` | relay → client | The room cannot be entered (full, in battle, unknown id); a fresh `ROOMS` follows. |
 | `0x54` | `ENTERING` | `u8 slot` | relay → client | The last frame of the ONLINE WAR dialogue: everything after it belongs to the game's lobby client, starting with `'d'`. The module stops reading here and starts forwarding. |
 
-Keep-alives: while the room list is shown the module sends `'q'` every 700 ms like the lobby loop, so the hall's keep-alive deadline (`KEEPALIVE_TIMEOUT_MS`) applies unchanged.
+Keep-alives: while the room list is shown the module sends `'q'` every 700 ms like the lobby loop, so the hall's keep-alive deadline (`KEEPALIVE_TIMEOUT_MS`) applies unchanged. They stop with `ENTER` and resume only after a `REFUSED` (F81); the relay's join grace (`JOIN_TIMEOUT_MS`, restarted at `ENTER`) covers the round trip and the game's own connection.
 
 ---
 
@@ -393,6 +393,18 @@ start at 0), which is why the relay resets its counters at `ENTERING`. Any `ROOM
 already in flight when `ENTER` was sent is consumed by the module, which reads frames until it sees
 `ENTERING`; plaintext that arrived in the same TLS record as `ENTERING` is handed to the proxy and
 forwarded first. `0x53 REFUSED` returns the module to the list.
+
+**The hand-over race (29 Sep 2026, F81).** The first module kept its 700 ms keep-alives running
+between `ENTER` and its receipt of `ENTERING` (one relay round trip, 200-400 ms to Fly), so about every
+other join a `'q'` with the module's sequence number reached the relay after `enter()` had reset
+`seqIn` to 0 for the game's stream: `client left ... reason: sequence 12, expected 0` 60 ms after
+`online -> room`, "connection lost" in the game. Both sides changed: the module is silent from `ENTER`
+until the answer (a second ENTER click is ignored too), and the relay treats module-only frames
+(keep-alive, `LIST`, `ENTER`) that arrive after `ENTERING` as stragglers - dropped without a sequence
+check, not counted, not ending the join grace - until the game's first frame (`client.handover`,
+`isModuleFrame` in `client.js`; same-chunk stragglers in `hall.onData`). A straggler whose number
+happens to be 0 would otherwise have been taken for the game's frame 0 and the real one skipped as a
+duplicate.
 
 ## 7. Constants
 

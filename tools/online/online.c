@@ -868,7 +868,7 @@ static void status(void* ip, const char* text) {
 static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_msg, int* slot) {
     void* pool = *(void**)((unsigned char*)ui + GAME_UI_POOL_OFF);
     void* ip;
-    int result = 0, connected = 0, lost = 0, arg = 0;
+    int result = 0, connected = 0, lost = 0, arg = 0, entering = 0;
     DWORD last_keepalive = 0;
     const char* empty[1];
     empty[0] = "";
@@ -913,8 +913,11 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
                 g_set_text(ip, W_STATUS, g_status); lost = 1; stream_close(g_st);
             } else if (ev == 3) { result = 1; break; }
             else if (ev == 1) { g_list_set(ip, W_LIST, g_rowptr, g_room_count); }
-            else if (ev == 2) { g_set_text(ip, W_STATUS, g_status); }
-            if (!lost && (DWORD)(W.GetTickCount() - last_keepalive) >= KEEPALIVE_MS) {
+            else if (ev == 2) { g_set_text(ip, W_STATUS, g_status); entering = 0; }
+            /* Nothing goes out between ENTER and ENTERING: the relay restarts its sequence counter for the
+               game's own stream the moment it seats us, so a keep-alive still in flight would be read as the
+               game's first frame and get the connection dropped ("sequence N, expected 0"; plan F81). */
+            if (!lost && !entering && (DWORD)(W.GetTickCount() - last_keepalive) >= KEEPALIVE_MS) {
                 unsigned char q = M_KEEPALIVE;
                 last_keepalive = W.GetTickCount();
                 if (!send_command(g_st, &q, 1)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
@@ -926,6 +929,7 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
             if (arg == W_ENTER) {
                 int sel = g_list_sel(ip, W_LIST);
                 if (lost || !connected) status(ip, cfg_err ? cfg_msg : "Not connected. Press BACK and try again.");
+                else if (entering) { /* the answer is on its way; a second ENTER would be a straggler too */ }
                 else if (sel < 0 || sel >= g_room_count) status(ip, "Select a room first.");
                 else {
                     unsigned char cmd[2];
@@ -933,6 +937,7 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
                     scopy(g_status, "Entering room ", sizeof g_status); scat_uint(g_status, g_rooms[sel].id, sizeof g_status); scat(g_status, "...", sizeof g_status);
                     g_set_text(ip, W_STATUS, g_status);
                     if (!send_command(g_st, cmd, 2)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
+                    else entering = 1;
                 }
             }
         } else if (kind == 0) {

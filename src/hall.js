@@ -20,7 +20,7 @@ import { randomInt } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { T, build, decode, typeName, sanitizeText, sanitizeName, MAX_NAME } from './commands.js';
 import { STATE, SLOT_TYPE, SLOTS, VAR_DEFAULTS } from './constants.js';
-import { Client, readCommands, packPayloads } from './client.js';
+import { Client, readCommands, packPayloads, isModuleFrame } from './client.js';
 import { formatScenarioTitle } from './config.js';
 import { VERSION_SHORT } from './version.js';
 import { roomsPayload, enterBlocker } from './online.js';
@@ -281,12 +281,16 @@ export class Hall {
       // lobby screen has loaded; keep-alives start only with the lobby loop, which at 1920x1200 is 3-4.5 s
       // later (28 Sep 2026, F71).  So that report does not end the join grace: the keep-alive clock starts
       // with the first command that is not a VAR.
-      if (!client.firstMessageAt && b.cmds.some((c) => c.type !== T.VAR)) client.firstMessageAt = now;
       if (client.owner !== this) {
-        // moved into a room by an earlier frame of the same chunk
-        client.owner.dispatch(client, b.cmds, now);
+        // Moved into a room by an earlier frame of the same chunk (ENTER): the frames behind it in that
+        // chunk are the exe module's own (its keep-alive fired with the click), never the game's - the
+        // game connects only once the module has read ENTERING.  Dropped, so that they neither reach
+        // the room nor end the join grace that `enter()` just restarted (F81).
+        if (isModuleFrame(b.cmds)) continue;
+        client.owner.strike(client, `${typeName(b.cmds[0].type)} before the game's own stream`);
         continue;
       }
+      if (!client.firstMessageAt && b.cmds.some((c) => c.type !== T.VAR)) client.firstMessageAt = now;
       if (this.log.level === 'debug') this.trace(client, b.seq, b.cmds);
       this.handle(client, b.cmds, now);
     }
@@ -469,6 +473,7 @@ export class Hall {
     client.seqOut = 0;
     client.seqIn = 0;
     client.online = false;
+    client.handover = true; // the module's keep-alives still in flight are dropped until the game's first frame (F81)
     client.firstMessageAt = 0; // the game's own connection starts now: its first lobby message gets the join grace again (F71)
     client.joinedAt = this.now();
     this.log.info('online -> room', { id: client.id, slot, name: client.name, room: room.id, waiting: this.clients.size });

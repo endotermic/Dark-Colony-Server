@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **ONLINE WAR hand-over race** (29 Sep 2026, maintainer report "often connection lost" when entering a
+  room; plan F81): the exe module's 700 ms keep-alive kept going between `ENTER` and its receipt of
+  `ENTERING`, while the relay had already reset the sequence counter for the game's own stream, so the
+  keep-alive in flight was read as the game's first frame and the player evicted (`sequence N,
+  expected 0`). The relay now drops module-only frames (keep-alive, `LIST`, `ENTER`) that arrive after
+  `ENTERING` until the game's first frame, without a sequence check (`client.handover`); the module
+  (game repo, Ultimate `d970597f…`) is silent from `ENTER` until the answer. Two tests.
 - **ONLINE WAR** (29 Sep 2026, maintainer; plan §20, protocol doc §4.4 / §6.9): five relay-only
   messages for the patched Dark Colony Ultimate exe - `0x50 LIST` asks for the room table, `0x51 ROOMS`
   carries it (id, state, seats, players, bots, terrain, name and the ready-made 64-column list row,
