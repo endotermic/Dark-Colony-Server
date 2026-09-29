@@ -117,6 +117,8 @@ def hd_data(g, mode=None):
         if name.upper().endswith('.SPR'):
             files.append('INTRF_HD\\' + name)           # the console-style banks ship as they are (hud_console.py, doc 10.49)
             continue
+        if name.upper() in ('ONLINE', 'ONLINEBG.GIF'):
+            continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51)
         src = os.path.join(GAME_DIR[g], 'INTRFACE', name)
         assert os.path.exists(src), src
         files.append('INTRFACE\\' + name)
@@ -2649,7 +2651,9 @@ function Write-MusicDialogs([string] $GameDir, [string] $Mode) {
 # MFONTO5, 8 px each), scroll bar / UP / DOWN and their plates 56 px further right, a read-only header
 # line above the list and a status line below it (in_text 30 / 17), the title "Online War", the buttons
 # ENTER / BACK, the save-mode widgets (label 18, pushb 21, the groups, textmsg 4 / 5) and the scope
-# animation (gadget 11, which repainted over the header) removed.  Idempotent on its own output.
+# animations (gadgets 11 and 14, which repainted over the header and the status line) removed, the
+# background line pointing at ONLINEBG.GIF (LOADER.GIF with a grey frame around the text lines); a server line (in_text 31, "Server: host:port") above the status line and the title label centred in its panel (list x - 50, 318 wide).
+# Idempotent on its own output.
 function Edit-OnlineScript([string] $Text) {
     $m = [regex]::Match($Text, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s')
     if (-not $m.Success) { throw 'LOADGE: no list 0 line' }
@@ -2661,10 +2665,12 @@ function Edit-OnlineScript([string] $Text) {
         $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
         $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
         $w = [regex]::Match($line, '^\s*(\w+)\s+(\d+)\s')
+        $bgm = [regex]::Match($line, '^\s*background\s+\S+/\S+\s*$')
+        if ($bgm.Success) { $out.Add(([regex]::Replace($line, '(\S+/)\S+\s*$', '${1}onlinebg')) + $cr); continue }
         if ($w.Success) {
             $kind = $w.Groups[1].Value; $id = [int]$w.Groups[2].Value
             $drop = ($kind -eq 'label' -and $id -eq 18) -or ($kind -eq 'pushb' -and $id -eq 21) -or ($kind -eq 'group') -or
-                    ($kind -eq 'textmsg' -and ($id -eq 4 -or $id -eq 5)) -or ($kind -eq 'in_text' -and $id -eq 30) -or ($kind -eq 'gadget' -and $id -eq 11)
+                    ($kind -eq 'textmsg' -and ($id -eq 4 -or $id -eq 5)) -or ($kind -eq 'in_text' -and ($id -eq 30 -or $id -eq 31)) -or ($kind -eq 'gadget' -and ($id -eq 11 -or $id -eq 14))
             if ($drop) { continue }
             if ($kind -eq 'list' -and $id -eq 0) { $line = Set-ScriptTokens $line @{ 6 = '448' } }
             elseif ((-not $already) -and (($kind -eq 'scroll' -and $id -eq 1) -or ($kind -eq 'pushb' -and ($id -eq 2 -or $id -eq 3)) -or ($kind -eq 'gadget' -and ($id -eq 7 -or $id -eq 8)))) {
@@ -2672,10 +2678,12 @@ function Edit-OnlineScript([string] $Text) {
                 $line = Set-ScriptTokens $line @{ 4 = [string]($x + 56) }
             }
             elseif ($kind -eq 'in_text' -and $id -eq 17) {
-                $out.Add(('in_text  17  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 8)) + $cr)
+                $out.Add(('in_text  31  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 8)) + $cr)
+                $out.Add(('in_text  17  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 24)) + $cr)
                 $out.Add(('in_text  30  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly - 18)) + $cr)
                 continue
             }
+            elseif ($kind -eq 'label' -and $id -eq 6) { $line = Set-ScriptTokens $line @{ 4 = [string]($lx - 50); 6 = '318' } }
             elseif ($kind -eq 'textmsg' -and $id -eq 1) { $line = Get-TextmsgLine 1 'Online War' }
             elseif ($kind -eq 'textmsg' -and $id -eq 2) { $line = Get-TextmsgLine 2 'ENTER' }
         }
@@ -2697,6 +2705,37 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     if (-not $dst) { $dst = Join-Path (Join-Path $GameDir $sub) 'ONLINE' }
     Write-Latin1 $dst $t
     $lines = @(('wrote {0}\ONLINE (the ONLINE WAR room screen, derived from LOADGE)' -f $sub))
+    # the background: LOADER.GIF with a grey frame around the server and status lines (patch_online.online_background:
+    # a 3-px tube in the palette's greys 35 / 106 / 35, a 2-px black gap, black inside, corner pixels off)
+    $loader = Find-CI (Join-Path $GameDir $sub) 'LOADER.GIF'
+    if (-not $loader) { throw 'LOADER.GIF is missing' }
+    Initialize-GifCodec    # at 640x480 no interface set is built, so the codec may not be compiled yet
+    $lm = [regex]::Match($t, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+\d+\s+(\d+)\s')
+    $lx = [int]$lm.Groups[1].Value; $ly = [int]$lm.Groups[2].Value; $lh = [int]$lm.Groups[3].Value
+    $im = [DcGif]::Decode([System.IO.File]::ReadAllBytes($loader))
+    $greyIdx = foreach ($g in 35, 106, 35, 0) {
+        $best = -1; $bestD = 999
+        for ($i = 0; $i -lt 256; $i++) {
+            $r = $im.Palette[3 * $i]
+            if ($r -eq $im.Palette[3 * $i + 1] -and $r -eq $im.Palette[3 * $i + 2] -and [Math]::Abs([int]$r - $g) -lt $bestD) { $bestD = [Math]::Abs([int]$r - $g); $best = $i }
+        }
+        $best
+    }
+    $x0 = $lx - 6; $y0 = $ly + $lh + 2; $x1 = $lx + 448 + 6; $y1 = $ly + $lh + 46
+    $px = $im.Pixels
+    for ($y = $y0; $y -lt $y1; $y++) {
+        for ($x = $x0; $x -lt $x1; $x++) {
+            if (($x -eq $x0 -or $x -eq ($x1 - 1)) -and ($y -eq $y0 -or $y -eq ($y1 - 1))) { continue }
+            $d = [Math]::Min([Math]::Min($x - $x0, $x1 - 1 - $x), [Math]::Min($y - $y0, $y1 - 1 - $y))
+            $v = if ($d -lt 3) { $greyIdx[$d] } else { $greyIdx[3] }
+            $px[$y * $im.Width + $x] = [byte]$v
+        }
+    }
+    $bgOut = [DcGif]::Encode('GIF87a', $im.Width, $im.Height, $im.Palette, $px)
+    $bgDst = Find-CI (Join-Path $GameDir $sub) 'ONLINEBG.GIF'
+    if (-not $bgDst) { $bgDst = Join-Path (Join-Path $GameDir $sub) 'ONLINEBG.GIF' }
+    [System.IO.File]::WriteAllBytes($bgDst, $bgOut)
+    $lines += ('wrote {0}\ONLINEBG.GIF (the screen background: LOADER.GIF with the grey frame around the text lines)' -f $sub)
     if (-not (Find-CI $GameDir 'DEFAULT_SERVER.TXT')) {
         Write-Latin1 (Join-Path $GameDir 'DEFAULT_SERVER.TXT') $DefaultServerText
         $lines += 'wrote DEFAULT_SERVER.TXT (dark-colony-server.fly.dev; an existing file is never overwritten)'

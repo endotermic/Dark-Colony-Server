@@ -19,7 +19,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   `tools/patch_online.py` + `tools/online/online.c` (Dark Colony Ultimate only; doc §10.51): the ONLINE
   WAR button, the room screen, `DEFAULT_SERVER.TXT`, TLS through Windows Schannel and the loopback
   proxy that lets the stock lobby and battle code run over the encrypted connection. Confirmed in game
-  against a local relay and against Fly.
+  against a local relay and against Fly. Same day, maintainer corrections to the screen: the title
+  centred in its panel, a "Server: host:port" line above the connection-state line, both inside a grey
+  frame drawn into the screen's background (`ONLINEBG.GIF`).
 - **Bottom bar filler is a bevel plate** (28 Sep 2026, maintainer report "black line right over comment
   creation line"; doc §10.45): at the sizes whose bar absorbs spare rows (1280x720, 1920x1080, 1920x1200)
   `tools/hud_layout.py` fills them with the bar's own frame rows instead of its black top rows; the shipped

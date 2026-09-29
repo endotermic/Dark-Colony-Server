@@ -58,8 +58,9 @@
 #define W_LIST    0
 #define W_BACK    4
 #define W_ENTER   5
-#define W_STATUS  17
-#define W_HEADER  30
+#define W_STATUS  17   /* second line under the list: the connection state            */
+#define W_HEADER  30   /* the column header above the list                            */
+#define W_SERVER  31   /* first line under the list: "Server: host:port"              */
 
 /* protocol */
 #define M_LIST      0x50
@@ -880,11 +881,14 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
     g_set_text(ip, W_HEADER, HEADER_TEXT);
     g_list_set(ip, W_LIST, empty, 0);
     if (cfg_err) {
+        g_set_text(ip, W_SERVER, "Server: none (see DEFAULT_SERVER.TXT)");
         status(ip, cfg_msg);
         lost = 1;
     } else {
-        scopy(g_status, "Connecting to ", sizeof g_status); scat(g_status, c->host, sizeof g_status); scat(g_status, ":", sizeof g_status);
-        scat_uint(g_status, c->port, sizeof g_status); scat(g_status, c->plain ? " (no encryption)..." : " (TLS)...", sizeof g_status);
+        char server[160];
+        scopy(server, "Server: ", sizeof server); scat(server, c->host, sizeof server); scat(server, ":", sizeof server); scat_uint(server, c->port, sizeof server);
+        g_set_text(ip, W_SERVER, server);
+        scopy(g_status, c->plain ? "Connecting (no encryption)..." : "Connecting (TLS)...", sizeof g_status);
         g_set_text(ip, W_STATUS, g_status);
         g_pump(ip, &arg);   /* paint the status before the blocking connect */
         if (connect_relay(g_st, c)) {
