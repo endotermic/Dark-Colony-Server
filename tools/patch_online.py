@@ -39,7 +39,7 @@ the buttons ENTER / BACK, a server line above the status line, the title centred
 save-mode widgets and the two animations over the header and status lines removed - written as
 INTRF_HD/ONLINE from INTRF_HD/LOADGE at the HD sizes and as INTRFACE/ONLINE from INTRFACE/LOADGE at
 640x480 (the module probes for intrf_hd\\ONLINE, so one exe serves every size), with its background
-ONLINEBG.GIF = LOADER.GIF plus a grey frame around the two text lines (Pillow); and DEFAULT_SERVER.TXT beside the exe,
+ONLINEBG.GIF = LOADER.GIF plus grey frames around the header + list, the scroll bar and the two text lines (Pillow); and DEFAULT_SERVER.TXT beside the exe,
 written only when it is missing (a player's edit is never overwritten).  The patcher
 (Apply-DarkColonyPatches.ps1, Write-OnlineScreen) does the same in PowerShell.
 """
@@ -73,7 +73,16 @@ BG_NAME = 'onlinebg'                         # the screen's background: LOADER.G
 # 106/107, 35 - a 2-px black gap and a black interior, corners rounded by one pixel; LOADER.GIF's palette has
 # 35 and 106 (indices found by value), 6 px outside the list's columns, from list bottom + 2 to + 46
 FRAME_GREYS = (35, 106, 35)
-FRAME_MARGIN_X, FRAME_TOP, FRAME_BOTTOM = 6, 2, 46
+# Three frames (maintainer, same day: "headers section and maps section must be wrapped into a gray frame as
+# it is done on the other forms. scroll bar must be wrapped as it is done on the other forms"), all relative to
+# the list rect (lx, ly, 448, lh); B = ly + lh = the list's bottom:
+#   list frame   x lx-6 .. lx+454, y ly-22 .. B+3       (the column header in_text 30 at ly-16 sits inside)
+#   scroll frame x ux-4 .. ux+30,  y ly .. B+2          (ux = lx+460 = the UP/DOWN buttons' x; UP at ly+4, DOWN at B-28)
+#   text frame   x lx-6 .. lx+454, y B+8 .. B+52        (server line at B+14, state line at B+30)
+FRAME_MARGIN_X = 6
+HEADER_DY, LIST_TOP_DY, LIST_BOTTOM_DY = -16, -22, 3
+SCROLL_DX, SCROLL_W = 12, 26
+TEXT_TOP_DY, SERVER_DY, STATUS_DY, TEXT_BOTTOM_DY = 8, 14, 30, 52
 
 DEFAULT_SERVER_TEXT = """/*
  * DEFAULT_SERVER.TXT - the relay server that ONLINE WAR connects to.
@@ -493,9 +502,9 @@ def online_script(src):
     texts = {1: b'Online War', 2: b'ENTER'}
     # below the list: the server line (host:port) and, under it, the status line (maintainer, 29 Sep 2026:
     # "server name must be mentioned as a first line of two right above [the] TLS connection")
-    server_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_SERVER, lx, ly + lh + 8, ROW_CHARS)
-    status_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_STATUS, lx, ly + lh + 24, ROW_CHARS)
-    header_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_HEADER, lx, ly - 18, ROW_CHARS)
+    server_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_SERVER, lx, ly + lh + SERVER_DY, ROW_CHARS)
+    status_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_STATUS, lx, ly + lh + STATUS_DY, ROW_CHARS)
+    header_line = b'in_text  %d  0  %d  %d   %d    1  0  -  read_only' % (W_HEADER, lx, ly + HEADER_DY, ROW_CHARS)
     out = []
     for raw in src.split(b'\n'):
         line, cr = (raw[:-1], b'\r') if raw.endswith(b'\r') else (raw, b'')
@@ -540,9 +549,15 @@ def grey_index(palette, value):
     return best[1]
 
 
-def frame_rect(lx, ly, lh):
-    """(x0, y0, x1, y1) of the frame around the server and status lines (x1/y1 exclusive)."""
-    return lx - FRAME_MARGIN_X, ly + lh + FRAME_TOP, lx + LIST_WIDTH_NEW + FRAME_MARGIN_X, ly + lh + FRAME_BOTTOM
+def frame_rects(lx, ly, lh):
+    """The three frames as (x0, y0, x1, y1), x1/y1 exclusive: header + list, scroll bar with its buttons, the two text lines."""
+    b = ly + lh
+    ux = lx + LIST_WIDTH_NEW + SCROLL_DX
+    return [
+        (lx - FRAME_MARGIN_X, ly + LIST_TOP_DY, lx + LIST_WIDTH_NEW + FRAME_MARGIN_X, b + LIST_BOTTOM_DY),
+        (ux - 4, ly, ux + SCROLL_W + 4, b + 2),
+        (lx - FRAME_MARGIN_X, b + TEXT_TOP_DY, lx + LIST_WIDTH_NEW + FRAME_MARGIN_X, b + TEXT_BOTTOM_DY),
+    ]
 
 
 def draw_frame(pixels, width, x0, y0, x1, y1, greys, black):
@@ -572,7 +587,8 @@ def online_background(gif_bytes, lx, ly, lh):
         pixels = bytearray(im.tobytes())
     greys = [grey_index(palette, g) for g in FRAME_GREYS]
     black = grey_index(palette, 0)
-    draw_frame(pixels, w, *frame_rect(lx, ly, lh), greys, black)
+    for rect in frame_rects(lx, ly, lh):
+        draw_frame(pixels, w, *rect, greys, black)
     out = Image.frombytes('P', (w, h), bytes(pixels))
     out.putpalette(palette)
     buf = io.BytesIO()
