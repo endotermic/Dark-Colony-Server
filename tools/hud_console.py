@@ -1419,6 +1419,9 @@ LABEL_X, LABEL_W, MINUS_X, VALUE_X, PLUS_X = 27, 116, 161, 188, 265     # label 
 OPTION_TEXT_DY, OPTION_ARROW_DY = 1, 0
 OK_ID, CANCEL_ID, OK_X, CANCEL_X = 56, 55, 158, 56   # CANCEL left, OK right (LOADGE: BACK left, LOAD right)
 OK_MSG, CANCEL_MSG = 7, 8
+LARGE_BUTTON_CELL, LARGE_X = 26, 62                 # KNOBE 0 (180x26) copied into POPP: the quit dialog's two buttons, centred at row + 62
+QUIT_NO_ID, QUIT_YES_MSG, QUIT_NO_MSG = 57, 2, 3   # pushb 57 = NO, CONTINUE; the texts are the quit dialog's textmsg 2 / 3
+OK_CENTRE_X = 107                                   # a lone OK button (objectives) centred on the row
 BOX_CELLS = {VALUE_BOX_CELL: (VALUE_BOX_W, BOX_H), NAME_BOX_CELL: (NAME_BOX_W, BOX_H), HEADER_CELL: (HEADER_W, HEADER_H),
              ROW_STRIP_CELL: (STRIP_W, STRIP_H)}
 
@@ -1563,6 +1566,8 @@ def build_popp(game):
     cells.append(dict(w=STRIP_W, h=STRIP_H, ox=0, oy=0, px=option_strip().px))                    # 23: one option row's capsules
     for kind in (BLANK_ROW, BLANK_TOP):                     # 24 / 25: the rows under the header box
         cells.append(dict(w=ROW_W, h=ROW_H, ox=0, oy=0, px=_dialog_row(kind).px))
+    c = knobe[0]                                            # 26: the lobby's 180x26 text button (LARGEBUTTON) for the quit dialog
+    cells.append(dict(w=c['w'], h=c['h'], ox=0, oy=0, px=bytearray(c['px'])))
     return popp['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
 
 
@@ -1666,21 +1671,25 @@ def _pushb_cell(t):
 def console_dialog(data):
     """Lay a battlefield dialog script out on the console plates of POPP.SPR (a script naming
     `intrf_hd/popp`; anything else is returned unchanged).  Idempotent and position-derived, so the
-    tool chain and the patcher may run it in any order and any number of times:
+    tool chain and the patcher may run it in any order and any number of times.  Every dialog is a
+    form (doc 10.54, DC16_INTERFACE_STYLE_GUIDE.md §6): rows 0..2 are blank rows (cells 25 / 24)
+    under the header box (cell 19) with the title as a font-1 (MFONTO2) label inside it, the red
+    title / label plates (cell 6) are dropped, the buttons are the lobby's text buttons (cell 20,
+    90x26, or cell 26, 180x26, `label centre`), font 0 is MFONTO5 and the hover brightness is on.
 
     * list rows (cells 3 / 4 / 5): the `list` sits in the list window (x row + 10, y top row + 4,
       down to the bottom row + 11), the UP / DOWN plates (pushb cells 10 / 11 bound to the list) in
       the scroll channel at x row + 277 (UP top row + 5, DOWN bottom row - 5) and the `scroll` bar
-      between them (x row + 280, 10 px wide);
-    * an `in_text` without a "-" / "+" pair (the save name): its two rows become plain rows
-      (cell 1) and a name box picture (cell 15, 264x24) is laid over them at (row + 6, top row + 4),
-      the in_text at (row + 14, top row + 10);
-    * a dialog with "-" / "+" pairs (the options dialog) is an options form (doc 10.54, the
-      pre-battle menus' pattern): rows 3..last are one framed panel (cells 16 / 17 / 18), the title
-      a large-font label centred in a header box (cell 19) over rows 1-2, every option a plain
-      left-aligned label with the value between KNOBE's 14x14 arrows (cells 21 / 22) at the right,
-      OK / CANCEL two 90x26 text buttons (cell 20) at the panel's bottom; `bright_pushed 8` /
-      `bright_highlight 4`, font 0 MFONTO5, font 1 MFONTO2;
+      between them (x row + 280, 10 px wide); OK (id 56) / CANCEL (id 55) are 90x26 text buttons at
+      x row + 158 / + 56 (a lone OK centred at + 107) on their own y;
+    * an `in_text` without a "-" / "+" pair (the save name): its two rows become blank rows and a
+      name box picture (cell 15, 264x24) is laid over them at (row + 6, top row + 4), the in_text at
+      (row + 14, top row + 10);
+    * a dialog with "-" / "+" pairs (the options dialog): rows 3..last are one framed panel (cells
+      16 / 17 / 18), every option a capsule strip (cell 23) with its label, the value between KNOBE's
+      arrows (cells 21 / 22) and CANCEL / OK under the last option;
+    * the quit dialog (pushb 57 present): two 180x26 text buttons (cell 26) at x row + 62 with the
+      YES, QUIT / NO, CONTINUE texts (textmsg 2 / 3), the two label widgets that carried them dropped;
     * box pictures are regenerated on every pass (old ones dropped), numbered with the lowest free
       widget ids from 23 in y order and inserted as one block after the last picture line."""
     if not re.search(rb'(?im)^[ \t]*pictures[ \t]+intrf_hd/popp\b', data):
@@ -1702,6 +1711,7 @@ def console_dialog(data):
     drop = set()                                 # line indices to drop
     boxes = []                                   # (y, x, cell)
     minus = [(int(t[3]), int(t[4])) for k, n, t in rec.values() if k == b'pushb' and _pushb_cell(t) in (12, MINUS_CELL)]
+    quit_form = any(k == b'pushb' and n == QUIT_NO_ID for k, n, t in rec.values())
     # lists with their scroll channel
     for i, (k, n, t) in rec.items():
         if k != b'list':
@@ -1720,19 +1730,29 @@ def console_dialog(data):
             elif k2 == b'pushb' and b'list' in t2[8:] and _pushb_cell(t2) in (10, 11) and top - ROW_H <= int(t2[4]) <= bottom + ROW_H:
                 up = _pushb_cell(t2) == 10
                 changes[j] = {4: b'%d' % (row_x + ARROW_X), 5: b'%d' % ((top + ARROW_TOP_DY) if up else (bottom + ARROW_BOTTOM_DY))}
+    # the form frame every dialog shares: blank rows under the header box, the title inside it, no red plates
+    ordered = sorted(rows, key=lambda r: r[1])
+    y0 = ordered[0][1]
+    for idx, (li, y, x, c) in enumerate(ordered[:3]):
+        changes.setdefault(li, {})[8] = b'%d' % (BLANK_TOP if idx == 0 else BLANK_ROW)
+    boxes.append((y0 + HEADER_DY, row_x + HEADER_X, HEADER_CELL))
+    band = {my: k for k, (mx, my) in enumerate(sorted(minus, key=lambda p: p[1]))}
+
+    def option_of(ty):
+        for my, k in band.items():
+            if abs(my - ty) <= 8:
+                return k
+        return None
+    for i, (k, n, t) in rec.items():
+        if k == b'picture' and len(t) >= 8 and t[7] == b'6':          # the red title / label plates
+            drop.add(i)
+        elif k == b'label' and b'centre' in t and option_of(int(t[4])) is None:     # the title
+            changes[i] = {4: b'%d' % (row_x + HEADER_X + TITLE_X_INSET), 5: b'%d' % (y0 + HEADER_DY + TITLE_Y),
+                          6: b'%d' % (HEADER_W - 2 * TITLE_X_INSET), 7: b'%d' % TITLE_H, 13: b'1'}
     if minus:
-        _options_layout(lines, rec, rows, row_x, sorted(minus, key=lambda p: p[1]), changes, rebuilt, drop, boxes)
+        _options_layout(rec, ordered, row_x, sorted(minus, key=lambda p: p[1]), option_of, changes, rebuilt, boxes)
     else:
-        for i, (k, n, t) in rec.items():
-            if k != b'in_text':
-                continue
-            ty = int(t[4])
-            top = max(y for _, y, _, _ in rows if y <= ty)
-            for li, y, _, c in rows:
-                if y in (top, top + ROW_H) and c in LIST_CELLS:
-                    changes.setdefault(li, {})[8] = b'1'
-            boxes.append((top + LIST_TOP_DY, row_x + NAME_BOX_X, NAME_BOX_CELL))
-            changes[i] = {4: b'%d' % (row_x + NAME_TEXT_DX), 5: b'%d' % (top + NAME_TEXT_DY)}
+        _list_form(rec, rows, row_x, quit_form, changes, rebuilt, drop, boxes)
     # apply the changes, drop the old box pictures, insert the new ones after the last picture line
     out, last_picture, used = [], None, set()
     for i, raw in enumerate(lines):
@@ -1754,33 +1774,25 @@ def console_dialog(data):
     new = [b'picture  %d  0  %d   %d  %d  %d   %d' % ((next(ids), x, y) + BOX_CELLS[c] + (c,)) + cr
            for y, x, c in sorted(boxes)]
     out = out[:last_picture + 1] + new + out[last_picture + 1:]
-    if minus:
-        out = _options_header(out)
-    return b'\n'.join(out)
+    return b'\n'.join(_form_header(out, ok_cancel=not quit_form, body_font=bool(minus)))
 
 
-def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxes):
-    """The options form (doc 10.54): see console_dialog.  `minus` = the "-" buttons (x, y) in y order."""
-    ordered = sorted(rows, key=lambda r: r[1])
+def _text_button(n, x, y, w, cell, msg):
+    return b'pushb    %d  0  %d  %d   %d  26  -11 %d  label centre %d 2  -  remap 0' % (n, x, y, w, cell, msg)   # font 2 = MFONTO5
+
+
+def _options_layout(rec, ordered, row_x, minus, option_of, changes, rebuilt, boxes):
+    """The options form (doc 10.54): rows 3..last one framed panel, a capsule strip per option with
+    the label, the value and KNOBE's arrows, CANCEL / OK under the last option."""
     y0 = ordered[0][1]
     for idx, (li, y, x, c) in enumerate(ordered):
-        cell = BLANK_TOP if idx == 0 else BLANK_ROW if idx < 3 else PANEL_TOP if idx == 3 else PANEL_BOTTOM if idx == len(ordered) - 1 else PANEL_MID
-        changes.setdefault(li, {})[8] = b'%d' % cell
-    boxes.append((y0 + HEADER_DY, row_x + HEADER_X, HEADER_CELL))
+        if idx >= 3:
+            changes.setdefault(li, {})[8] = b'%d' % (PANEL_TOP if idx == 3 else PANEL_BOTTOM if idx == len(ordered) - 1 else PANEL_MID)
     for k in range(len(minus)):
         boxes.append((y0 + OPTION_DY + OPTION_PITCH * k + STRIP_DY, row_x + STRIP_X, ROW_STRIP_CELL))
-    band = {my: k for k, (mx, my) in enumerate(minus)}
-
-    def option_of(ty):
-        for my, k in band.items():
-            if abs(my - ty) <= 8:
-                return k
-        return None
     for i, (k, n, t) in rec.items():
         ty = int(t[4])
-        if k == b'picture' and len(t) >= 8 and t[7] == b'6':          # the red title / label plates
-            drop.add(i)
-        elif k == b'pushb' and _pushb_cell(t) in (12, MINUS_CELL, 13, PLUS_CELL):
+        if k == b'pushb' and _pushb_cell(t) in (12, MINUS_CELL, 13, PLUS_CELL):
             o = option_of(ty)
             if o is None:
                 continue
@@ -1789,9 +1801,7 @@ def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxe
                           8: b'-11', 9: b'%d' % (PLUS_CELL if plus else MINUS_CELL)}
         elif k == b'pushb' and n in (OK_ID, CANCEL_ID):
             by = y0 + OPTION_DY + OPTION_PITCH * len(minus)
-            bx = row_x + (OK_X if n == OK_ID else CANCEL_X)
-            rebuilt[i] = b'pushb    %d  0  %d  %d   90  26  -11 %d  label centre %d 0  -  remap 0' % (
-                n, bx, by, BUTTON_CELL, OK_MSG if n == OK_ID else CANCEL_MSG)
+            rebuilt[i] = _text_button(n, row_x + (OK_X if n == OK_ID else CANCEL_X), by, 90, BUTTON_CELL, OK_MSG if n == OK_ID else CANCEL_MSG)
         elif k == b'in_text':
             o = option_of(ty)
             if o is not None:
@@ -1800,31 +1810,62 @@ def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxe
             o = option_of(ty)
             if o is not None:
                 changes[i] = {4: b'%d' % (row_x + LABEL_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + OPTION_TEXT_DY), 6: b'%d' % LABEL_W, 7: b'14'}
-            elif b'centre' in t:                                        # the title
-                changes[i] = {4: b'%d' % (row_x + HEADER_X + TITLE_X_INSET), 5: b'%d' % (y0 + HEADER_DY + TITLE_Y),
-                              6: b'%d' % (HEADER_W - 2 * TITLE_X_INSET), 7: b'%d' % TITLE_H, 13: b'1'}
 
 
-def _options_header(out):
-    """The options form's header lines: font 0 MFONTO5, font 1 MFONTO2, the hover brightness, the
-    OK / CANCEL texts.  Each added only if absent; line endings follow the line they are added after."""
+def _list_form(rec, rows, row_x, quit_form, changes, rebuilt, drop, boxes):
+    """The save, objectives and quit dialogs: the name field in a name box over blank rows, the
+    buttons as text buttons on their own y (OK right / CANCEL left, a lone OK centred; the quit
+    dialog's two 180-px YES, QUIT / NO, CONTINUE buttons centred, their label widgets dropped)."""
+    has_cancel = any(k == b'pushb' and n == CANCEL_ID for k, n, t in rec.values())
+    for i, (k, n, t) in rec.items():
+        if k == b'in_text':
+            ty = int(t[4])
+            top = max(y for _, y, _, _ in rows if y <= ty)
+            for li, y, _, c in rows:
+                if y in (top, top + ROW_H):
+                    changes.setdefault(li, {})[8] = b'%d' % BLANK_ROW
+            boxes.append((top + LIST_TOP_DY, row_x + NAME_BOX_X, NAME_BOX_CELL))
+            changes[i] = {4: b'%d' % (row_x + NAME_TEXT_DX), 5: b'%d' % (top + NAME_TEXT_DY)}
+        elif k == b'pushb' and n in (OK_ID, CANCEL_ID, QUIT_NO_ID) and b'list' not in t[8:]:
+            by = int(t[4])
+            if quit_form:
+                rebuilt[i] = _text_button(n, row_x + LARGE_X, by, 180, LARGE_BUTTON_CELL, QUIT_YES_MSG if n == OK_ID else QUIT_NO_MSG)
+            elif n == OK_ID:
+                rebuilt[i] = _text_button(n, row_x + (OK_X if has_cancel else OK_CENTRE_X), by, 90, BUTTON_CELL, OK_MSG)
+            else:
+                rebuilt[i] = _text_button(n, row_x + CANCEL_X, by, 90, BUTTON_CELL, CANCEL_MSG)
+        elif quit_form and k == b'label' and b'centre' not in t:
+            drop.add(i)                          # the YES, QUIT / NO, CONTINUE labels: the buttons carry the texts now
+
+
+def _form_header(out, ok_cancel, body_font):
+    """The form's header lines: font 1 MFONTO2 (titles), font 2 MFONTO5 (button captions), the hover
+    brightness, and (when the form has OK / CANCEL buttons) their texts right after the first textmsg
+    line - existing OK / CANCEL texts are dropped first, so the place does not depend on the file's
+    history - the same for the font 1 / font 2 / bright_* lines.  Font 0 becomes MFONTO5 only for the
+    options form (`body_font`): the objectives list's lines are wrapped for MFONTO7 and overflow the
+    window in the wider font.  Line endings follow the line the additions are added after."""
     def cr_of(line):
         return b'\r' if line.endswith(b'\r') else b''
-    text = b'\n'.join(out)
+    added = re.compile(rb'\s*(textmsg\s+(%d|%d)|font\s+[12]|font_offset\s+[12]|bright_pushed|bright_highlight)\s' % (OK_MSG, CANCEL_MSG))
+    out = [line for line in out if not added.match(line)]      # the lines this pass adds: dropped and re-inserted canonically
+    first_msg = next((i for i, line in enumerate(out) if re.match(rb'\s*textmsg\s+\d+\s', line)), None)
     res = []
-    for line in out:
+    for i, line in enumerate(out):
         body = line.rstrip(b'\r')
-        m = re.match(rb'(\s*font\s+0\s+)intrface/mfonto7\b(.*)', body, re.I)
+        m = re.match(rb'(\s*font\s+0\s+)intrface/mfonto7\b(.*)', body, re.I) if body_font else None
         if m:
             line = m.group(1) + b'intrface/mfonto5' + m.group(2) + cr_of(line)
         res.append(line)
-        if re.match(rb'\s*font_offset\s+0\s', body) and not re.search(rb'(?im)^\s*font\s+1\s', text):
+        if re.match(rb'\s*font_offset\s+0\s', body):
             res.append(b'font 1 intrface/mfonto2' + cr_of(line))
             res.append(b'font_offset  1 31' + cr_of(line))
-        if re.match(rb'\s*colour\s+selbg\s', body) and not re.search(rb'(?im)^\s*bright_pushed\s', text):
+            res.append(b'font 2 intrface/mfonto5' + cr_of(line))
+            res.append(b'font_offset  2 31' + cr_of(line))
+        if re.match(rb'\s*colour\s+selbg\s', body):
             res.append(b'bright_pushed    8' + cr_of(line))
             res.append(b'bright_highlight 4' + cr_of(line))
-        if re.match(rb'\s*textmsg\s+5\s', body) and not re.search(rb'(?m)^\s*textmsg\s+%d\s' % OK_MSG, text):
+        if ok_cancel and i == first_msg:
             res.append(b'textmsg %d OK' % OK_MSG + cr_of(line))
             res.append(b'textmsg %d CANCEL' % CANCEL_MSG + cr_of(line))
     return res

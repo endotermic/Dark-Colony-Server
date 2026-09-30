@@ -5710,3 +5710,26 @@ count at stock (607, **430**): digits 430..439, rect 430..441 = the interior's l
 under the caption, the ring intact (verified: rows 730..732 `LT BAND D11`, then the bezel). Frames
 of every size, `MAINE` (game folder + fixtures) regenerated; confirmed in game at 1024x768;
 `error.log` empty. Still uncommitted.
+
+**Ninth round (same day; maintainer: "apply the same style to save, objectives and quit dialogs").**
+`console_dialog` now treats every dialog as a form: rows 0..2 become the blank cells 25 / 24 under
+the 292x44 header box (cell 19) with the title as a `font 1` (MFONTO2) label inside it, every cell-6
+plate (the red title and label plates) is dropped, and the buttons are text buttons - `_text_button`
+= `pushb N 0 x y w 26 -11 <cell> label centre <msg> 2 - remap 0`, the caption in **font 2 = MFONTO5**
+(a new slot, so a dialog's font 0 is left alone; the options form alone switches font 0 to MFONTO5 -
+the first try switched it everywhere and the objectives text, wrapped for MFONTO7's advance,
+overflowed the window). Save (LSGE): CANCEL (55) at x 56 / OK (56) at x 158 on their own y, the
+name box over blank rows; objectives (LOBJE): a lone OK centred at x 107; quit (LQCE, pushb 57
+present): YES, QUIT (56) / NO, CONTINUE (57) as **180x26** plates (POPP cell **26** = KNOBE cell 0)
+at x 62 with the dialog's textmsg 2 / 3, the two label widgets that carried the texts dropped. The
+`_form_header` block is canonical: existing `font 1/2`, `font_offset 1/2`, `bright_*` and
+`textmsg 7/8` lines are dropped and re-inserted (font 1, font 2 after `font_offset 0`; the bright
+pair after `colour selbg`; OK / CANCEL after the first textmsg, not for the quit form), so a file
+edited twice, or before / after `music_row`, equals a file edited once (checked: the 28 Sep plain
+LOPTE through the pass = the game folder's file, CR-stripped). The over-edited `font 0` line of the
+game folder's and fixtures' LOBJE / LQCE was put back to MFONTO7 by hand. POPP.SPR has 27 cells. PS
+port equal under pwsh 7 / 5.1 on the eight inputs. Confirmed in game at 1024x768: save (F11),
+objectives (text fits again, OK centred), quit (hover brightens NO, CONTINUE, the click closes),
+options; `error.log` empty. Clean-copy patcher check: 16 of 16 dialog files = fixtures, the plate bank = the
+shipped one, the Ultimate copies = the tool chain (the `sed` that put the LOBJE / LQCE font line back had
+stripped the fixtures' CRs; both were rebuilt from the stock scripts through the tool chain). Uncommitted.

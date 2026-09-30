@@ -32,7 +32,7 @@ maintainer's words that define it:
   frame is broken too. And chat scrolling buttons must be centered in their frame." Then: "You didn't
   fix the problem with '1' tab frame! And now 'BUILD' button lost left frame!" and "'DAYS' frame is too
   tight and days count is not horizontally centred in the frame." And: "'DAYS' and days count must
-  not overlap each other."
+  not overlap each other." Then: "Apply the same style to save, objectives and quit dialogs."
 
 Reference pictures: `INTRFACE/MULTIWIN.GIF` (lobby), `INTRFACE/NET.GIF`, `INTRFACE/SHUMAN.GIF`,
 `INTRFACE/KNOBE.SPR` (lobby buttons). Look at them at 2x-6x before drawing anything; the rules
@@ -101,6 +101,10 @@ Spacing rules around frames:
   into the frame; the `pushb` cells are transparent around the triangle, centred on the channel's
   halves. The message screen's interior is H-20..H-8 so its rings end above the bottom border; the
   two bar texts sit at stock y 460 / 461 (2 px higher than shipped) inside it.
+* **Header lines a pass adds are re-inserted canonically** (fonts 1 / 2, `bright_*`, the OK / CANCEL
+  texts): the pass drops its own earlier additions first, so a file edited twice, or edited before or
+  after the MUSIC-row edit, comes out byte-identical to one edited once - the patcher and the tool
+  chain must agree on every path.
 * **A plate may be drawn narrower than its click rectangle** when a neighbour needs the room: the
   BUILD plate is 81 px in an 86-px rect, which gives the DAYS screen a 32-px interior (601..632;
   its bottom ring ends above the dial's bezel) with the count centred at stock (607, 430).
@@ -207,6 +211,15 @@ DOWN at bottom row - 5 (1 px black above / below the plate); the `scroll` bar fr
 height = bottom - top - 26. Every widget position is **derived from the rows**, never typed as a
 screen coordinate: `hud_console.console_dialog` and the patcher's `Edit-DialogConsole` compute them,
 so a dialog letterboxed to any resolution comes out right.
+
+**Every dialog is a form** (§10.54): rows 0..2 are the blank cells 25 / 24 under the header box
+(cell 19, 292x44 at x 6, y0 + 4) with the title as a font-1 (`MFONTO2`) label inside it, the red
+title and label plates are gone, and the buttons are text buttons with their captions in font 2
+(`MFONTO5`): OK (id 56) at x 158 and CANCEL (id 55) at x 56 as 90x26 plates (a lone OK centred at
+x 107), the quit dialog's YES, QUIT / NO, CONTINUE as 180x26 plates (cell 26) at x 62. The list
+dialogs keep their list window and scroll channel; the save name sits in its box over blank rows.
+The body font (font 0) is switched to `MFONTO5` only where the text is ours - the options form;
+the objectives list's lines are wrapped for `MFONTO7` and overflow the window in a wider font.
 
 **The options form** (a dialog with "-" / "+" pairs; §10.54) follows the pre-battle menus instead of
 the list layout: rows 3..last are **one framed panel** the full inner width (cells 16 top / 17 middle /
