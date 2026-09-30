@@ -22,6 +22,7 @@ maintainer's words that define it:
 * "Frames must be in lobby style. Lobby is not black, it is in different intensities of gray."
 * "Keep the icons and portraits, red-outlined button icons which mimics lobby button style everywhere."
 * "Text boxes must have gray frame. Scroll bar must have appropriate frame."
+* "Refactor style of battlefield 'options' menu using best practices taken from pre battle menus."
 
 Reference pictures: `INTRFACE/MULTIWIN.GIF` (lobby), `INTRFACE/NET.GIF`, `INTRFACE/SHUMAN.GIF`,
 `INTRFACE/KNOBE.SPR` (lobby buttons). Look at them at 2x-6x before drawing anything; the rules
@@ -85,13 +86,24 @@ patcher `Write-OnlineScreen` / `Edit-DialogConsole`.
 
 * **Lobby plate** (`lobby_plate`, from `KNOBE.SPR` cells 0/4/10/28): black fill, a 3-px red ring -
   outer 100 with 101 corners, the bright line 80, inner 100 with 98/99 corner softening. Used for
-  every clickable button: dialog OK / cancel, title plates, BUILD, the active tab, the bar arrows.
+  every clickable button: BUILD, the active tab, the bar arrows, dialog buttons.
+* **Text buttons** are the pre-battle menus' buttons and the first choice for any dialog action:
+  `KNOBE.SPR` cell 2 (90x26, MEDBUTTON) or cell 0 (180x26, LARGEBUTTON) with `label centre <msg> 0 -
+  remap 0` - the caption in the lobby's colours, centred by the engine - and the script-level
+  `bright_pushed 8` / `bright_highlight 4`, which brighten the plate under the pointer and while
+  pressed (the pressed state needs no second cell: `-11 <cell>`). Actions read as words (OK, CANCEL,
+  LOAD, BACK), not as icons; the action sits right, the way back left (LOADGE: BACK left, LOAD right).
+  A dialog bank that needs them copies the KNOBE cells pixel for pixel (POPP cells 20..22).
+* **A plate is a button.** Never put a label or a title on a red plate: the eye reads it as
+  clickable. Labels are plain text (§9), titles are plain text in a header box (§7).
 * **Pressed plate** (`pressed_plate`): the green grid (fill 125, lines 124 every 8 x 7 px, border
   123). Only for the pressed / lit state.
 * **Grey plate** (`grey_plate`): 35-grey fill, 11 outer ring, light ring, 43 inner ring. For
   inactive tabs and for the grey frames of grid buttons (portraits, unit orders, tab 3).
 * **Arrows** are `KNOBE.SPR`'s own triangles: symmetric outline triangles in the red ramp, centred
   in the plate (bar cells on (9.5, 9), dialog 16x16 cells on (8, 8)); `arrow_cell`, `_triangle`.
+  **Value steppers** are KNOBE's ringed 14x14 arrows, cell 14 (left) and 16 (right), as the lobby's
+  slot rows use them (`pushb ... 14 14 -11 14` / `-11 16`): the value field sits between them.
 * Plates are opaque: black is 254 inside a cell, never 0. A plate never carries pipework.
 * **Button icons**: keep original portraits pixel for pixel inside the plate. Drawn icons follow
   `BUTTON.SPR`'s neon idiom - one hue per icon (`NEON_RAMPS`), a hot-key box top-left, the circuit
@@ -141,10 +153,22 @@ cells are **text boxes** (§7): 14 the value box 78x24, 15 the name box 264x24.
 
 Vertical rules for a list: `list` y = top row + 4, height to the bottom row + 11; UP at top row + 5,
 DOWN at bottom row - 5 (1 px black above / below the plate); the `scroll` bar from top row + 21,
-height = bottom - top - 26. Buttons that step a value ("-" / "+", 14x14, cells 12 / 13) sit 2 px of
-ground away from their box. Every widget position is **derived from the rows**, never typed as a
+height = bottom - top - 26. Every widget position is **derived from the rows**, never typed as a
 screen coordinate: `hud_console.console_dialog` and the patcher's `Edit-DialogConsole` compute them,
 so a dialog letterboxed to any resolution comes out right.
+
+**The options form** (a dialog with "-" / "+" pairs; §10.54) follows the pre-battle menus instead of
+the list layout: rows 3..last are **one framed panel** the full inner width (cells 16 top / 17 middle /
+18 bottom, frame x 6..297, black 10..293; the bottom row carries the panel's bottom tube on rows
+4..7, ground and the dialog border on 12..15), the title is a font-1 (`MFONTO2`, 21 px) label
+centred in a **header box** (cell 19, 292x32 at x 6, y0 + 14, 2 px of ground above the panel), and
+inside the panel every option is one line: a plain left-aligned label at x 16 (172 px), the value
+field (8 columns, `align centre`) at x 212 between the 14x14 stepper arrows at x 194 and x 280; the
+k-th option's arrows sit on y0 + 62 + 32 k (label and value 1 px lower), 10 px under the panel's top.
+CANCEL (x 56) and OK (x 158), 90x26 text buttons, sit 32 px under the last option, 12 px above the
+panel's bottom. A 32-px band added to the form (the MUSIC row) moves the buttons and the bottom
+rows down and duplicates a middle row - `music_row` / `Edit-MusicDialog` do that, the layout pass
+re-derives every position afterwards.
 
 Widget ids are one object space for every kind (a `picture 24` and a `pushb 24` collide), so new
 overlay pictures take the lowest free ids from 23 and are listed after the rows they cover.
@@ -156,8 +180,10 @@ Any text the engine writes - a read-out (`in_text ... read_only`), an entry fiel
 4 + black 16 + frame 4; a 10-px (`MFONTO7`) or 12-px (`MFONTO5`) line sits vertically centred with
 3 / 2 px of black above and below. Widths:
 
-* **value box** (options dialog: 100%, MEDIUM, DC): 78 px, the 8-column `in_text` centred in it
-  (`align centre`), placed between the "-" and "+" buttons at ("-" x + 16, "-" y - 4);
+* **form panel** (options dialog): one framed black panel holds every option line - label, arrows
+  and the 8-column centred `in_text` on one black surface, like the lobby's slot rows on its screen;
+  a framed box per value (POPP cell 14, 78x24, the 30 Sep morning form) is kept as a spare cell
+  but is not the style: boxes inside boxes make a form busy;
 * **name box** (save game): the list frame's width, 264 px, the field 4 px in from the interior's
   left edge; a field is left-aligned, a read-out centred;
 * **list window**: 256 px inside its frame; the list widget paints its own black and its own text
@@ -165,8 +191,9 @@ Any text the engine writes - a read-out (`in_text ... read_only`), an entry fiel
 
 The box is a **picture of a POPP cell laid over the rows** and listed before the widget that writes
 into it; the widget paints its black over the box interior and its text on top. Text colour: the
-scripts' `remap 4` (cyan -> the menu green / team colour) for dialogs, `CAPTION_RED` for BUILD,
-`LOBBY_CAPTION` for lobby-style captions; never white on pipework.
+scripts' `remap 4` for labels (`MFONTO5` comes out green) and titles (`MFONTO2` stays cyan), the
+un-remapped cyan for the values a player changes (in game: green labels, cyan values and title, as
+the lobby's rows), `remap 0` for button captions, `CAPTION_RED` for BUILD; never white on pipework.
 
 ## 8. Scroll bars
 
@@ -178,13 +205,15 @@ pipework or over the panel border.
 
 ## 9. Text
 
-* Fonts: `MFONTO7` (cells up to 6x10, 10-px lines: dialogs' labels, values, tab digits),
-  `MFONTO5` (7x12, 12-px lines: the save name, list rows, BUILD caption, lobby rows - it advances
-  8 px per column, so a 56-column list is 448 px). Glyph index = `ord(ch) - 31`.
+* Fonts: `MFONTO5` (7x12, 12-px lines: the pre-battle menus' body font - labels, values, button
+  captions, the save name, list rows, BUILD; it advances 8 px per column, so a 56-column list is
+  448 px), `MFONTO2` (13x21 caps, descenders to 28: screen titles - "Load Game", "OPTIONS"),
+  `MFONTO7` (6x10: tab digits, hot keys, the stock dialogs' small text - not for new forms).
+  Glyph index = `ord(ch) - 31`.
 * Captions on plates are drawn with the font's glyphs in one flat colour or the lobby ramp - no
   anti-aliasing, no drop shadow.
-* Labels that name a row (GAME SPEED) sit on a title plate (cell 6); the read-out that belongs to
-  them sits in a value box on the same row axis.
+* Labels that name a row (GAME SPEED) are plain left-aligned text on the form's black panel; the
+  value they name sits at the right of the same line between its stepper arrows (§6).
 * Keep 3 px between glyphs and any frame ring; centre read-outs, left-align entry fields.
 
 ## 10. Icons and pictures
@@ -227,6 +256,7 @@ over a frame or a text line are removed from the script, the art under them stay
 ## 13. Don'ts
 
 * No metal, bevels, gradients or anti-aliased edges.
+* No labels or titles on button plates; no icon-only OK / cancel where a word fits.
 * No text on bare pipework; no black-only dialogs (every black area is a framed screen or a plate).
 * No 1-px frames, no frames touching each other or the border.
 * No index 0 for visible black in a sprite cell; no cyan ramp in art that must keep its colour in a

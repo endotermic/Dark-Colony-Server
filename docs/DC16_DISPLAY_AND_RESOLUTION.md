@@ -5538,3 +5538,54 @@ a driver started before the mode switch reads the desktop's size) from the game 
 (780,606), TO BATTLE (691,603); Game Option tab (1002,102), its cells Quit (931,131), Options
 (931,213), Objectives (931,336); dialog cancel / OK plates at their script rects + 16. A posted ESC
 at the menu did not quit (known), the process was terminated.
+
+
+#### 10.54 The battlefield OPTIONS dialog as a pre-battle form: one panel, plain labels, lobby steppers, text buttons **(30 Sep 2026, maintainer: "refactor style of battlefield 'options' menu using best practices taken from pre battle menus"; `tools/hud_console.py` (`console_dialog` → `_options_layout` / `_options_header`, POPP cells 16..22), the patcher's `Edit-DialogConsole`; guide §4, §6, §7, §9 amended; data only, no exe byte; confirmed in game at 1024x768: layout, hover brightness, a value step, CANCEL and OK)**
+
+**What the pre-battle menus do** (measured on `MULTIE`, `LOADGE`, `NEWGAMEE`, `GETSVRE`, `NETOPTE`):
+option rows are a plain `label ... align left ... remap 4` (MFONTO5, green) with the value between
+KNOBE's ringed 14x14 arrows - `pushb ... 14 14 -11 14` left, `-11 16` right - and the `in_text`
+`align centre` between them (the lobby's slot rows, x 409 / 473); actions are 90x26 `MEDBUTTON`
+plates (KNOBE cell 2) with `label centre <msg> 0 - remap 0` captions, the way back left and the
+action right (LOADGE: BACK 313, LOAD 403); every screen sets `bright_pushed 8` / `bright_highlight 4`
+(the plate brightens under the pointer and while pressed, no second cell); titles are large-font
+labels (`font 1 intrface/mfonto2`, 21-px caps, "Load Game") centred over the screen. The §10.49
+dialog had none of that: labels on red plates (read as buttons), tick / cross icon plates, MFONTO7
+everywhere, no hover feedback, and since the morning a framed box per value (§10.53).
+
+**The form.** Rows 3..last of the dialog are **one framed panel** (POPP cells **16 / 17 / 18** =
+panel top / middle / bottom: the tube at x 6..297, black 10..293, no channel; the bottom row holds
+the panel's bottom tube on rows 4..7, ground on 8..11 and the dialog border on 12..15, so
+`music_row`'s "clone row 14, move row 15" still grows the panel), the title `OPTIONS` is a `font 1`
+label centred in a **header box** (cell **19**, 292x32 at x 6, y0 + 14: 2 px of ground above the
+panel's top tube, the 21-px glyphs 2 px inside the box's black), and inside the panel each option is
+one line: label at x 16 (172 px, `h 14`), `<` at x 194, the 8-column value at x 212, `>` at x 280,
+the k-th option on y0 + 62 + 32 k (label / value + 1) - 10 px under the panel's top - and
+**CANCEL / OK** as 90x26 text buttons (cell **20** = KNOBE 2 pixel for pixel; `textmsg 8 CANCEL` at
+x 56, `textmsg 7 OK` at x 158, ids 55 / 56 unchanged for the handler) 32 px under the last option,
+12 px above the panel's bottom. The steppers are cells **21 / 22** = KNOBE 14 / 16 (their ids
+40..45, 67 / 68, 71 / 72 unchanged). Header lines added once: `font 0` → `intrface/mfonto5`,
+`font 1 intrface/mfonto2` + `font_offset 1 31`, `bright_pushed 8`, `bright_highlight 4`, `textmsg 7
+OK`, `textmsg 8 CANCEL`. The red title plate (`picture 3`) and the four label plates (16..19, cell
+6) are dropped; the value boxes of §10.53 are gone (cell 14 stays in the bank as a spare). In game:
+green labels (MFONTO5 under `remap 4`), cyan values and title, red rings, the CANCEL plate and its
+caption visibly brighter under the pointer; `>` on GAME SPEED read 110 %; CANCEL and OK both closed
+the dialog; `error.log` empty.
+
+**Rules and pitfalls.** `console_dialog` chooses the form when the script has "-" / "+" pairs
+(cells 12 / 13 or 21 / 22) and the list / name-box layout otherwise; the layout is derived from the
+row positions, so the Ultimate copies with the MUSIC row (five options, buttons on y0 + 222, two
+more middle rows) come out by the same rule, in either order with `music_row` (checked). The
+PowerShell port equals the Python pass byte for byte under pwsh 7 and 5.1 on eight inputs (the
+four dialogs, the Ultimate copy, the §10.49 plain form, the §10.53 boxed form at 1920x1200, the
+boxed-then-music form). **Pitfall met:** the new constants shadowed `PANEL_X` (the HUD panel column
+516 from `hud_layout`), and `render_frame` drew the whole frame with the panel at x 6 - caught by
+the fixtures' `INTRFACE.GIF` hashes changing; renamed `OPT_PANEL_X` / `OPT_PANEL_W`. **Check the
+frame hashes after every change to `hud_console.py`, even a data-only one.**
+
+**Regenerated:** `INTRF_HD/POPP.SPR` (23 cells), `INTRF_HD/LOPTE` + the three `lopte` copies (the
+list dialogs unchanged), the six fixtures (only `LOPTE`; frames byte-identical), the patcher. Not
+run: the Ultimate copy in game, other sizes, the MUSIC row's `+` on the new plates (the handler is
+unchanged, only positions moved). Follow-up worth doing: the same form for the save / objectives /
+quit dialogs (text buttons SAVE / CANCEL / OK / YES, QUIT / NO, CONTINUE, header-box titles) so all
+four dialogs share one language.
