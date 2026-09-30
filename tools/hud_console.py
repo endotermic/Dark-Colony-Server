@@ -24,11 +24,12 @@ black, it is in different intensities of gray").
              MAINBUT.SPR pixel for pixel (maintainer), clean red-outline glyphs drawn here for every
              order and option button, KNOBE's own triangles for the arrows, the tab strips, PAUSED
     popp     GAME_DIR --out INTRF_HD/POPP.SPR
-             the 23 dialog plates: pipework rows with the lobby tube as panel border, list rows with
+             the 24 dialog plates: pipework rows with the lobby tube as panel border, list rows with
              the framed list window and the framed scroll channel (3 / 4 / 5), red title plate, red
              OK / cancel, red arrows, the framed text boxes (14 spare value box, 15 name box), the
              options form's panel rows (16 / 17 / 18) and header box (19) and the lobby's text button
-             and stepper arrows copied from KNOBE.SPR (20 / 21 / 22) - doc 10.53 / 10.54 and
+             and stepper arrows copied from KNOBE.SPR (20 / 21 / 22) and the option row's capsule strip
+             (23) - doc 10.53 / 10.54 and
              docs/DC16_INTERFACE_STYLE_GUIDE.md; the scripts are laid out on them by console_dialog()
     apply    TARGET [--game SRC] --width W --height H [--no-bank]
              frame + banks + the script edits (`pictures intrf_hd/mainbut|popp`, tab strips) into a
@@ -91,13 +92,21 @@ MINIMAP = (518, 6, 614, 89)           # engine paints 96x84 at (519,6)
 LETTER_STRIP = (617, 8, 634, 88)      # the vertical DARK COLONY beside the minimap
 GRID = (518, 92, 635, 398)            # tab row 92..111 + 2 x 7 cells of 59x41 from 112
 STATUS = (520, 404, 633, 415)         # in_text 79 at (520,404)
-BUILD = (516, 422, 601, 448)          # pushb 19, 86x27
-DAYS_TEXT = (606, 421)
+BUILD = (516, 422, 601, 448)          # pushb 19, 86x27 (the click rect)
+BUILD_PLATE = (516, 422, 596, 448)    # the plate drawn 5 px narrower than the rect, so the DAYS screen gets a 32-px interior (maintainer: 'DAYS frame is too tight')
+DAYS_TEXT = (606, 420)                # the DAYS caption (7-row pixel lettering, CAPTION_5X7) on rows 420..426; the count widget (in_text 234)
+                                      # paints a 12-row black rect from its y 430, so the caption must end above 430
 DAYS_BOX = (609, 433, 634, 444)       # in_text 234 at (613,433)
+DAYS_PANEL = (601, 420, 632, 441)     # one screen for the DAYS label and its count: 1 px off the BUILD plate, right ring before the border tube, bottom ring above the dial's bezel
 MONEY = (521, 456, 598, 472)          # scount 75 at (524,456)
 DIAL = (621, 463, 15)                 # the 28x28 hand cell lands at (608..635, 450..477): centre (621.5, 463.5), measured in game
-ARROWS = ((4, 460, 23, 478), (24, 460, 43, 478))
-MSG = (49, 461, 509, 473)             # in_text 148 at (50,462), 200 at (480,463)
+ARROWS = ((4, 460, 23, 478), (24, 460, 43, 478))   # the bar's two arrow buttons (pushb 147 / 149, MAINBUT cells 40 50 / 57 76)
+CHAT_CHANNEL = (4, 457, 43, 475)      # one capsule around both arrows: rows 745..763 at 768 = between the view's tube and the bottom border
+BAR_ARROW_CENTRE = {'up': (11.0, 6.0), 'down': (8.0, 6.0)}   # triangle centres in the 16x16 cells drawn at the rects' top-left: the channel's two halves
+MSG = (49, 460, 509, 472)             # the message screen: interior H-20..H-8, rings to H-5, the border from H-4; in_text 148 / 200 2 px higher (CHAT_LINE_Y)
+HUD_TEXT_POS = {148: (None, 460), 200: (None, 461), 234: (607, 430)}   # stock (x, y) of the bar texts (were y 462 / 463) and the DAYS count
+                                      # (was 613, 433): the 20x10 digit glyphs start at the widget's y and its 12-row rect ends on the interior's
+                                      # last row 441; 3 rows under the 7-row caption - the 22-row interior between the status ring and the dial
 
 
 # ---------------------------------------------------------------- an index canvas
@@ -233,11 +242,46 @@ class Pipework:
         self.cv = cv
         self.rng = random.Random(seed)
 
-    def region(self, x0, y0, x1, y1):
-        cv, rng = self.cv, self.rng
+    def region(self, x0, y0, x1, y1, holes=()):
+        """Fill the rectangle with pipework, leaving every hole (inclusive rects: the screens with their
+        rings, the plates, the border tubes) untouched and every compartment whole: the area is cut
+        into horizontal strips at the holes' top and bottom edges, each strip into the x-intervals
+        free of holes, and each free rectangle is filled by fill_rect().  A compartment cut by a screen
+        or a border is an open frame (maintainer, 30 Sep 2026); the cells' own 11-grey rings and the
+        holes' outer rings give the dark seam between them."""
         if x1 < x0 or y1 < y0:
             return
+        hs = [h for h in holes if h[2] >= x0 and h[0] <= x1 and h[3] >= y0 and h[1] <= y1]
+        cuts = {y0, y1 + 1}
+        for hx0, hy0, hx1, hy1 in hs:
+            if y0 < hy0 <= y1:
+                cuts.add(hy0)
+            if y0 <= hy1 < y1:
+                cuts.add(hy1 + 1)
+        ys = sorted(cuts)
+        for ya, yb in zip(ys, ys[1:]):
+            yb -= 1
+            blocked = sorted((hx0, hx1) for hx0, hy0, hx1, hy1 in hs if hy0 <= yb and hy1 >= ya)
+            x, free = x0, []
+            for bx0, bx1 in blocked:
+                if bx0 > x:
+                    free.append((x, min(bx0 - 1, x1)))
+                x = max(x, bx1 + 1)
+            if x <= x1:
+                free.append((x, x1))
+            for fx0, fx1 in free:
+                if fx1 - fx0 >= 2:
+                    self.fill_rect(fx0, ya, fx1, yb)
+
+    def fill_rect(self, x0, y0, x1, y1):
+        """Bands of compartments separated by tube bands; a rect under 3 rows is ground, under 8 a tube."""
+        cv, rng = self.cv, self.rng
         cv.fill(x0, y0, x1, y1, D11)
+        if y1 - y0 < 2:
+            return
+        if y1 - y0 < 7:
+            self.tube(x0, y0, x1, y1)
+            return
         y = y0
         first = True
         while y <= y1:
@@ -658,27 +702,37 @@ def render_frame(width, height, game):
     def B(y):
         return y + dy
 
+    # --- every screen (with its 3 rings), plate (with a 1-px seam), dial and border tube is a hole the
+    #     pipework is laid around, so no compartment is cut (maintainer, 30 Sep 2026: "frames are not closed")
+    def sc(x0, y0, x1, y1, m=3):
+        return (x0 - m, y0 - m, x1 + m, y1 + m)
+    lx0, ly0, lx1, ly1 = LETTER_STRIP
+    cx, cy, r = DIAL
+    holes = [sc(P(MINIMAP[0]), MINIMAP[1], P(MINIMAP[2]), MINIMAP[3]),
+             sc(P(lx0), ly0 - 1, P(lx1), ly1 + 1),
+             sc(P(GRID[0]), GRID[1], P(GRID[2]), GRID[3]),
+             sc(P(STATUS[0]), B(STATUS[1]), P(STATUS[2]), B(STATUS[3])),
+             sc(P(BUILD_PLATE[0]), B(BUILD_PLATE[1]), P(BUILD_PLATE[2]), B(BUILD_PLATE[3]), 1),
+             sc(P(DAYS_PANEL[0]), B(DAYS_PANEL[1]), P(DAYS_PANEL[2]), B(DAYS_PANEL[3])),
+             sc(P(MONEY[0]), B(MONEY[1]), P(MONEY[2]), B(MONEY[3])),
+             (P(cx) - r - 5, B(cy) - r - 5, P(cx) + r + 5, B(cy) + r + 5),
+             sc(MSG[0], B(MSG[1]), MSG[2] + dx, B(MSG[3])),
+             (0, 0, 3, height - 1), (0, 0, view_x1 + 3, 5), (view_x1 + 1, 0, view_x1 + 3, height - 1),
+             (width - 4, 0, width - 1, height - 1), (0, height - 4, width - 1, height - 1),
+             (px_, 0, width - 1, 5), (0, bar_top, view_x1 + 2, bar_top + 2)]
+    qx0, qy0, qx1, qy1 = CHAT_CHANNEL
+    holes.append(sc(qx0, B(qy0), qx1, B(qy1), 1))
     # --- pipework over everything that is not the view
     pw = Pipework(cv, seed=width * 10007 + height)
-    pw.region(px_ + 3, 0, width - 1, height - 1)                         # the panel column
-    pw.region(0, bar_top, view_x1 + 2, height - 1)                        # the bottom bar
-    # borders around the view: a tube [dark, band, band, light] from the screen edge to the hole
-    for i, c in enumerate((D11, BAND, BAND, LT)):
-        cv.vline(i, 0, height - 1, c)
-    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):
-        cv.hline(0, view_x1 + 3, i, c)
-    for i, c in enumerate((LT, BAND, D23)):                               # the view's right edge
+    pw.region(px_ + 3, 0, width - 1, height - 1, holes)                  # the panel column
+    pw.region(0, bar_top, view_x1 + 2, height - 1, holes)                 # the bottom bar
+    # --- the view's right and bottom walls: BAND | LT | dark from the map outward, drawn BEFORE the panel
+    #     content - the stock layout puts BUILD at x 516 and the screens at 518 with the tube at 512..514, so a
+    #     plate on the wall keeps its ring and a screen's ring (BAND, LT from its black) coincides with the wall
+    #     instead of jogging (maintainer, 30 Sep 2026: "'BUILD' button lost left frame")
+    for i, c in enumerate((BAND, LT, D11)):
         cv.vline(view_x1 + 1 + i, 0, height - 1, c)
-    for i, c in enumerate((D11, BAND, BAND, LT)):                         # right screen edge
-        cv.vline(width - 1 - i, 0, height - 1, c)
-    for i, c in enumerate((D11, BAND, BAND, LT)):                         # bottom screen edge
-        cv.hline(0, width - 1, height - 1 - i, c)
-    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):              # panel top
-        cv.hline(px_, width - 1, i, c)
-    cv.hline(0, view_x1 + 2, bar_top, LT)                                 # the view's bottom edge
-    cv.hline(0, view_x1 + 2, bar_top + 1, BAND)
-    cv.hline(0, view_x1 + 2, bar_top + 2, D23)
-
+        cv.hline(0, view_x1 + 2, bar_top + i, c)
     # --- panel screens (black where the engine or the widgets paint)
     x0, y0, x1, y1 = MINIMAP
     cv.screen(P(x0), y0, P(x1), y1)
@@ -692,14 +746,13 @@ def render_frame(width, height, game):
     cv.screen(P(gx0), gy0, P(gx1), gy1)                                   # tab row + button grid
     sx0, sy0_, sx1, sy1_ = STATUS
     cv.screen(P(sx0), B(sy0_), P(sx1), B(sy1_))
-    bx0, by0, bx1, by1 = BUILD
+    bx0, by0, bx1, by1 = BUILD_PLATE
     lobby_plate(bx1 - bx0 + 1, by1 - by0 + 1, cv, P(bx0), B(by0))
     _build_caption(cv, game, P(bx0), B(by0), bx1 - bx0 + 1, by1 - by0 + 1)
-    tx = P(DAYS_TEXT[0])
-    cv.fill(tx - 2, B(DAYS_TEXT[1]) - 1, tx + font.width('DAYS') + 1, B(DAYS_TEXT[1]) + 10, BLK)
-    font.draw(cv, tx, B(DAYS_TEXT[1]), 'DAYS', remap={138: 121, 139: 121, 140: 122, 141: 122, 142: 123, 143: 124})
-    dx0, dy0, dx1, dy1 = DAYS_BOX
+    dx0, dy0, dx1, dy1 = DAYS_PANEL                                       # one screen for the DAYS label and its value
     cv.screen(P(dx0), B(dy0), P(dx1), B(dy1))
+    th = caption_5x7_width('DAYS')
+    caption_5x7(cv, P(dx0) + (dx1 - dx0 + 1 - th) // 2, B(DAYS_TEXT[1]), 'DAYS', GRN[1])
     mx0, my0, mx1, my1 = MONEY
     cv.screen(P(mx0), B(my0), P(mx1), B(my1))
     cx, cy, r = DIAL
@@ -712,10 +765,22 @@ def render_frame(width, height, game):
     cv.blit(clock_cells[0], P(608), B(450), transparent=(0,))
 
     # --- bottom bar: arrow plates and the message screen
-    for ax0, ay0, ax1, ay1 in ARROWS:
-        lobby_plate(ax1 - ax0 + 1, ay1 - ay0 + 1, cv, ax0, B(ay0))
+    qx0, qy0, qx1, qy1 = CHAT_CHANNEL                                     # the arrows' capsule: the pushb cells draw the triangles into it
+    capsule(cv, qx0, B(qy0), qx1, B(qy1))
     qx0, qy0, qx1, qy1 = MSG
     cv.screen(qx0, B(qy0), qx1 + dx, B(qy1))
+
+    # borders around the view: a tube [dark, band, band, light] from the screen edge to the hole
+    for i, c in enumerate((D11, BAND, BAND, LT)):
+        cv.vline(i, 0, height - 1, c)
+    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):
+        cv.hline(0, view_x1 + 3, i, c)
+    for i, c in enumerate((D11, BAND, BAND, LT)):                         # right screen edge
+        cv.vline(width - 1 - i, 0, height - 1, c)
+    for i, c in enumerate((D11, BAND, BAND, LT)):                         # bottom screen edge
+        cv.hline(0, width - 1, height - 1 - i, c)
+    for i, c in enumerate((D11, BAND, BAND, BAND, D23, LT)):              # panel top
+        cv.hline(px_, width - 1, i, c)
 
     # --- the hole itself: exactly 254
     cv.fill(INSET_X, INSET_Y, view_x1, view_y1, BLK)
@@ -728,6 +793,32 @@ def render_frame(width, height, game):
 # shadow 143 -> 244 (47,15,0).
 LOBBY_CAPTION = {139: 86, 140: 221, 141: 99, 142: 100, 143: 244, 138: 86}     # the lobby's exact remap (kept for reference)
 CAPTION_RED = {138: 96, 139: 96, 140: 96, 141: 98, 142: 99, 143: 100}          # "BUILD button font must be just red": (255,31,31) core, (79,7,7) shadow
+
+
+CAPTION_5X7 = {                       # 5x7 pixel capitals for the frame's own small captions (DAYS): MFONTO7's 10-row letters do not fit
+    'D': ('11110', '10001', '10001', '10001', '10001', '10001', '11110'),
+    'A': ('01110', '10001', '10001', '11111', '10001', '10001', '10001'),
+    'Y': ('10001', '10001', '01010', '00100', '00100', '00100', '00100'),
+    'S': ('01111', '10000', '10000', '01110', '00001', '00001', '11110'),
+}
+
+
+def caption_5x7(cv, x, y, text, colour, spacing=1):
+    """Draw a 5x7 pixel caption; returns its width.  Letters not in CAPTION_5X7 leave a blank."""
+    cx = x
+    for ch in text:
+        rows = CAPTION_5X7.get(ch)
+        if rows:
+            for r, bits in enumerate(rows):
+                for c, b in enumerate(bits):
+                    if b == '1':
+                        cv.put(cx + c, y + r, colour)
+        cx += 5 + spacing
+    return cx - x - spacing
+
+
+def caption_5x7_width(text, spacing=1):
+    return len(text) * 5 + (len(text) - 1) * spacing
 
 
 def _build_caption(cv, game, x, y, w, h, text='BUILD'):
@@ -933,8 +1024,8 @@ def glyph_pixels(cell, box=None):
 
 def arrow_cell(direction, pressed, size=16, center=None, opaque=False):
     """A symmetric outline triangle (red; green when pressed) in a size x size cell.  The bar's
-    16x16 cells are drawn at the top-left of the 20x19 button rects, so they are centred on
-    (9.5, 9) to sit in the middle of the frame's plate."""
+    16x16 cells are drawn at the top-left of the 20x19 button rects (4, 460) / (24, 460) and are
+    transparent around the triangle, so it sits in the frame's chat channel (BAR_ARROW_CENTRE)."""
     cv = Canvas(size, size, BLK if opaque else 0)
     for (x, y), v in _triangle(direction, size, center, GRN if pressed else RED).items():
         cv.put(x, y, v)
@@ -1107,25 +1198,31 @@ def grey_plate(w, h, canvas=None, x0=0, y0=0):
     return cv
 
 
+TAB_STRIP_W = 120
+
+
 def tab_strip(font, active):
-    """124x16: the three tab buttons (pushb 0/1/2 at x 518 / 557 / 598, 40 / 41 / 40 wide, relative
-    to the strip's x 516) with the digits 1 2 3: the active one the lobby's red plate with a red
-    digit, the inactive ones grey plates with a light-grey digit (maintainer: "inactive tab buttons
-    must be gray. active button must be red")."""
-    cv = Canvas(124, 16)
-    spans = ((2, 41), (41, 81), (82, 121))
+    """120x16: the three tab buttons (pushb 0/1/2 at x 518 / 557 / 598, relative to the strip's x 516)
+    with the digits 1 2 3: the active one the lobby's red plate with a red digit, the inactive ones
+    grey plates with a light-grey digit (maintainer: "inactive tab buttons must be gray. active button
+    must be red").  The plates sit 2 px inside the grid screen's black on every side (x 4..117 of the
+    strip = 520..633 stock, rows 96..109), so neither the screen's rings nor the panel's border tube
+    are touched (the 124-px form ran to 637, over the border; the first 120-px form's plate 1 sat
+    against the screen's ring - maintainer, 30 Sep 2026: "tab buttons are breaking interface frame")."""
+    cv = Canvas(TAB_STRIP_W, 16, 0)                    # transparent outside the plates: the strip must not cover the view's wall at x 900..901
+    spans = ((4, 39), (43, 78), (82, 117))            # 36-px plates, 2 px of black to the screen's rings (x 902 / 1019) and between them
     for k, (x0, x1) in enumerate(spans):
         w = x1 - x0 + 1
         if k == active:
-            lobby_plate(w, 16, cv, x0, 0)
+            lobby_plate(w, 14, cv, x0, 0)
             remap = {138: RED[0], 139: RED[1], 140: RED[1], 141: RED[2], 142: RED[3], 143: RED[4]}
         else:
-            grey_plate(w, 16, cv, x0, 0)
+            grey_plate(w, 14, cv, x0, 0)                  # 14 tall: 2 px of black above the button grid (row 112)
             remap = {138: G115, 139: LT, 140: LT, 141: G82, 142: G65, 143: G43}
         g = font.glyph(str(k + 1))
         if g and g['w']:
-            cv.blit(g, x0 + (w - g['w']) // 2, 3, remap=remap)
-    return dict(w=124, h=16, ox=0, oy=0, px=cv.px)
+            cv.blit(g, x0 + (w - g['w']) // 2, 2, remap=remap)
+    return dict(w=TAB_STRIP_W, h=16, ox=0, oy=0, px=cv.px)
 
 
 # ---------------------------------------------------------------- the action-button layout
@@ -1252,7 +1349,7 @@ def build_bank(game):
             cells.append(tab_strip(font, i - TAB_CELLS[0]))
         elif i in ARROW_CELLS:
             d, pressed = ARROW_CELLS[i]
-            cells.append(arrow_cell(d, pressed, center=(9.5, 9.0)))
+            cells.append(arrow_cell(d, pressed, center=BAR_ARROW_CENTRE[d]))
         elif i == PAUSED_CELL:
             cells.append(paused_cell(font))
         elif i == STRIP_CELL:
@@ -1307,12 +1404,23 @@ PANEL_TOP, PANEL_MID, PANEL_BOTTOM = 16, 17, 18     # rows 3..last of an options
 HEADER_CELL, BUTTON_CELL, MINUS_CELL, PLUS_CELL = 19, 20, 21, 22   # header box 292x32; KNOBE 2 (90x26), 14 / 16 (14x14)
 KNOBE_COPIES = (2, 14, 16)            # KNOBE.SPR cells copied into POPP.SPR as 20, 21, 22
 OPT_PANEL_X, OPT_PANEL_W = 6, 292
-HEADER_DY, HEADER_H, TITLE_DY = 14, 32, 4          # header box y0 + 14..45 (2 px ground above the panel); the MFONTO2 title 4 px down in it
-OPTION_DY, OPTION_PITCH = 62, 32                    # the k-th option's arrows at y0 + 62 + 32 k; buttons after the last
-LABEL_X, LABEL_W, MINUS_X, VALUE_X, PLUS_X = 16, 172, 194, 212, 280
+HEADER_DY, HEADER_H, HEADER_W, HEADER_X = 4, 44, 292, 6    # header box y0 + 4..47: from the border's seam down to the panel's top tube, full inner width
+TITLE_X_INSET, TITLE_Y, TITLE_H = 4, 13, 28          # the title label's rect lies INSIDE the box (its black background must not erase the tubes):
+                                                    # x + 4, 284 wide; y box + 13, 28 tall - the 21-px MFONTO2 glyphs (oy 2) centred in the 36-px interior
+BLANK_ROW, BLANK_TOP = 24, 25                       # rows 0..2 under the header box: border + ground only, no pipework
+ROW_KINDS = set(ROW_CELLS) | {PANEL_TOP, PANEL_MID, PANEL_BOTTOM, BLANK_ROW, BLANK_TOP}   # every cell a dialog row can carry
+OPTION_DY, OPTION_PITCH = 63, 32                    # the k-th option's arrows at y0 + 63 + 32 k (strip 58..81); buttons after the last
+# one option row is a strip picture (cell 23, 282x24 at row + 11): four lobby capsules - label 140, "<" 22, value 70,
+# ">" 32 (plate + rounded end) - joined by 6-px bars (TCPWAIT.GIF slot rows, measured: 3-px outline 23 | 65 | 23, rounded outer ends)
+ROW_STRIP_CELL, STRIP_X, STRIP_W, STRIP_H, STRIP_DY = 23, 11, 282, 24, -5   # strip y = arrows y - 5
+CAPSULES = ((0, 140, True, False), (146, 22, False, False), (174, 70, False, False), (250, 32, False, True))  # x, w, round left / right
+BARS = ((140, 146), (168, 174), (244, 250))                             # the grey bars between the capsules (x0, x1 exclusive)
+LABEL_X, LABEL_W, MINUS_X, VALUE_X, PLUS_X = 27, 116, 161, 188, 265     # label 4 px right of its arc, value = the 64-px interior, plates 1 px in
+OPTION_TEXT_DY, OPTION_ARROW_DY = 1, 0
 OK_ID, CANCEL_ID, OK_X, CANCEL_X = 56, 55, 158, 56   # CANCEL left, OK right (LOADGE: BACK left, LOAD right)
 OK_MSG, CANCEL_MSG = 7, 8
-BOX_CELLS = {VALUE_BOX_CELL: (VALUE_BOX_W, BOX_H), NAME_BOX_CELL: (NAME_BOX_W, BOX_H), HEADER_CELL: (OPT_PANEL_W, HEADER_H)}
+BOX_CELLS = {VALUE_BOX_CELL: (VALUE_BOX_W, BOX_H), NAME_BOX_CELL: (NAME_BOX_W, BOX_H), HEADER_CELL: (HEADER_W, HEADER_H),
+             ROW_STRIP_CELL: (STRIP_W, STRIP_H)}
 
 
 def _corner(cv, x0, y0, x1, y1, c):
@@ -1341,6 +1449,40 @@ def panel_border(cv, x0, y0, x1, y1):
     _corner(cv, x0 + 1, y0 + 1, x1 - 1, y1 - 1, BAND)
 
 
+def capsule(cv, x0, y0, x1, y1, round_left=False, round_right=False):
+    """A lobby element frame on black: 3-px outline 23 | 65 | 23 (TCPWAIT.GIF slot rows), rectangular,
+    and where asked the end is a semicircle - the outline itself bends round, so the frame is closed.
+    Unclickable furniture, so dim greys - the light 107 line is reserved for tube_frame()."""
+    cv.fill(x0, y0, x1, y1, BLK)
+    r = (y1 - y0) // 2
+    for k, c in enumerate((D23, G65, D23)):
+        ax0, ay0, ax1, ay1 = x0 + k, y0 + k, x1 - k, y1 - k
+        rk = max(0, r - k) if (round_left or round_right) else 0
+        cv.ring(ax0, ay0, ax1, ay1, rk, c)
+        if rk and not round_left:                    # square this end again
+            cv.fill(ax0, ay0, ax0 + rk, ay1, BLK)
+            cv.hline(ax0, ax0 + rk, ay0, c)
+            cv.hline(ax0, ax0 + rk, ay1, c)
+            cv.vline(ax0, ay0, ay1, c)
+        if rk and not round_right:
+            cv.fill(ax1 - rk, ay0, ax1, ay1, BLK)
+            cv.hline(ax1 - rk, ax1, ay0, c)
+            cv.hline(ax1 - rk, ax1, ay1, c)
+            cv.vline(ax1, ay0, ay1, c)
+
+
+def option_strip():
+    """One option row of the options form: label capsule, "<" cell, value capsule, ">" cell, joined by bars."""
+    cv = Canvas(STRIP_W, STRIP_H)
+    for x, w, rl, rr in CAPSULES:
+        capsule(cv, x, 0, x + w - 1, STRIP_H - 1, rl, rr)
+    ym = STRIP_H // 2
+    for x0, x1 in BARS:
+        cv.fill(x0, ym - 2, x1 - 1, ym, D23)
+        cv.hline(x0, x1 - 1, ym - 1, G65)
+    return cv
+
+
 def text_box(w, h):
     """A framed black text box cell (the value read-outs of the options dialog, the save name)."""
     cv = Canvas(w, h)
@@ -1350,7 +1492,8 @@ def text_box(w, h):
 
 def _dialog_row(i, w=ROW_W, h=ROW_H):
     """One 304x16 dialog row: 0 top, 1 plain, 2 bottom (panel border + pipework), 3 / 4 / 5 list
-    top / middle / bottom, 16 / 17 / 18 options panel top / middle / bottom (doc 10.54),
+    top / middle / bottom, 16 / 17 / 18 options panel top / middle / bottom, 24 / 25 blank / blank top
+    under the options form's header box (doc 10.54),
     top / middle / bottom (the list window in its frame at x 6..269 and the scroll channel in its
     frame at x 272..297, 11-grey seams between border and frames).  Pipework is seeded per row
     index, so every row of one kind is identical and rows of one kind tile."""
@@ -1362,6 +1505,8 @@ def _dialog_row(i, w=ROW_W, h=ROW_H):
         ty1 = h - 1 if i == 5 else FAR
         tube_frame(cv, LIST_FRAME_X, ty0, LIST_X + LIST_W + 3, ty1)
         tube_frame(cv, CHANNEL_X - 4, ty0, CHANNEL_X + CHANNEL_W + 3, ty1)
+    elif i in (BLANK_ROW, BLANK_TOP):                   # under the options form's header box: border + ground only
+        pass
     elif i in (PANEL_TOP, PANEL_MID, PANEL_BOTTOM):     # the options panel: one frame, full inner width, no channel;
         ty0 = 0 if i == PANEL_TOP else -FAR              # the bottom row = frame rows 4..7, ground, the dialog border 12..15
         ty1 = 7 if i == PANEL_BOTTOM else FAR
@@ -1370,7 +1515,7 @@ def _dialog_row(i, w=ROW_W, h=ROW_H):
         py0 = 4 if i == 0 else 0
         py1 = h - 5 if i == 2 else h - 1
         pw.band(4, py0, w - 5, py1)
-    by0 = 0 if i == 0 else -FAR
+    by0 = 0 if i in (0, BLANK_TOP) else -FAR
     by1 = h - 1 if i in (2, PANEL_BOTTOM) else FAR
     panel_border(cv, 0, by0, w - 1, by1)
     return cv
@@ -1410,11 +1555,14 @@ def build_popp(game):
     cells.append(dict(w=NAME_BOX_W, h=BOX_H, ox=0, oy=0, px=text_box(NAME_BOX_W, BOX_H).px))
     for kind in (PANEL_TOP, PANEL_MID, PANEL_BOTTOM):      # 16 / 17 / 18: the options panel rows
         cells.append(dict(w=ROW_W, h=ROW_H, ox=0, oy=0, px=_dialog_row(kind).px))
-    cells.append(dict(w=OPT_PANEL_W, h=HEADER_H, ox=0, oy=0, px=text_box(OPT_PANEL_W, HEADER_H).px))   # 19: the header box
+    cells.append(dict(w=HEADER_W, h=HEADER_H, ox=0, oy=0, px=text_box(HEADER_W, HEADER_H).px))         # 19: the header box
     knobe = spr.read_spr(find_file(game, 'INTRFACE', 'knobe.spr'))['cells']
     for src in KNOBE_COPIES:                                # 20 / 21 / 22: the lobby's text button and arrows, pixel for pixel
         c = knobe[src]
         cells.append(dict(w=c['w'], h=c['h'], ox=0, oy=0, px=bytearray(c['px'])))
+    cells.append(dict(w=STRIP_W, h=STRIP_H, ox=0, oy=0, px=option_strip().px))                    # 23: one option row's capsules
+    for kind in (BLANK_ROW, BLANK_TOP):                     # 24 / 25: the rows under the header box
+        cells.append(dict(w=ROW_W, h=ROW_H, ox=0, oy=0, px=_dialog_row(kind).px))
     return popp['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
 
 
@@ -1464,21 +1612,30 @@ def cmd_preview(args):
 
 # ---------------------------------------------------------------- apply: a whole set
 PICTURES = re.compile(rb'^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b', re.M | re.I)
-TAB_STRIP = re.compile(rb'^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)110([ \t]+)12(?=\s)', re.M)
+TAB_STRIP = re.compile(rb'^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)(?:110|124|120)([ \t]+)(?:12|16)(?=\s)', re.M)
 DIALOGS = ('LOPTE', 'LQCE', 'LSGE', 'LOBJE')
 DIALOG_COPIES = ('exp/intrf_hd/lopte', 'dc/intrf_hd/lopte', 'ozi_ns/intrf_hd/lopte')
 
 
-def edit_hud_script(data, width):
+HUD_TEXT = re.compile(rb'^(in_text[ \t]+(148|200|234)[ \t]+\d+[ \t]+)(\d+)([ \t]+)(\d+)', re.M)
+
+
+def edit_hud_script(data, width, height=SRC_H):
     """MAINE: `pictures intrf_hd/mainbut`, and the tab strips `picture 3..6` (stock 110x12 at x 521)
-    as the 124x16 strips at the panel's left edge x 516 (+ W-640).  Idempotent; the patcher's
+    as the 120x16 strips at the panel's left edge x 516 (+ W-640); the 124-px form of 28 Sep is rewritten too.  Idempotent; the patcher's
     Edit-HudScript does the same."""
     data = PICTURES.sub(rb'\1intrf_hd/\2', data)
     x = 516 + width - SRC_W
 
     def strip(m):
-        return m.group(1) + str(x).encode() + m.group(3) + b'96' + m.group(4) + b'124' + m.group(5) + b'16'
-    return TAB_STRIP.sub(strip, data)
+        return m.group(1) + str(x).encode() + m.group(3) + b'96' + m.group(4) + b'%d' % TAB_STRIP_W + m.group(5) + b'16'
+    dx, dy = width - SRC_W, height - SRC_H
+
+    def text(m):                                  # the bar's two texts inside the message screen, the DAYS count in its screen (doc 10.54)
+        tx, ty = HUD_TEXT_POS[int(m.group(2))]
+        nx = m.group(3) if tx is None else b'%d' % (tx + dx)
+        return m.group(1) + nx + m.group(4) + b'%d' % (ty + dy)
+    return HUD_TEXT.sub(text, TAB_STRIP.sub(strip, data))
 
 
 WIDGET_KINDS = (b'pushb', b'checkb', b'in_text', b'picture', b'list', b'scroll', b'gadget', b'label',
@@ -1535,7 +1692,7 @@ def console_dialog(data):
         if len(toks) >= 5 and toks[0].lower() in WIDGET_KINDS and toks[1].isdigit() and toks[3].isdigit() and toks[4].isdigit():
             rec[i] = (toks[0].lower(), int(toks[1]), toks)
     rows = [(i, int(t[4]), int(t[3]), int(t[7])) for i, (k, n, t) in rec.items()
-            if k == b'picture' and len(t) >= 8 and t[7].isdigit() and int(t[7]) in ROW_CELLS]
+            if k == b'picture' and len(t) >= 8 and t[7].isdigit() and int(t[7]) in ROW_KINDS]
     if not rows:
         return data
     row_x = min(x for _, _, x, _ in rows)
@@ -1607,9 +1764,11 @@ def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxe
     ordered = sorted(rows, key=lambda r: r[1])
     y0 = ordered[0][1]
     for idx, (li, y, x, c) in enumerate(ordered):
-        cell = 0 if idx == 0 else 1 if idx < 3 else PANEL_TOP if idx == 3 else PANEL_BOTTOM if idx == len(ordered) - 1 else PANEL_MID
+        cell = BLANK_TOP if idx == 0 else BLANK_ROW if idx < 3 else PANEL_TOP if idx == 3 else PANEL_BOTTOM if idx == len(ordered) - 1 else PANEL_MID
         changes.setdefault(li, {})[8] = b'%d' % cell
-    boxes.append((y0 + HEADER_DY, row_x + OPT_PANEL_X, HEADER_CELL))
+    boxes.append((y0 + HEADER_DY, row_x + HEADER_X, HEADER_CELL))
+    for k in range(len(minus)):
+        boxes.append((y0 + OPTION_DY + OPTION_PITCH * k + STRIP_DY, row_x + STRIP_X, ROW_STRIP_CELL))
     band = {my: k for k, (mx, my) in enumerate(minus)}
 
     def option_of(ty):
@@ -1626,7 +1785,7 @@ def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxe
             if o is None:
                 continue
             plus = _pushb_cell(t) in (13, PLUS_CELL)
-            changes[i] = {4: b'%d' % (row_x + (PLUS_X if plus else MINUS_X)), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o),
+            changes[i] = {4: b'%d' % (row_x + (PLUS_X if plus else MINUS_X)), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + OPTION_ARROW_DY),
                           8: b'-11', 9: b'%d' % (PLUS_CELL if plus else MINUS_CELL)}
         elif k == b'pushb' and n in (OK_ID, CANCEL_ID):
             by = y0 + OPTION_DY + OPTION_PITCH * len(minus)
@@ -1636,13 +1795,14 @@ def _options_layout(lines, rec, rows, row_x, minus, changes, rebuilt, drop, boxe
         elif k == b'in_text':
             o = option_of(ty)
             if o is not None:
-                changes[i] = {4: b'%d' % (row_x + VALUE_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + 1)}
+                changes[i] = {4: b'%d' % (row_x + VALUE_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + OPTION_TEXT_DY)}
         elif k == b'label':
             o = option_of(ty)
             if o is not None:
-                changes[i] = {4: b'%d' % (row_x + LABEL_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + 1), 6: b'%d' % LABEL_W, 7: b'14'}
+                changes[i] = {4: b'%d' % (row_x + LABEL_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + OPTION_TEXT_DY), 6: b'%d' % LABEL_W, 7: b'14'}
             elif b'centre' in t:                                        # the title
-                changes[i] = {4: b'%d' % (row_x + OPT_PANEL_X), 5: b'%d' % (y0 + HEADER_DY + TITLE_DY), 6: b'%d' % OPT_PANEL_W, 7: b'%d' % HEADER_H, 13: b'1'}
+                changes[i] = {4: b'%d' % (row_x + HEADER_X + TITLE_X_INSET), 5: b'%d' % (y0 + HEADER_DY + TITLE_Y),
+                              6: b'%d' % (HEADER_W - 2 * TITLE_X_INSET), 7: b'%d' % TITLE_H, 13: b'1'}
 
 
 def _options_header(out):
@@ -1705,7 +1865,7 @@ def cmd_apply(args):
     maine = _find(hd, 'MAINE')
     if maine:
         d = open(maine, 'rb').read()
-        n = edit_hud_script(d, args.width)
+        n = edit_hud_script(d, args.width, args.height)
         if n != d:
             open(maine, 'wb').write(n)
             edits += 1
@@ -1725,7 +1885,7 @@ def cmd_apply(args):
             if n != d:
                 open(f, 'wb').write(n)
                 edits += 1
-    print('%d script(s) edited (pictures intrf_hd/mainbut|popp, tab strips at x %d 124x16)' % (edits, 516 + args.width - SRC_W))
+    print('%d script(s) edited (pictures intrf_hd/mainbut|popp, tab strips at x %d %dx16)' % (edits, 516 + args.width - SRC_W, TAB_STRIP_W))
     return 0
 
 

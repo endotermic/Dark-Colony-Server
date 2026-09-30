@@ -2030,7 +2030,8 @@ $SIZE4 = [regex] '(?m)^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+
 $BACKGROUND = [regex] '(?im)^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)'
 $BG_RETARGET = [regex] '(?im)^([ \t]*background[ \t]+)intrface/(\S+)'
 $PIC_RETARGET = [regex] '(?im)^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b'          # the console-style banks INTRF_HD\MAINBUT.SPR / POPP.SPR (doc 10.49)
-$TAB_STRIP = [regex] '(?m)^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)110([ \t]+)12(?=\s)'
+$TAB_STRIP = [regex] '(?m)^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)(?:110|124|120)([ \t]+)(?:12|16)(?=\s)'
+$HUD_TEXT = [regex] '(?m)^(in_text[ \t]+(148|200|234)[ \t]+\d+[ \t]+)(\d+)([ \t]+)(\d+)'
 $FRAME_XY = [regex] '^([ \t]*)(\d+)([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$'
 $TOKENS = [regex] '\S+|[ \t]+'
 $POSITIONED = @('pushb', 'checkb', 'in_text', 'picture', 'list', 'scroll', 'gadget', 'label', 'count', 'scount')   # pad_background / paint_intro
@@ -2158,7 +2159,12 @@ function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
     # hud_console.edit_hud_script (28 Sep 2026, console-style HUD, doc 10.49): the three tab strips
     # `picture 3..6` (stock 110x12 at x 521) are the 124x16 BUTTON.SPR strips at the panel's left edge
     $tx = [string](516 + $dx)
-    $t = $TAB_STRIP.Replace($t, { param($m) $m.Groups[1].Value + $tx + $m.Groups[3].Value + '96' + $m.Groups[4].Value + '124' + $m.Groups[5].Value + '16' })
+    $t = $TAB_STRIP.Replace($t, { param($m) $m.Groups[1].Value + $tx + $m.Groups[3].Value + '96' + $m.Groups[4].Value + '120' + $m.Groups[5].Value + '16' })
+    # hud_console.HUD_TEXT_POS: the bar's two texts (in_text 148 / 200) 2 px higher inside the message screen, the DAYS count
+    # (in_text 234) at (609, 429) centred in its screen (doc 10.54)
+    $t = $HUD_TEXT.Replace($t, { param($m)
+        switch ($m.Groups[2].Value) { '148' { $nx = $m.Groups[3].Value; $y = 460 } '200' { $nx = $m.Groups[3].Value; $y = 461 } default { $nx = [string](607 + $dx); $y = 430 } }
+        $m.Groups[1].Value + $nx + $m.Groups[4].Value + [string]($y + $dy) })
     $m = $SIZE2.Match($t)
     if ($m.Success) { $t = $t.Substring(0, $m.Index) + ('{0}size{1}{2} {3}{4}' -f $m.Groups[1].Value, $m.Groups[2].Value, $W, $H, $m.Groups[6].Value) + $t.Substring($m.Index + $m.Length) }
     return $t
@@ -2632,10 +2638,13 @@ function Edit-MusicDialog([string] $Text) {
 # 10 px); an in_text without a "-" / "+" pair (the save name) turns its two rows into plain rows (cell 1) under a name
 # box picture (cell 15, 264x24) at (row + 6, top row + 4), the in_text at (row + 14, top row + 10).  A dialog with
 # "-" / "+" pairs (the options dialog) is the options form of the pre-battle menus: rows 3..last one framed panel
-# (cells 16 / 17 / 18), the title a font-1 (MFONTO2) label centred in a header box (cell 19, 292x32 at row + 6,
-# y0 + 14), every option a plain label at x row + 16 with the value (in_text at row + 212) between KNOBE's arrows
-# (cells 21 / 22 at row + 194 / + 280) on y0 + 62 + 32 k, CANCEL / OK as 90x26 text buttons (cell 20, textmsg 8 / 7) at
-# row + 56 / + 158 under the last option; font 0 MFONTO5, bright_pushed 8 / bright_highlight 4.  Box pictures are
+# (cells 16 / 17 / 18; rows 0..2 the blank cells 25 / 24), the title a font-1 (MFONTO2) label centred in a header box
+# (cell 19, 292x44 at row + 6, y0 + 4 - it fills the space between the border and the panel; the label's rect
+# 284x28 at + 4 / + 13 inside it, or its black background erases the box's frame), every option one capsule strip picture (cell 23, 282x24 at row + 11, y0 + 58 + 32 k: the lobby's element
+# frames - label 140, "<" 22, value 70, ">" 32 - joined by grey bars) with the label at row + 27 (116 px), the value
+# in_text at row + 188 and KNOBE's arrows (cells 21 / 22) at row + 161 / + 265 on y0 + 63 + 32 k, CANCEL / OK as 90x26
+# text buttons (cell 20, textmsg 8 / 7) at row + 56 / + 158 under the last option; font 0 MFONTO5, bright_pushed 8 /
+# bright_highlight 4.  Box pictures are
 # regenerated on every pass, numbered with the lowest free widget ids from 23 in y order, one block after the last
 # picture line.
 $DIALOG_WIDGETS = @('pushb', 'checkb', 'in_text', 'picture', 'list', 'scroll', 'gadget', 'label', 'count', 'scount', 'group')
@@ -2659,7 +2668,7 @@ function Edit-DialogConsole([string] $Text) {
     $rows = @()
     foreach ($i in $keys) {
         $r = $rec[$i]
-        if ($r.kind -eq 'picture' -and $r.t.Count -ge 8 -and $DIGITS.IsMatch($r.t[7]) -and [int]$r.t[7] -le 5) {
+        if ($r.kind -eq 'picture' -and $r.t.Count -ge 8 -and $DIGITS.IsMatch($r.t[7]) -and ((0, 1, 2, 3, 4, 5, 16, 17, 18, 24, 25) -contains [int]$r.t[7])) {
             $rows += @{ line = $i; y = [int]$r.t[4]; x = [int]$r.t[3]; cell = [int]$r.t[7] }
         }
     }
@@ -2693,12 +2702,13 @@ function Edit-DialogConsole([string] $Text) {
         $y0 = $ordered[0].y
         for ($k = 0; $k -lt $ordered.Count; $k++) {
             $rw = $ordered[$k]
-            if ($k -eq 0) { $cell = 0 } elseif ($k -lt 3) { $cell = 1 } elseif ($k -eq 3) { $cell = 16 } elseif ($k -eq $ordered.Count - 1) { $cell = 18 } else { $cell = 17 }
+            if ($k -eq 0) { $cell = 25 } elseif ($k -lt 3) { $cell = 24 } elseif ($k -eq 3) { $cell = 16 } elseif ($k -eq $ordered.Count - 1) { $cell = 18 } else { $cell = 17 }
             if (-not $changes.ContainsKey($rw.line)) { $changes[$rw.line] = @{} }
             $changes[$rw.line][8] = [string]$cell
         }
-        $boxes += @{ y = ($y0 + 14); x = ($rowX + 6); cell = 19 }
+        $boxes += @{ y = ($y0 + 4); x = ($rowX + 6); cell = 19 }
         $ms = @($minus | Sort-Object -Property @{ Expression = { $_[1] } })
+        for ($k = 0; $k -lt $ms.Count; $k++) { $boxes += @{ y = ($y0 + 58 + 32 * $k); x = ($rowX + 11); cell = 23 } }
         foreach ($i in $keys) {
             $r = $rec[$i]; $ty = [int]$r.t[4]
             $o = -1
@@ -2708,17 +2718,17 @@ function Edit-DialogConsole([string] $Text) {
                 $drop[$i] = $true
             } elseif ($r.kind -eq 'pushb' -and ((12, 21, 13, 22) -contains $pc)) {
                 if ($o -lt 0) { continue }
-                if ((13, 22) -contains $pc) { $px = $rowX + 280; $pcell = '22' } else { $px = $rowX + 194; $pcell = '21' }
-                $changes[$i] = @{ 4 = [string]$px; 5 = [string]($y0 + 62 + 32 * $o); 8 = '-11'; 9 = $pcell }
+                if ((13, 22) -contains $pc) { $px = $rowX + 265; $pcell = '22' } else { $px = $rowX + 161; $pcell = '21' }
+                $changes[$i] = @{ 4 = [string]$px; 5 = [string]($y0 + 63 + 32 * $o); 8 = '-11'; 9 = $pcell }
             } elseif ($r.kind -eq 'pushb' -and ((55, 56) -contains $r.id)) {
-                $by = $y0 + 62 + 32 * $ms.Count
+                $by = $y0 + 63 + 32 * $ms.Count
                 if ($r.id -eq 56) { $bx = $rowX + 158; $msg = 7 } else { $bx = $rowX + 56; $msg = 8 }
                 $rebuilt[$i] = ('pushb    {0}  0  {1}  {2}   90  26  -11 20  label centre {3} 0  -  remap 0' -f $r.id, $bx, $by, $msg)
             } elseif ($r.kind -eq 'in_text') {
-                if ($o -ge 0) { $changes[$i] = @{ 4 = [string]($rowX + 212); 5 = [string]($y0 + 62 + 32 * $o + 1) } }
+                if ($o -ge 0) { $changes[$i] = @{ 4 = [string]($rowX + 188); 5 = [string]($y0 + 63 + 32 * $o + 1) } }
             } elseif ($r.kind -eq 'label') {
-                if ($o -ge 0) { $changes[$i] = @{ 4 = [string]($rowX + 16); 5 = [string]($y0 + 62 + 32 * $o + 1); 6 = '172'; 7 = '14' } }
-                elseif ($r.t -contains 'centre') { $changes[$i] = @{ 4 = [string]($rowX + 6); 5 = [string]($y0 + 14 + 4); 6 = '292'; 7 = '32'; 13 = '1' } }
+                if ($o -ge 0) { $changes[$i] = @{ 4 = [string]($rowX + 27); 5 = [string]($y0 + 63 + 32 * $o + 1); 6 = '116'; 7 = '14' } }
+                elseif ($r.t -contains 'centre') { $changes[$i] = @{ 4 = [string]($rowX + 10); 5 = [string]($y0 + 17); 6 = '284'; 7 = '28'; 13 = '1' } }
             }
         }
     } else {
@@ -2743,7 +2753,7 @@ function Edit-DialogConsole([string] $Text) {
         $raw = $lines[$i]
         if ($rec.ContainsKey($i)) {
             $r = $rec[$i]
-            if ($drop.ContainsKey($i) -or ($r.kind -eq 'picture' -and $r.t.Count -ge 8 -and $DIGITS.IsMatch($r.t[7]) -and ((14, 15, 19) -contains [int]$r.t[7]))) { continue }
+            if ($drop.ContainsKey($i) -or ($r.kind -eq 'picture' -and $r.t.Count -ge 8 -and $DIGITS.IsMatch($r.t[7]) -and ((14, 15, 19, 23) -contains [int]$r.t[7]))) { continue }
             $used[$r.id] = $true
             if ($rebuilt.ContainsKey($i) -or $changes.ContainsKey($i)) {
                 $p = $raw.IndexOf('%')
@@ -2761,7 +2771,7 @@ function Edit-DialogConsole([string] $Text) {
     foreach ($b in ($boxes | Sort-Object -Property @{ Expression = { $_.y } }, @{ Expression = { $_.x } })) {
         while ($used.ContainsKey($next)) { $next++ }
         $w = 78; $hh = 24
-        if ($b.cell -eq 15) { $w = 264 } elseif ($b.cell -eq 19) { $w = 292; $hh = 32 }
+        if ($b.cell -eq 15) { $w = 264 } elseif ($b.cell -eq 19) { $w = 292; $hh = 44 } elseif ($b.cell -eq 23) { $w = 282 }
         $new += (('picture  {0}  0  {1}   {2}  {3}  {4}   {5}' -f $next, $b.x, $b.y, $w, $hh, $b.cell) + $cr)
         $next++
     }

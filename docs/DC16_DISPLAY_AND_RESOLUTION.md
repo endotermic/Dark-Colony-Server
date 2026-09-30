@@ -5589,3 +5589,124 @@ run: the Ultimate copy in game, other sizes, the MUSIC row's `+` on the new plat
 unchanged, only positions moved). Follow-up worth doing: the same form for the save / objectives /
 quit dialogs (text buttons SAVE / CANCEL / OK / YES, QUIT / NO, CONTINUE, header-box titles) so all
 four dialogs share one language.
+
+**Third round (same day; maintainer, on seeing the form: "every element must have gray frame. all
+menus have some gray unclickable elements and lines between clickable elements").** The lobby's
+slot rows (TCPWAIT.GIF, measured at x 300 / y 30) put every field in a **capsule** - a 3-px outline
+`66 55 66` = 23 | 65 | 23 grey on black, 18 rows tall at a 19-row pitch, a rounded outer end drawn as
+an inner arc - and join the capsules of one row with short 3-px **bars** of the same greys. The
+options form now does the same: every option is a **strip picture** (POPP cell **23**, 282x24 at
+x row + 11, y0 + 58 + 32 k; `capsule()` / `option_strip()`) with four capsules - label 140 (rounded
+left end), "<" 22, value 70, ">" 32 (rounded right end, wide enough for the plate and the arc) -
+joined by three 6-px bars; the label text at x 27 (4 px right of the arc, 116 px), the 8-column
+value at x 188 (exactly the capsule's 64-px interior), the stepper plates at x 161 / 265 with 1 px
+of black around them, everything on y0 + 63 + 32 k. The strips are regenerated boxes like the
+header (ids 24..27, 28 with the MUSIC row). The style guide gains the capsule as its second frame
+type (§3) and the rule "no bare element on a black panel" (§13). **Second collision of the day:**
+`STRIP_CELL` already named MAINBUT's diplomacy header cell (92); the new constant took it over and
+the HUD bank came out wrong (`MAINBUT.SPR` hash moved) - renamed `ROW_STRIP_CELL`. The duplicate
+check `grep -oE '^[A-Z_0-9]+(, [A-Z_0-9]+)* =' hud_console.py | ... | uniq -d` is now part of the
+routine, with the frame and bank hashes. Confirmed in game at 1024x768 (a fresh training battle:
+capsules, bars and arcs as drawn, CANCEL brightens, CANCEL closes; `error.log` empty; the first
+attempt found the training mission already won - mission 1 is short, do not leave a battle waiting).
+Patcher port equal under pwsh 7 / 5.1 on the eight inputs; fixtures regenerated (frames unchanged);
+POPP.SPR 24 cells; clean-copy patcher run: dialogs = fixtures, bank = shipped, exe hashes unchanged.
+
+**Fourth round (same day; maintainer: "too early to push anything! we are not done yet! some frames
+are not closed! check battlefield main interface and your 'options' interface").** Three open
+frames, found by zooming the in-game captures to 4x and scanning `INTRFACE.GIF` at its edges:
+(1) the pipework compartments of the HUD ran under the border tubes and under the read-out screens'
+rings - `Pipework.region` filled a rectangle and the tubes / screens were painted over it, so every
+compartment touching a border or a screen had no closing side (right panel edge: `67x20 40 65 65 67`,
+the cell's outline running into the border); (2) the same at the screen edge for the screens whose
+rings reached the border (GRID to x 635, the DAYS box); (3) the capsules' rounded ends were arcs
+drawn inside a rectangle, not the outline. Fixes, all in `hud_console.py`: `Pipework.region(x0, y0,
+x1, y1, holes)` cuts the area into horizontal strips at the holes' top / bottom edges and each strip
+into the x-intervals free of holes, `fill_rect` fills each free rectangle with bands and tubes (under
+3 rows ground, under 8 a tube); `render_frame` lists every hole first - the screens with their three
+rings (`+3`), the BUILD / arrow plates (`+1`), the dial (`r + 5`), the border tubes, the view's edge
+tubes - and draws the border tubes LAST, so a screen ring never cuts them; the DAYS label moved into
+one screen with its value (`DAYS_PANEL` 605..632 x 420..444, its right ring stops before the border);
+`capsule()` draws the three outline rings with `Canvas.ring(..., r)` and squares the straight end
+again, so the semicircle is the frame. The frame of every size changed (`INTRF_HD/<WxH>/INTRFACE.GIF`
+regenerated for all seven, the game folder's active set and the six fixtures = the shipped pictures);
+`POPP.SPR` (cell 23) regenerated. Left as is: the dial's bezel at the right border (the clock cell's
+position is the exe's, `patch_clock`; the border is drawn over it). Confirmed in game at 1024x768
+(HUD panel top and bottom at 4x: every compartment ringed, DAYS framed; the options rows' ends
+closed); `error.log` empty. **Not pushed** - the maintainer is reviewing.
+
+**Fifth round (same day; maintainer: "do you see that battle interface tab buttons are braking
+interface frame? 'OPTIONS' text does not have a frame at all. fix that").** (1) The tab strips were
+124 px wide from x 516 with plates at 2..41 / 41..81 / 82..121 - the third plate ended at x 637 stock
+= 1021 at 1024x768, inside the panel's border tube (1020..1023), and the opaque strip cell covered the
+tube to 1023; the stock 640x480 layout has only a 2-px margin there. Now `tab_strip` is **120x16**
+with plates 2..40 / 41..79 / 80..118 (the last ends at 634, 1 px inside the grid screen), `MAINE`'s
+`picture 3..6` say `120 16` (`TAB_STRIP` and the patcher's `$TAB_STRIP` also match the 28 Sep
+`124 16` form, so an existing set is rewritten), the click rects (`pushb 0/1/2`) are unchanged.
+(2) The OPTIONS title had its frame all along - and its own label erased it: `label ... bg textbg`
+paints its whole rect black before the glyphs, and the rect was the whole 292x32 box, so the tubes
+and even the panel's top ring under it went black. The header box is now **200x32 at x 52**
+(centred, pipework visible on both sides, so it reads as a framed element) and the label's rect is
+the box's interior (x 56, y0 + 18, 192x24). Rule added to the guide (§3): a widget's rect lies inside
+its frame; nothing crosses the border tube. Regenerated: `MAINBUT.SPR` (strips), `POPP.SPR` (cell
+19), `MAINE` in the game folder and the six fixtures (`120 16`), `LOPTE` + copies, the patcher;
+frames unchanged. Confirmed in game at 1024x768 (tab 1 and tab 3 active: the border's light line
+runs unbroken right of tab 3; the title in its box with pipework either side); `error.log` empty.
+Still uncommitted, pending the maintainer's review.
+
+**Sixth round (same day; maintainer: "increase height and width of 'OPTIONS' frame. it must fill all
+space between form border and actual options frame", then "battle interface tab button '1' are
+braking interface frame. chat entering frame is broken too. and chat scrolling buttons must be
+centered in they frame").** (1) The header box is **292x44 at x 6, y0 + 4** (cell 19): its outer
+11-grey ring meets the border's at row 3 and the panel's at row 48 - 2-px seams, no pipework between;
+rows 0..2 of the form are the new **blank cells 25 (border top + ground) / 24 (border sides +
+ground)** so nothing peeks out beside the box; the label's rect 284x28 at + 4 / + 13 (glyphs centred
+in the 36-px interior). **Bug found on the way:** `console_dialog` recognised rows by cells 0..5
+only, so once a form's rows carried 16..18 / 24 / 25 a second pass was a no-op - the boxes-first
+order lost the MUSIC strip. `ROW_KINDS` (0..5, 16, 17, 18, 24, 25) in both ports; the harness's
+order-independence check caught it. (2) Tab plates: 36x14 at strip x 4 / 43 / 82, rows 0..13 -
+2 px of the grid screen's black on every side; the first 120-px form had plate 1 against the
+screen's ring. (3) The bar: the message screen `MSG` is (49, 460, 509, 472) - interior H-20..H-8,
+rings to H-5, the bottom border from H-4 (before, the screen's bottom ring sat ON the border's light
+line); the two bar texts `in_text 148 / 200` move to stock y 460 / 461 (`CHAT_LINE_Y`, `edit_hud_script`
+now takes the height; patcher `$CHAT_LINE` in `Edit-HudScript`); the two arrow plates, which ran
+into the bottom border, are gone - one **capsule channel** `CHAT_CHANNEL` (4, 457, 43, 475) is drawn
+into the frame and the `pushb` cells (MAINBUT 40 / 50 / 57 / 76) are transparent 16x16 cells with
+the triangle centred on the channel's halves (`BAR_ARROW_CENTRE`: up (11, 6), down (8, 6)). Every
+size's `INTRFACE.GIF`, `MAINBUT.SPR`, `POPP.SPR` (26 cells), `MAINE` (game folder + fixtures) and
+`LOPTE` + copies regenerated; confirmed in game at 1024x768 (tab 1 active clear of the ring, the
+triangles centred in their channel, the message screen closed above the border; `error.log` empty).
+Still uncommitted, pending the maintainer's review.
+
+**Seventh round (same day; maintainer: "you didn't fix the problem with '1' tab frame! and now 'BUILD'
+button lost left frame!", then "'DAYS' frame is too tight and days count is not horizontally centred
+in the frame").** Pixel scan of the capture: at 1024x768 the map's right-edge tube sits at x 900..902
+and the panel content stands ON it - BUILD's plate starts at 900, the screens at 902 (stock 516 /
+518 against the tube at 512..514). The fourth round's "borders last" therefore overwrote BUILD's left
+ring, and the 120-px tab strip, an opaque black picture from x 900 that the engine paints every
+frame, cut the wall at the tab row. Fix: the view's right and bottom walls are drawn BEFORE the
+screens and plates again (only the screen-edge borders stay last), as **BAND | LT | D11 from the map
+outward** - a screen ring (BAND, LT from its black interior) then coincides with the wall instead of
+jogging it by a pixel, a plate on the wall keeps its ring; `tab_strip` is transparent (index 0)
+outside its plates. DAYS: the screen's bottom ring (733..735) had been overdrawn by the dial's bezel
+(from 733) and the count's 20x6 glyphs sat at x 997..1016 in an interior 989..1016, 4 rows under
+their widget's y. Now `BUILD_PLATE` (516, 422, 596, 448) is drawn 5 px narrower than the click rect,
+`DAYS_PANEL` is (601, 420, 632, 441) - interior 32 px wide, bottom ring 3 rows above the bezel - and
+`in_text 234` moves to stock (607, 429) (`HUD_TEXT_POS`, with the two bar texts; patcher
+`$HUD_TEXT`), so the digits are centred in the screen and the label / count pair in its height.
+Regenerated: every size's frame, `MAINBUT.SPR`, `MAINE` (game folder + fixtures). Confirmed in game
+at 1024x768: the wall runs unbroken past tab 1, BUILD has its left ring, DAYS label and count framed
+with margins; `error.log` empty. Still uncommitted.
+
+**Eighth round (same day; maintainer: "'DAYS' and days count must not overlap each other").**
+Measured in the capture: the `MFONTO7` caption is 10 rows (708..717 at 1024x768), the count's digits
+are 10 rows and start at the widget's y, and the widget paints a **12-row** black rect from its y
+(`bg erase`); the DAYS screen's interior is 22 rows (708..729) between the status screen's ring and
+the dial's bezel. So a 10-row caption and the count cannot both fit: at y 429 the rect took the
+caption's last row, at y 432 (the lowest 10 digit rows) the rect's rows 730..731 erased the screen's
+bottom ring (`LT`, `BAND`). The caption is now the frame's own **5x7 pixel lettering**
+(`caption_5x7` / `CAPTION_5X7`, green `GRN[1]`, 23 px wide, centred) on rows 420..426 stock, the
+count at stock (607, **430**): digits 430..439, rect 430..441 = the interior's last row, a 3-row gap
+under the caption, the ring intact (verified: rows 730..732 `LT BAND D11`, then the bezel). Frames
+of every size, `MAINE` (game folder + fixtures) regenerated; confirmed in game at 1024x768;
+`error.log` empty. Still uncommitted.

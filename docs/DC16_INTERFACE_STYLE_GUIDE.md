@@ -23,6 +23,16 @@ maintainer's words that define it:
 * "Keep the icons and portraits, red-outlined button icons which mimics lobby button style everywhere."
 * "Text boxes must have gray frame. Scroll bar must have appropriate frame."
 * "Refactor style of battlefield 'options' menu using best practices taken from pre battle menus."
+* "Every element must have gray frame. All menus have some gray unclickable elements and lines
+  between clickable elements."
+* "Some frames are not closed! Check battlefield main interface and your 'options' interface."
+* "Battle interface tab buttons are breaking interface frame. 'OPTIONS' text does not have a frame
+  at all." Then: "Increase height and width of 'OPTIONS' frame. It must fill all space between form
+  border and actual options frame." And: "Tab button '1' is breaking interface frame. Chat entering
+  frame is broken too. And chat scrolling buttons must be centered in their frame." Then: "You didn't
+  fix the problem with '1' tab frame! And now 'BUILD' button lost left frame!" and "'DAYS' frame is too
+  tight and days count is not horizontally centred in the frame." And: "'DAYS' and days count must
+  not overlap each other."
 
 Reference pictures: `INTRFACE/MULTIWIN.GIF` (lobby), `INTRFACE/NET.GIF`, `INTRFACE/SHUMAN.GIF`,
 `INTRFACE/KNOBE.SPR` (lobby buttons). Look at them at 2x-6x before drawing anything; the rules
@@ -74,12 +84,48 @@ Spacing rules around frames:
   channel keeps **1 px of black** around it.
 * Text keeps **at least 3 px of black** between itself and the inner 35 ring (2 px vertically in a
   24-px box holding the 12-px font).
+* **A widget's rectangle lies inside its frame.** `label` and `in_text` paint their whole rect
+  black (`bg textbg`) before the text, so a label rect as big as its box erases the box's tubes -
+  the OPTIONS title lost its frame that way. Give the widget the box's interior (box + 4 on each
+  side), never the box.
+* **The view's right and bottom walls are drawn UNDER the panel content.** The stock layout puts the
+  panel's plates at x 516 and its screens at 518 while the map's edge tube is 512..514, so BUILD's
+  ring and the screens' rings lie on the wall: the wall is BAND | LT | dark from the map outward (a
+  screen's ring, BAND then LT from its black, coincides with it) and is painted before the screens
+  and plates; only the screen-edge borders are painted last. Pictures the engine draws over the wall
+  (the tab strips) are transparent outside their plates.
+* **Nothing crosses the border tube, and a plate inside a screen keeps 2 px of black to the
+  screen's rings.** The tab strips are 120 px with 36x14 plates at x 4 / 43 / 82, rows 96..109 (2 px
+  of black on every side); the stock 640x480 layout's 2-px margin does not exist any more.
+* **The bar's arrows are bare triangles in one capsule channel** (x 4..43, rows H-23..H-5) drawn
+  into the frame; the `pushb` cells are transparent around the triangle, centred on the channel's
+  halves. The message screen's interior is H-20..H-8 so its rings end above the bottom border; the
+  two bar texts sit at stock y 460 / 461 (2 px higher than shipped) inside it.
+* **A plate may be drawn narrower than its click rectangle** when a neighbour needs the room: the
+  BUILD plate is 81 px in an 86-px rect, which gives the DAYS screen a 32-px interior (601..632;
+  its bottom ring ends above the dial's bezel) with the count centred at stock (607, 430).
+* **Budget the rows before choosing a font.** An `in_text` paints a black rect of its font's line
+  height (12 rows for `MFONTO7`) from its y, and its digits are 10 rows tall; the DAYS screen has 22
+  rows between the status ring and the dial, so its caption is the frame's own **7-row pixel
+  lettering** (`caption_5x7`, `CAPTION_5X7`: 5x7 capitals in the green ramp) on rows 420..426, a
+  3-row gap, the count's rect on 430..441. A caption in `MFONTO7` (10 rows) could only touch it.
 * A frame is never 1 px, never a single light line, never a bevel. The stock "thin light line" list
   window of §10.49 was wrong and is gone.
 
+**The element capsule** is the second frame type, the one the lobby puts around every field of a
+slot row (TCPWAIT.GIF, measured): a **3-px outline `23 | 65 | 23`** on black - dim, because it is
+furniture, not a screen - rectangular, with a **rounded outer end** where a row begins or ends -
+the outline itself bends into a semicircle, so the frame stays closed; an arc floating inside a
+rectangle is an open frame - and **grey bars** (3 px thick, the same greys, 6 px long) joining the
+capsules of one row. Every element of a form - a label, a value, a stepper
+arrow - sits in its own capsule; the bars are the "lines between clickable elements". Text starts
+4 px right of the arc; a plate inside a capsule keeps 1 px of black around it. The light 107 line
+belongs to the screen frames only; a capsule never uses it.
+
 Implementation: `hud_console.tube_frame(cv, x0, y0, x1, y1)` (inclusive rect; coordinates may lie
 off the canvas, so a frame that continues into the next row is drawn with its far edge outside the
-cell), `hud_console.panel_border`, `patch_online.draw_frame` (the same greys as `FRAME_GREYS`),
+cell), `hud_console.panel_border`, `hud_console.capsule` / `option_strip` (the capsules and bars of
+one option row, POPP cell 23), `patch_online.draw_frame` (the same greys as `FRAME_GREYS`),
 patcher `Write-OnlineScreen` / `Edit-DialogConsole`.
 
 ## 4. Plates (buttons)
@@ -119,6 +165,11 @@ rounded 35 tubes with a light edge, separated by tube bands; every cell has a 1-
 
 * **Seed it** (`W*10007+H` for a frame, `5000+row` for a dialog row) so every run of the tool gives
   the same bytes - the patcher compares against fixtures.
+* **Every compartment is closed.** Pipework is laid around the screens (with their rings), the
+  plates and the border tubes - `Pipework.region(..., holes)` cuts the area into strips at the
+  holes' edges and fills only the free rectangles - so no compartment ring is ever cut by a
+  screen, a plate or the screen edge. A cell that touches a hole keeps its own 11-grey ring and
+  the hole's outer ring makes the seam. Borders are drawn last, so nothing cuts them either.
 * Pipework is a background: nothing is read from it, nothing sits on it without a frame or a plate.
   Text on bare pipework is forbidden (the value read-outs of the options dialog were the last case).
 * Rows of one kind tile: a dialog row cell is drawn once and repeated, so a row must look right
@@ -161,12 +212,16 @@ so a dialog letterboxed to any resolution comes out right.
 the list layout: rows 3..last are **one framed panel** the full inner width (cells 16 top / 17 middle /
 18 bottom, frame x 6..297, black 10..293; the bottom row carries the panel's bottom tube on rows
 4..7, ground and the dialog border on 12..15), the title is a font-1 (`MFONTO2`, 21 px) label
-centred in a **header box** (cell 19, 292x32 at x 6, y0 + 14, 2 px of ground above the panel), and
-inside the panel every option is one line: a plain left-aligned label at x 16 (172 px), the value
-field (8 columns, `align centre`) at x 212 between the 14x14 stepper arrows at x 194 and x 280; the
-k-th option's arrows sit on y0 + 62 + 32 k (label and value 1 px lower), 10 px under the panel's top.
-CANCEL (x 56) and OK (x 158), 90x26 text buttons, sit 32 px under the last option, 12 px above the
-panel's bottom. A 32-px band added to the form (the MUSIC row) moves the buttons and the bottom
+centred in a **header box** (cell 19, 292x44 at x 6, y0 + 4: it fills the space between the dialog
+border and the panel's top tube, the rows behind it are the blank cells 25 / 24 - border and ground,
+no pipework; the label's rect is 284x28 at + 4 / + 13, inside the box), and
+inside the panel every option is one **capsule strip** (cell 23, 282x24 at x 11, y0 + 58 + 32 k):
+four capsules - label 140 px with a rounded left end, "<" 22, value 70, ">" 32 with a rounded right
+end - joined by three 6-px bars; the label text at x 27 (116 px), the 8-column centred value at
+x 188 (exactly the capsule's 64-px interior), the 14x14 stepper plates at x 161 and x 265, all on
+y0 + 63 + 32 k (texts 1 px lower); the first strip 6 px under the panel's top. CANCEL (x 56) and OK
+(x 158), 90x26 text buttons, sit 32 px under the last option's arrows, 12 px above the panel's
+bottom. A 32-px band added to the form (the MUSIC row) moves the buttons and the bottom
 rows down and duplicates a middle row - `music_row` / `Edit-MusicDialog` do that, the layout pass
 re-derives every position afterwards.
 
@@ -180,10 +235,10 @@ Any text the engine writes - a read-out (`in_text ... read_only`), an entry fiel
 4 + black 16 + frame 4; a 10-px (`MFONTO7`) or 12-px (`MFONTO5`) line sits vertically centred with
 3 / 2 px of black above and below. Widths:
 
-* **form panel** (options dialog): one framed black panel holds every option line - label, arrows
-  and the 8-column centred `in_text` on one black surface, like the lobby's slot rows on its screen;
-  a framed box per value (POPP cell 14, 78x24, the 30 Sep morning form) is kept as a spare cell
-  but is not the style: boxes inside boxes make a form busy;
+* **form panel** (options dialog): one framed black panel holds every option line; on it each
+  element - label, "<", value, ">" - has its own capsule (§3) and the capsules of a line are joined
+  by bars, the lobby's slot-row look; the light-tube box per value (POPP cell 14, 78x24, the 30 Sep
+  morning form) is kept as a spare cell but is not the style: heavy frames belong to screens;
 * **name box** (save game): the list frame's width, 264 px, the field 4 px in from the interior's
   left edge; a field is left-aligned, a read-out centred;
 * **list window**: 256 px inside its frame; the list widget paints its own black and its own text
@@ -212,8 +267,8 @@ pipework or over the panel border.
   Glyph index = `ord(ch) - 31`.
 * Captions on plates are drawn with the font's glyphs in one flat colour or the lobby ramp - no
   anti-aliasing, no drop shadow.
-* Labels that name a row (GAME SPEED) are plain left-aligned text on the form's black panel; the
-  value they name sits at the right of the same line between its stepper arrows (§6).
+* Labels that name a row (GAME SPEED) are plain left-aligned text in their own capsule; the value
+  they name sits at the right of the same line, in its capsule, between the stepper arrows (§6).
 * Keep 3 px between glyphs and any frame ring; centre read-outs, left-align entry fields.
 
 ## 10. Icons and pictures
@@ -257,6 +312,10 @@ over a frame or a text line are removed from the script, the art under them stay
 
 * No metal, bevels, gradients or anti-aliased edges.
 * No labels or titles on button plates; no icon-only OK / cancel where a word fits.
+* No bare element on a black panel: every label, value and control gets a capsule, and the
+  elements of one row are joined by bars.
+* No open frame: a compartment cut by a screen, a plate or the screen edge, a border line cut by a
+  screen's ring, or a rounded end drawn as a loose arc. Check the edges at 4x before shipping.
 * No text on bare pipework; no black-only dialogs (every black area is a framed screen or a plate).
 * No 1-px frames, no frames touching each other or the border.
 * No index 0 for visible black in a sprite cell; no cyan ramp in art that must keep its colour in a
