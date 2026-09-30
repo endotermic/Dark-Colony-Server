@@ -5465,3 +5465,76 @@ already drawn this one.
 **Shipped since the same evening: the maintainer's own download, copied byte for byte** (maintainer: "i downloaded all soundtracks into `Documents\DC - soundtracks`" -> "do not encode. just copy these tracks where appropriate!"). Eight MP3 files (YouTube uploads of both soundtracks, MPEG-1 Layer III VBR, 48 kHz, 1.0-3.8 MB each, peaks -5..0 dBFS, no clipped material, 0.2-1.2 s lead-in and 1-7 s tail of silence) were matched to the CD tracks by cross-correlation against the image PCM (`ytmatch.py` in the 29 Sep evening scratchpad; correlations 0.84-0.98, speed ratio 1.00000): the uploader's "Track 1-4" are CD tracks **2, 3, 5, 4** of Dark Colony, "Track 5-8" are CD tracks **4, 2, 3, 5** of Council Wars. Copied under the game names - `MUSIC\TRACK02.MP3` = Track 1, `TRACK03` = Track 2, `TRACK04` = Track 4, `TRACK05` = Track 3; `exp\music	rack02.mp3` = Track 6, `track03` = Track 7, `track04` = Track 5, `track05` = Track 8 - without re-encoding (the maintainer's decision; MP3-to-MP3 would only lose quality). The frame streams are intact (`rip_music.py check`: 0 bytes outside frames). The exe reads the files through MCI `mpegvideo`, which decodes VBR and 48 kHz without a change; **confirmed by the maintainer in the game the same evening ("music works now")**. The Council Wars downloads show no -3 dB ceiling, so the clipping above is a property of that image, not of the pressing. The re-ripped image sets of the same evening were in the game folder for about an hour and are superseded; `rip_music.py` stays for the day a secure disc rip arrives.
 
 **Lessons.** (1) When a periodic audio defect is reported, measure the source before the player: aligning the encoded files with the raw PCM decides in one pass whether the encoder or the material is at fault. (2) A raw `.bin` is not a validated audio rip - duplicated-sector scans (exact twins at a constant distance) and a fixed-phase discontinuity test find cache-and-jitter damage that no waveform statistic can separate from musical transients. (3) Musical transients defeat "click" detectors that compare a sector's worst jump against the median phase; only the distribution over all phases (a spike vs. the 99th percentile) tells a rip splice from dense music.
+
+
+#### 10.53 Battlefield dialogs: grey frames around every text box, a framed scroll channel, and the interface style guide **(30 Sep 2026, maintainer: "battlefield skin of forms are not good. text boxes must have gray frame. scroll bar must have appropriate frame. additionally write a clear and descriptive guidelines for drawing an interface elements"; `tools/hud_console.py` (`console_dialog`, cells 14 / 15 of `INTRF_HD/POPP.SPR`), `tools/patch_music.py`, the patcher's `Edit-DialogConsole`; new `docs/DC16_INTERFACE_STYLE_GUIDE.md`; data only, no exe byte; confirmed in game at 1024x768: all four dialogs, `error.log` empty)**
+
+**What was wrong.** The §10.49 dialog rows put the read-outs of the options dialog (100%, MEDIUM,
+HIGH) straight on the pipework - the `in_text` widget paints a bare black rectangle the size of its
+text - the save-name field and the list windows had a single 1-px light line for a frame, and the
+scroll bar (the engine's own red track, 10 px) ran over the pipework of the right-hand band with
+nothing around UP, bar and DOWN. The lobby (MULTIWIN.GIF, measured: `67 65 40 65 67` around every
+black box = 11 | 35 | 107 | 35 | 11) and the ONLINE screen's frames (§10.51, third round) had
+already fixed what a frame is; the dialogs had not received it.
+
+**The rule** (now `DC16_INTERFACE_STYLE_GUIDE.md` §3, §6-§8): every read-out, entry field, list and
+scroll bar sits in a black box wrapped in the lobby tube - `11 | 35 | 107 | 35` from the outside in,
+then black, the 35 ring's corner pixel off - two frames 2 px of ground apart, the panel border the
+same tube seen from outside (`35 | 107 | 35 | 11`). A single-line text box is 24 px tall
+(4 + 16 + 4), a scroll channel is an 18-px black column holding the 16x16 UP / DOWN plates with
+1 px of black around them and the 10-px bar between.
+
+**Plates** (`build_popp`; stock 14 cells, now 16): rows 0 / 1 / 2 = border + pipework (the border
+was a light edge line with a 4-px band and is now the tube), rows **3 / 4 / 5** = the list window in
+its frame at x 6..269 (black 10..265) and the **scroll channel** in its frame at x 272..297 (black
+276..293), ground between border, frames and border - exactly 304 px (4 + 2 + 4 + 256 + 4 + 2 + 4 +
+18 + 4 + 2 + 4); the frame tops on rows 0..3 of cell 3, the bottoms on rows 12..15 of cell 5. New
+cells **14** = value box 78x24 and **15** = name box 264x24 (`text_box`), framed black. Everything
+else (title plate 6, OK 7, cancel 8, arrows 10..13) unchanged.
+
+**Scripts** (`console_dialog`, position-derived and idempotent; the patcher's `Edit-DialogConsole`
+= the same text byte for byte under pwsh 7 and 5.1, tested on all five inputs and on both orders of
+the music edit): the `list` moves to x row + 10, y top row + 4, height to the bottom row + 11
+(LOBJE 314/292/168, LSGE 314/292/216 at 1024x768; before 324/291/169 and 217); UP / DOWN (pushb
+cells 10 / 11 bound to the list) to x row + 277, y top row + 5 / bottom row - 5; the `scroll` bar to
+x row + 280, y top row + 21, height bottom - top - 26. Every "-" / "+" pair (pushb cells 12 / 13)
+gets a **value box picture** (cell 14) at ("-" x + 16, "-" y - 4) with its `in_text` at
+("-" x + 23, "-" y + 3) - LOPTE `picture 23..26` at x 480, y 332 / 364 / 396 / 428, the Ultimate
+copies with the MUSIC row `23..27` (460 for GAME DETAIL); the save-name `in_text 54` of LSGE turns
+its two rows (cells 3 / 5, a list window without a list) into plain rows and gets the **name box**
+`picture 25` at (310, 244) with the field at (318, 250). Box pictures are regenerated on every pass
+(old ones dropped), numbered with the lowest free widget ids from 23 in y order, inserted as one
+block after the last picture line; ids are one object space for every widget kind (§10.51's
+`gadget 8` assert), so 23.. was chosen above the rows and the plates. The 640x480 dialogs (stock
+`intrface/popp`) are untouched: the pass acts only on scripts naming `intrf_hd/popp`.
+
+**Order independence.** `patch_music.write_dialogs` now runs `console_dialog` after `music_row`,
+and the patcher's `Write-MusicDialogs` runs `Edit-DialogConsole` after `Edit-MusicDialog`
+(`Write-InterfaceSet`'s dialog branch runs it after the letterbox shift); boxes-then-music-then-pass
+= music-then-pass, checked. The three `exp/ dc/ ozi_ns/ intrf_hd/lopte` copies in the game folder
+are that output.
+
+**Regenerated:** `INTRF_HD/POPP.SPR` (the one shared copy, repo content), `INTRF_HD/LOPTE LSGE
+LOBJE` + the three `lopte` copies at 1024x768 in the game folder (repo content), the six `hd_sets`
+fixtures (only the three dialogs changed; `INTRFACE.GIF`, `MAINBUT.SPR`, `CLOCK.SPR` byte-identical
+before and after), the patcher (1 523 442 bytes). Clean-copy check (`-All -Resolution 1024x768` and
+`1920x1200 -IgnoreMissingData`, pwsh 7 and 5.1): dialogs = fixtures, copies = tool chain, POPP = the
+shipped bank, exe hashes at the published references (Classic `928bb8d0…`, Ultimate `d970597f…`).
+The game folder's checkout differs from the fixtures only in CRLF (autocrlf; the committed blobs are
+LF-only) - compare with CR stripped.
+
+**Confirmed in game (Classic build, 1024x768, training mission 1, DPI-aware `SendInput` rig from
+the game folder):** F11 = save dialog (name box framed, cursor inside, list frame, channel with UP,
+red bar, DOWN), Game Option tab: Options (four framed value boxes with 100% / 5 / 5 / HIGH centred,
+"-" / "+" 2 px off the boxes), Objectives (text in the framed list, the red thumb in the channel),
+Quit (unchanged apart from the border tube); `error.log` empty. Not run: the Ultimate copy with the
+MUSIC row, other sizes (the pass is position-derived, the fixtures were regenerated for all six).
+The `pushb` step buttons still draw their 16x16 arrow cell as a triangle without a visible plate,
+as before this change.
+
+**Rig notes.** `drive.py` (28 Sep scratchpad, now with `EnumDisplaySettingsW` for the screen size -
+a driver started before the mode switch reads the desktop's size) from the game folder itself, no
+`subst`: TRAINING (421,545) at the Classic 1024x768 menu, name, START TRAINING (680,506), NEXT
+(780,606), TO BATTLE (691,603); Game Option tab (1002,102), its cells Quit (931,131), Options
+(931,213), Objectives (931,336); dialog cancel / OK plates at their script rects + 16. A posted ESC
+at the menu did not quit (known), the process was terminated.

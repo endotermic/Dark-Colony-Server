@@ -536,11 +536,14 @@ def find_ci(folder, name):
 
 
 def write_dialogs(game, stock_mode):
-    """Write the Council Wars copies of the options dialog with the MUSIC row; returns the paths written."""
+    """Write the Council Wars copies of the options dialog with the MUSIC row (laid out on the console
+    plates when the source names intrf_hd/popp); returns the paths written."""
     src = find_ci(os.path.join(game, 'INTRFACE' if stock_mode else 'INTRF_HD'), 'lopte')
     if not src:
         return []
     new = music_row(open(src, 'rb').read())
+    import hud_console                            # the console plates' layout (doc 10.53); a no-op for the stock 640x480 script
+    new = hud_console.console_dialog(new)
     out = []
     for rel in DIALOG_COPIES_640 if stock_mode else DIALOG_COPIES_HD:
         if rel.startswith('ozi_ns/') and not os.path.isdir(os.path.join(game, 'ozi_ns')):

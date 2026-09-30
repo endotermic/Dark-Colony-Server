@@ -1,0 +1,236 @@
+# Dark Colony interface style guide: how to draw interface elements
+
+Guidelines for every piece of interface art that the patched executables show: the battlefield HUD
+(`INTRF_HD/INTRFACE.GIF`, `INTRF_HD/MAINBUT.SPR`), the battlefield dialogs (`INTRF_HD/POPP.SPR` and
+the scripts `LOPTE LQCE LSGE LOBJE`), the menu screens and every future screen. Written 30 Sep 2026
+at the maintainer's request ("write a clear and descriptive guidelines for drawing an interface
+elements") after the dialog frames were redone (`DC16_DISPLAY_AND_RESOLUTION.md` §10.53). The rules
+are the ones the tools implement (`tools/hud_console.py`, `tools/patch_online.py`, the patcher's
+`Edit-DialogConsole` / `Write-OnlineScreen`); when a rule and a tool disagree, fix one of them and
+say so here.
+
+## 1. One visual language: the console
+
+Dark Colony's menus - race selection, the network lobby, story, victory, encyclopedia - are drawn in
+one style, the **console**: dark grey pipework of several intensities, black read-out screens with
+grey tube frames, black button plates with a thin red ring, clean single-colour glyphs. The stock
+battlefield (metal HUD, bevelled dialog rows) was the one exception and has been redrawn in the
+console style (§10.49). **Every new or changed interface element follows the console.** The
+maintainer's words that define it:
+
+* "You must create the same style as in race selection, network lobby and other menus."
+* "Frames must be in lobby style. Lobby is not black, it is in different intensities of gray."
+* "Keep the icons and portraits, red-outlined button icons which mimics lobby button style everywhere."
+* "Text boxes must have gray frame. Scroll bar must have appropriate frame."
+
+Reference pictures: `INTRFACE/MULTIWIN.GIF` (lobby), `INTRFACE/NET.GIF`, `INTRFACE/SHUMAN.GIF`,
+`INTRFACE/KNOBE.SPR` (lobby buttons). Look at them at 2x-6x before drawing anything; the rules
+below were measured on them.
+
+## 2. Palette
+
+All interface art is 8-bit indexed with the screen palette (`PALETTE.GIF`; the terrain palettes
+match it within 3/255 at every index, so battlefield art may use any index). Decode and encode
+sprites through the *screen* palette, never through a bank's embedded one.
+
+| Role | Index | RGB | Use |
+|---|---|---|---|
+| black, erase | 254 | 0,0,0 | interiors of screens, text boxes, plates; the HUD's view hole |
+| transparent | 0 | - | in `.SPR` cells only: "do not draw". Never use 0 for visible black in a cell - use 254 |
+| ground | 67 | 11,11,11 | pipework ground, dark seams, the outer ring of a frame |
+| dark cell | 66 | 23,23,23 | plain pipework cells, the line under a tube |
+| tube body | 65 | 35,35,35 | tube / band body, the two dark rings of a frame, inactive plates |
+| outline | 62 | 43,43,43 | compartment outlines inside pipework |
+| mid grey | 55 / 49 | 65 / 82 | nested outlines, small details |
+| light line | 40 | 107,107,107 | the light edge of every tube and frame |
+| pale grey | 36 | 115,115,115 | rarely, highlights |
+| red ring | 100, 101, 80, 98, 99 | 79,7,7 / 39,7,7 / 255,47,0 / 159,19,19 / 119,11,11 | the lobby button plate (§4) |
+| red glyph ramp | 96..101 | 255,31,31 -> 39,7,7 | red icons, the value / caption red (`CAPTION_RED` 96/98/99/100) |
+| green ramp | 120..125 | 103,255,0 -> 15,39,0 | the pressed plate's grid, green glyphs |
+| cyan ramp | 128..143 | - | **the team colour**: in a cell drawn by a `pushb`/`count` widget it is remapped to the player's colour. Use it only where that is wanted; text drawn by the engine (`scount`) keeps cyan |
+
+Rule of thumb for greys, outside to inside: ground 11 -> 35 -> **107** -> 35 -> black. The light
+line is always one pixel wide and always sits between two 35-grey pixels.
+
+## 3. The frame (tube)
+
+The frame is the console's single most important element. Every read-out screen, list window, text
+box and scroll channel is wrapped in it, and the dialog panel's border is the same tube seen from
+outside.
+
+**Frame, outside in (4 px):** `11 | 35 | 107 | 35`, then the black interior.
+**Panel border, edge in (4 px):** `35 | 107 | 35 | 11`, then pipework.
+**Corners:** the 35-grey ring drops its corner pixel (drawn 11) and the light ring's corner pixel is
+35 - "one pixel off each corner", the ONLINE screen's rule. Nothing else is rounded in a frame; the
+lobby's large rounded bends belong to the background art, not to widget frames.
+
+Spacing rules around frames:
+
+* Two frames never touch: **2 px of ground (11)** between them, and 2 px between a frame and the
+  panel border. Together with the frames' own 11 rings that gives a 4-px dark seam.
+* Inside a frame, the black interior begins right after the inner 35 ring. Widgets that paint their
+  own black background (`list`, `in_text`) may start at the interior's first pixel; a plate inside a
+  channel keeps **1 px of black** around it.
+* Text keeps **at least 3 px of black** between itself and the inner 35 ring (2 px vertically in a
+  24-px box holding the 12-px font).
+* A frame is never 1 px, never a single light line, never a bevel. The stock "thin light line" list
+  window of §10.49 was wrong and is gone.
+
+Implementation: `hud_console.tube_frame(cv, x0, y0, x1, y1)` (inclusive rect; coordinates may lie
+off the canvas, so a frame that continues into the next row is drawn with its far edge outside the
+cell), `hud_console.panel_border`, `patch_online.draw_frame` (the same greys as `FRAME_GREYS`),
+patcher `Write-OnlineScreen` / `Edit-DialogConsole`.
+
+## 4. Plates (buttons)
+
+* **Lobby plate** (`lobby_plate`, from `KNOBE.SPR` cells 0/4/10/28): black fill, a 3-px red ring -
+  outer 100 with 101 corners, the bright line 80, inner 100 with 98/99 corner softening. Used for
+  every clickable button: dialog OK / cancel, title plates, BUILD, the active tab, the bar arrows.
+* **Pressed plate** (`pressed_plate`): the green grid (fill 125, lines 124 every 8 x 7 px, border
+  123). Only for the pressed / lit state.
+* **Grey plate** (`grey_plate`): 35-grey fill, 11 outer ring, light ring, 43 inner ring. For
+  inactive tabs and for the grey frames of grid buttons (portraits, unit orders, tab 3).
+* **Arrows** are `KNOBE.SPR`'s own triangles: symmetric outline triangles in the red ramp, centred
+  in the plate (bar cells on (9.5, 9), dialog 16x16 cells on (8, 8)); `arrow_cell`, `_triangle`.
+* Plates are opaque: black is 254 inside a cell, never 0. A plate never carries pipework.
+* **Button icons**: keep original portraits pixel for pixel inside the plate. Drawn icons follow
+  `BUTTON.SPR`'s neon idiom - one hue per icon (`NEON_RAMPS`), a hot-key box top-left, the circuit
+  line (`action_template`, `action_cell`); wide hot keys (F11, ESC) get the wide box with `MFONTO7`
+  glyphs. Never auto-trace metal glyphs (§10.49 third round: "messy").
+
+## 5. Pipework (the ground)
+
+Everything that is not a screen, a frame or a plate is pipework: the HUD's panel column, bar and
+borders, the dialog rows. `Pipework(cv, seed)` fills a rectangle with horizontal bands of
+compartments (1-px 43 outlines on 11, nested), vent blocks (light dashes on 35), plain 23 cells and
+rounded 35 tubes with a light edge, separated by tube bands; every cell has a 1-px 11 ring. Rules:
+
+* **Seed it** (`W*10007+H` for a frame, `5000+row` for a dialog row) so every run of the tool gives
+  the same bytes - the patcher compares against fixtures.
+* Pipework is a background: nothing is read from it, nothing sits on it without a frame or a plate.
+  Text on bare pipework is forbidden (the value read-outs of the options dialog were the last case).
+* Rows of one kind tile: a dialog row cell is drawn once and repeated, so a row must look right
+  above and below a copy of itself.
+
+## 6. Dialog anatomy (`POPP.SPR` + `LOPTE LQCE LSGE LOBJE`)
+
+A battlefield dialog is a stack of **304x16 rows** (pictures of cells 0..5) with widgets on top; x
+below is relative to the row's x, y to the row's y. The layout is fixed so that every dialog looks
+the same and every list gets its scroll channel:
+
+| x | what |
+|---|---|
+| 0..3 | panel border (35, 107, 35, 11) |
+| 4..5 | ground |
+| 6..9 | list frame (11, 35, 107, 35) |
+| **10..265** | **list window** (256 px black) - the `list` widget's x = row + 10 |
+| 266..269 | list frame (35, 107, 35, 11) |
+| 270..271 | ground |
+| 272..275 | scroll channel frame |
+| **276..293** | **scroll channel** (18 px black): the 16x16 UP / DOWN plates at x 277 with 1 px black around, the engine's 10-px `scroll` bar at x 280 |
+| 294..297 | scroll channel frame |
+| 298..299 | ground |
+| 300..303 | panel border (11, 35, 107, 35) |
+
+Row kinds: **0** top (border on rows 0..3, pipework below), **1** plain (pipework), **2** bottom
+(pipework, border on rows 12..15), **3 / 4 / 5** list top / middle / bottom (the list and channel
+frames; the frame tops on rows 0..3 of cell 3, the bottoms on rows 12..15 of cell 5, so the list
+interior runs from the top row + 4 to the bottom row + 11). Title plates (cell 6, 112x24), OK (7),
+cancel (8) and the arrows (10 up, 11 down, 12 left, 13 right) are placed by the script. Two more
+cells are **text boxes** (§7): 14 the value box 78x24, 15 the name box 264x24.
+
+Vertical rules for a list: `list` y = top row + 4, height to the bottom row + 11; UP at top row + 5,
+DOWN at bottom row - 5 (1 px black above / below the plate); the `scroll` bar from top row + 21,
+height = bottom - top - 26. Buttons that step a value ("-" / "+", 14x14, cells 12 / 13) sit 2 px of
+ground away from their box. Every widget position is **derived from the rows**, never typed as a
+screen coordinate: `hud_console.console_dialog` and the patcher's `Edit-DialogConsole` compute them,
+so a dialog letterboxed to any resolution comes out right.
+
+Widget ids are one object space for every kind (a `picture 24` and a `pushb 24` collide), so new
+overlay pictures take the lowest free ids from 23 and are listed after the rows they cover.
+
+## 7. Text boxes
+
+Any text the engine writes - a read-out (`in_text ... read_only`), an entry field (`in_text`), a list
+(`list`) - sits in a black box with the frame of §3. A **single-line text box is 24 px tall**: frame
+4 + black 16 + frame 4; a 10-px (`MFONTO7`) or 12-px (`MFONTO5`) line sits vertically centred with
+3 / 2 px of black above and below. Widths:
+
+* **value box** (options dialog: 100%, MEDIUM, DC): 78 px, the 8-column `in_text` centred in it
+  (`align centre`), placed between the "-" and "+" buttons at ("-" x + 16, "-" y - 4);
+* **name box** (save game): the list frame's width, 264 px, the field 4 px in from the interior's
+  left edge; a field is left-aligned, a read-out centred;
+* **list window**: 256 px inside its frame; the list widget paints its own black and its own text
+  inset - do not add a second frame inside it.
+
+The box is a **picture of a POPP cell laid over the rows** and listed before the widget that writes
+into it; the widget paints its black over the box interior and its text on top. Text colour: the
+scripts' `remap 4` (cyan -> the menu green / team colour) for dialogs, `CAPTION_RED` for BUILD,
+`LOBBY_CAPTION` for lobby-style captions; never white on pipework.
+
+## 8. Scroll bars
+
+The engine draws the `scroll` widget itself (a 10-px red track with a red thumb). It always lives in
+a **scroll channel**: a black column 18 px wide with UP above and DOWN below, wrapped in the frame,
+2 px of ground from the list frame (§6). On menu screens the same channel is drawn into the
+background picture (`patch_online.frame_rects`: UP x - 4 .. x + w + 4). Never let a bar run over
+pipework or over the panel border.
+
+## 9. Text
+
+* Fonts: `MFONTO7` (cells up to 6x10, 10-px lines: dialogs' labels, values, tab digits),
+  `MFONTO5` (7x12, 12-px lines: the save name, list rows, BUILD caption, lobby rows - it advances
+  8 px per column, so a 56-column list is 448 px). Glyph index = `ord(ch) - 31`.
+* Captions on plates are drawn with the font's glyphs in one flat colour or the lobby ramp - no
+  anti-aliasing, no drop shadow.
+* Labels that name a row (GAME SPEED) sit on a title plate (cell 6); the read-out that belongs to
+  them sits in a value box on the same row axis.
+* Keep 3 px between glyphs and any frame ring; centre read-outs, left-align entry fields.
+
+## 10. Icons and pictures
+
+* Original unit / building / upgrade portraits are used pixel for pixel; art is never resampled up
+  (re-render from geometry or an SVG master; `logo_art.py`, `make_dc_icon.py` are the examples).
+* Drawn glyphs are vector shapes rasterised at 8x and thresholded into a 3-step ramp (`Glyph`,
+  `_icon`, `_neon`), one hue per icon, a thin stroke; no gradients, no metal.
+* The stock engine draws a few things by code (the day / night dial, the credits TTY, the chat
+  lines): give them a matching background in the frame (`hud_console.py clock`, `_dial`), never a
+  second copy of the art.
+
+## 11. Menu screens (full-frame pictures)
+
+A menu background is exactly framebuffer-sized (the blit has no stride), widget coordinates are
+absolute, and `unmask` sprites carry the background baked in - re-bake them after any background
+change (`paint_intro.py`). Screens derived from a stock screen (ONLINE from LOADGE) get their frames
+drawn into the background GIF (`online_background`): header + list, scroll channel, text lines, the
+same 35/107/35 tube as §3 with the 2-px black gap. Decorative animated gadgets that would repaint
+over a frame or a text line are removed from the script, the art under them stays.
+
+## 12. Process: from idea to shipped file
+
+1. **Measure first.** Sample the reference picture (palette indices, run lengths) and write the
+   numbers into the tool as named constants (`hud_console.py` §"the dialog plates").
+2. **Draw by rule, seeded.** The tool must reproduce the shipped bytes on every run; the patcher's
+   PowerShell port must produce the same text / pixels (the fixtures in
+   `Dark-Colony-development/hd_sets/<WxH>/` are the reference, compare with CR stripped).
+3. **Render a preview** (`hud_console.py preview`, or a scratch renderer that composes the script
+   over the cells) and look at it at 2x. Show stock and new side by side before iterating -
+   judgement is faster on a pair.
+4. **Test in the game** (a `subst` drive or the game folder; DPI-aware `SendInput` driver; every
+   dialog opened; `error.log` empty). A fix that touches the click path is clicked through.
+5. **Regenerate**: the game folder (`hud_console.py apply GAME --width W --height H`), the six
+   fixtures (`--no-bank`), the patcher (`gen_apply_script.py`), then verify the patcher on a scratch
+   copy under pwsh 7 and 5.1 and check that the exe hashes did not move for data-only work.
+6. **Document**: `DC16_DISPLAY_AND_RESOLUTION.md` §10.x (what, why, measurements, what was not run),
+   `RELAY_SERVER_PLAN.md` §16, this guide if a rule changed.
+
+## 13. Don'ts
+
+* No metal, bevels, gradients or anti-aliased edges.
+* No text on bare pipework; no black-only dialogs (every black area is a framed screen or a plate).
+* No 1-px frames, no frames touching each other or the border.
+* No index 0 for visible black in a sprite cell; no cyan ramp in art that must keep its colour in a
+  `pushb` cell.
+* No hand-typed screen coordinates for widgets that belong to a row or a frame - derive them.
+* No resampling of the original art.
+* No one-size measurements applied to another size without re-measuring (§10.36's lesson).

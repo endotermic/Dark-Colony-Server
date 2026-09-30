@@ -24,7 +24,10 @@ black, it is in different intensities of gray").
              MAINBUT.SPR pixel for pixel (maintainer), clean red-outline glyphs drawn here for every
              order and option button, KNOBE's own triangles for the arrows, the tab strips, PAUSED
     popp     GAME_DIR --out INTRF_HD/POPP.SPR
-             the 14 dialog plates: pipework rows, red title plate, red OK / cancel, red arrows
+             the 16 dialog plates: pipework rows with the lobby tube as panel border, list rows with
+             the framed list window and the framed scroll channel, red title plate, red OK / cancel,
+             red arrows, and the framed text boxes (14 value box, 15 name box) - doc 10.53 and
+             docs/DC16_INTERFACE_STYLE_GUIDE.md; the scripts are laid out on them by console_dialog()
     apply    TARGET [--game SRC] --width W --height H [--no-bank]
              frame + banks + the script edits (`pictures intrf_hd/mainbut|popp`, tab strips) into a
              game folder or an hd_sets/<WxH> fixture
@@ -1271,45 +1274,86 @@ def cmd_bank(args):
     return 0
 
 
-# ---------------------------------------------------------------- the dialog plates
-def _dialog_row(i, w, h):
-    """A 304x16 dialog row in the lobby's grey pipework (the maintainer: "battlefield menus are
-    still black"): 35-grey side tubes with the light outer edge, a band of compartments between
-    them (seeded per row index, so every row of one kind is identical), row 0 with the top tube,
-    row 2 with the bottom tube, rows 3 / 4 / 5 with the black list window between x 24 and 279."""
+# ---------------------------------------------------------------- the dialog plates (doc 10.53, DC16_INTERFACE_STYLE_GUIDE.md)
+# A battlefield dialog (LOPTE LQCE LSGE LOBJE) is a stack of 304x16 rows from POPP.SPR with widgets
+# on top.  x below is relative to the row.  Every frame is the lobby's tube read from the outside in:
+# 11-grey seam, 35-grey, 107-grey light line, 35-grey, then the black interior (4 px); the panel
+# border is the same tube seen from outside (35 | 107 | 35 | 11 seam, 4 px).  The maintainer
+# (30 Sep 2026): "text boxes must have gray frame. scroll bar must have appropriate frame."
+ROW_W, ROW_H = 304, 16
+TUBE = (D11, BAND, LT, BAND)          # a frame, outside -> inside; interior black
+BORDER = (BAND, LT, BAND, D11)        # the panel border, edge -> inside
+LIST_X, LIST_W = 10, 256              # the list window (black) inside its frame x 6..269
+LIST_FRAME_X = LIST_X - 4             # 6
+CHANNEL_X, CHANNEL_W = 276, 18        # the scroll channel inside its frame x 272..297: UP, bar, DOWN
+ARROW_X = CHANNEL_X + 1               # 277: the 16x16 arrow plates, 1 px black around them
+SCROLL_X, SCROLL_W = 280, 10          # the engine's 10-px bar centred in the channel
+LIST_TOP_DY, LIST_BOTTOM_DY = 4, 12   # black interior of the top row from row 4, of the bottom row to row 11
+ARROW_TOP_DY, ARROW_BOTTOM_DY = 5, -5  # UP at top row + 5, DOWN at bottom row - 5 (1 px black above / below)
+SCROLL_TOP_DY, SCROLL_SPAN_DY = 21, -26  # the bar between the arrows: y = top + 21, h = bottom - top - 26
+BOX_H = 24                            # a single-line text box: frame 4 + interior 16 + frame 4
+VALUE_BOX_W, VALUE_BOX_DX, VALUE_BOX_DY = 78, 16, -4   # LOPTE's read-out between "-" (x, y) and "+": box at (x + 16, y - 4)
+VALUE_TEXT_DX, VALUE_TEXT_DY = 23, 3  # its in_text (8 columns, centred) at ("-" x + 23, "-" y + 3)
+NAME_BOX_W, NAME_BOX_X = 264, LIST_FRAME_X             # LSGE's name field: the list frame's width and x
+NAME_TEXT_DX, NAME_TEXT_DY = LIST_X + 4, LIST_TOP_DY + 6  # its in_text at (row x + 14, top row + 10)
+VALUE_BOX_CELL, NAME_BOX_CELL = 14, 15  # the two cells appended to POPP.SPR (stock: 14 cells, 0..13)
+ROW_CELLS, LIST_CELLS = range(0, 6), (3, 4, 5)
+FIRST_FREE_ID = 23                    # box pictures take the lowest free widget ids from here
+
+
+def _corner(cv, x0, y0, x1, y1, c):
+    for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+        cv.put(x, y, c)
+
+
+def tube_frame(cv, x0, y0, x1, y1, fill=True):
+    """The lobby's grey frame on the inclusive rect (x0, y0)..(x1, y1): rings 11 | 35 | 107 | 35 from
+    the outside in, black inside.  The 35 ring drops its corner pixel and the light ring's corner is
+    35 (the ONLINE screen's "one pixel off each corner").  Coordinates may lie outside the canvas:
+    a frame that continues into the next row is drawn with its far edge off the cell."""
+    if fill:
+        cv.fill(x0, y0, x1, y1, BLK)
+    for k, c in enumerate(TUBE):
+        cv.ring(x0 + k, y0 + k, x1 - k, y1 - k, 0, c)
+    _corner(cv, x0 + 1, y0 + 1, x1 - 1, y1 - 1, D11)
+    _corner(cv, x0 + 2, y0 + 2, x1 - 2, y1 - 2, BAND)
+
+
+def panel_border(cv, x0, y0, x1, y1):
+    """The dialog panel's border: the tube seen from outside, 35 | 107 | 35 | 11 seam."""
+    for k, c in enumerate(BORDER):
+        cv.ring(x0 + k, y0 + k, x1 - k, y1 - k, 0, c)
+    _corner(cv, x0, y0, x1, y1, D11)
+    _corner(cv, x0 + 1, y0 + 1, x1 - 1, y1 - 1, BAND)
+
+
+def text_box(w, h):
+    """A framed black text box cell (the value read-outs of the options dialog, the save name)."""
+    cv = Canvas(w, h)
+    tube_frame(cv, 0, 0, w - 1, h - 1)
+    return cv
+
+
+def _dialog_row(i, w=ROW_W, h=ROW_H):
+    """One 304x16 dialog row: 0 top, 1 plain, 2 bottom (panel border + pipework), 3 / 4 / 5 list
+    top / middle / bottom (the list window in its frame at x 6..269 and the scroll channel in its
+    frame at x 272..297, 11-grey seams between border and frames).  Pipework is seeded per row
+    index, so every row of one kind is identical and rows of one kind tile."""
+    FAR = 1000
     cv = Canvas(w, h, D11)
     pw = Pipework(cv, seed=5000 + i)
-    if i == 0:
-        cv.fill(0, 0, w - 1, 4, BAND)
-        cv.hline(0, w - 1, 0, LT)
-        cv.hline(1, w - 2, 4, D23)
-        pw.band(6, 5, w - 7, h - 1)
-    elif i == 2:
-        pw.band(6, 0, w - 7, h - 6)
-        cv.fill(0, h - 5, w - 1, h - 1, BAND)
-        cv.hline(0, w - 1, h - 1, LT)
-        cv.hline(1, w - 2, h - 5, D23)
-    elif i in (3, 4, 5):
-        pw.band(6, 0, 22, h - 1)
-        pw.band(w - 23, 0, w - 7, h - 1)
-        cv.fill(24, 0, w - 25, h - 1, BLK)
-        cv.vline(23, 0, h - 1, LT)
-        cv.vline(w - 24, 0, h - 1, LT)
-        if i == 3:
-            cv.hline(23, w - 24, 0, LT)
-        if i == 5:
-            cv.hline(23, w - 24, h - 1, LT)
-        if i in (3, 5):
-            for k in range(3):
-                cv.hline(9, 17, 4 + 3 * k, RED[1])
+    if i in LIST_CELLS:
+        ty0 = 0 if i == 3 else -FAR
+        ty1 = h - 1 if i == 5 else FAR
+        tube_frame(cv, LIST_FRAME_X, ty0, LIST_X + LIST_W + 3, ty1)
+        tube_frame(cv, CHANNEL_X - 4, ty0, CHANNEL_X + CHANNEL_W + 3, ty1)
     else:
-        pw.band(6, 0, w - 7, h - 1)
-    for x0, x1 in ((1, 5), (w - 6, w - 2)):
-        cv.fill(x0, 0 if i != 0 else 5, x1, h - 1 if i != 2 else h - 6, BAND)
-    cv.vline(0, 0, h - 1, LT)
-    cv.vline(w - 1, 0, h - 1, LT)
-    cv.vline(5, 0 if i != 0 else 5, h - 1 if i != 2 else h - 6, D23)
-    cv.vline(w - 6, 0 if i != 0 else 5, h - 1 if i != 2 else h - 6, D23)
+        py0 = 4 if i == 0 else 0
+        py1 = h - 5 if i == 2 else h - 1
+        pw.band(4, py0, w - 5, py1)
+    by0 = 0 if i == 0 else -FAR
+    by1 = h - 1 if i == 2 else FAR
+    panel_border(cv, 0, by0, w - 1, by1)
     return cv
 
 
@@ -1323,7 +1367,7 @@ def build_popp(game):
             cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=bytearray()))
             continue
         cv = Canvas(w, h)
-        if (w, h) == (304, 16):
+        if (w, h) == (ROW_W, ROW_H):
             cv = _dialog_row(i, w, h)
         elif (w, h) == (112, 24):                            # title plate: a lobby button plate
             cv = lobby_plate(w, h)
@@ -1342,6 +1386,9 @@ def build_popp(game):
         else:
             cv.px = bytearray(c['px'])
         cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=cv.px))
+    assert len(cells) == VALUE_BOX_CELL, 'stock POPP.SPR has %d cells, expected %d' % (len(cells), VALUE_BOX_CELL)
+    cells.append(dict(w=VALUE_BOX_W, h=BOX_H, ox=0, oy=0, px=text_box(VALUE_BOX_W, BOX_H).px))
+    cells.append(dict(w=NAME_BOX_W, h=BOX_H, ox=0, oy=0, px=text_box(NAME_BOX_W, BOX_H).px))
     return popp['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
 
 
@@ -1408,8 +1455,122 @@ def edit_hud_script(data, width):
     return TAB_STRIP.sub(strip, data)
 
 
+WIDGET_KINDS = (b'pushb', b'checkb', b'in_text', b'picture', b'list', b'scroll', b'gadget', b'label',
+                b'count', b'scount', b'group')
+
+
+def _set_tokens(line, changes):
+    """Rewrite whitespace-separated tokens (1-based index -> bytes) of a script line, keeping its spacing."""
+    parts = re.split(rb'(\s+)', line)
+    n = 0
+    for k, p in enumerate(parts):
+        if p and not p.isspace():
+            n += 1
+            if n in changes:
+                parts[k] = changes[n]
+    return b''.join(parts)
+
+
+def _pushb_cell(t):
+    """The plate cell of a `pushb id desc x y w h A B` line: the non-negative one of A / B
+    (`-16 8` = OK plate 8, `10 -10` = UP arrow 10)."""
+    for v in t[7:9]:
+        if v.isdigit():
+            return int(v)
+    return -1
+
+
+def console_dialog(data):
+    """Lay a battlefield dialog script out on the console plates of POPP.SPR (a script naming
+    `intrf_hd/popp`; anything else is returned unchanged).  Idempotent and position-derived, so the
+    tool chain and the patcher may run it in any order and any number of times:
+
+    * list rows (cells 3 / 4 / 5): the `list` sits in the list window (x row + 10, y top row + 4,
+      down to the bottom row + 11), the UP / DOWN plates (pushb cells 10 / 11 bound to the list) in
+      the scroll channel at x row + 277 (UP top row + 5, DOWN bottom row - 5) and the `scroll` bar
+      between them (x row + 280, 10 px wide);
+    * a "-" / "+" pair (pushb cells 12 / 13) with its read-out `in_text`: a value box picture (cell
+      14, 78x24) at ("-" x + 16, "-" y - 4), the in_text centred in it at ("-" x + 23, "-" y + 3);
+    * any other `in_text` (the save name): its two rows become plain rows (cell 1) and a name box
+      picture (cell 15, 264x24) is laid over them at (row + 6, top row + 4), the in_text at
+      (row + 14, top row + 10);
+    * box pictures are regenerated on every pass (old ones dropped), numbered with the lowest free
+      widget ids from 23 in y order and inserted as one block after the last picture line."""
+    if not re.search(rb'(?im)^[ \t]*pictures[ \t]+intrf_hd/popp\b', data):
+        return data
+    lines = data.split(b'\n')
+    rec = {}                                     # line index -> (kind, id, toks) for widget lines
+    for i, raw in enumerate(lines):
+        toks = raw.split(b'%')[0].split()
+        if len(toks) >= 5 and toks[0].lower() in WIDGET_KINDS and toks[1].isdigit() and toks[3].isdigit() and toks[4].isdigit():
+            rec[i] = (toks[0].lower(), int(toks[1]), toks)
+    rows = [(i, int(t[4]), int(t[3]), int(t[7])) for i, (k, n, t) in rec.items()
+            if k == b'picture' and len(t) >= 8 and t[7].isdigit() and int(t[7]) in ROW_CELLS]
+    if not rows:
+        return data
+    row_x = min(x for _, _, x, _ in rows)
+    assert all(x == row_x for _, _, x, _ in rows), 'dialog rows at different x'
+    changes = {}                                 # line index -> {1-based token: value}
+    # lists with their scroll channel
+    for i, (k, n, t) in rec.items():
+        if k != b'list':
+            continue
+        y0, h = int(t[4]), int(t[6])
+        lr = [y for _, y, _, c in rows if c in LIST_CELLS and y0 - ROW_H < y < y0 + h]
+        if not lr:
+            continue
+        top, bottom = min(lr), max(lr)
+        ly = top + LIST_TOP_DY
+        changes[i] = {4: b'%d' % (row_x + LIST_X), 5: b'%d' % ly, 7: b'%d' % (bottom + LIST_BOTTOM_DY - ly)}
+        for j, (k2, n2, t2) in rec.items():
+            if k2 == b'scroll' and top <= int(t2[4]) <= bottom + ROW_H:
+                changes[j] = {4: b'%d' % (row_x + SCROLL_X), 5: b'%d' % (top + SCROLL_TOP_DY), 6: b'%d' % SCROLL_W,
+                              7: b'%d' % (bottom - top + SCROLL_SPAN_DY)}
+            elif k2 == b'pushb' and b'list' in t2[8:] and _pushb_cell(t2) in (10, 11) and top - ROW_H <= int(t2[4]) <= bottom + ROW_H:
+                up = _pushb_cell(t2) == 10
+                changes[j] = {4: b'%d' % (row_x + ARROW_X), 5: b'%d' % ((top + ARROW_TOP_DY) if up else (bottom + ARROW_BOTTOM_DY))}
+    # text boxes
+    boxes = []                                   # (y, x, cell)
+    minus = [(int(t[3]), int(t[4])) for k, n, t in rec.values() if k == b'pushb' and _pushb_cell(t) == 12]
+    for i, (k, n, t) in rec.items():
+        if k != b'in_text':
+            continue
+        ty = int(t[4])
+        pair = [(mx, my) for mx, my in minus if abs(my - ty) <= 8]
+        if pair:
+            mx, my = pair[0]
+            boxes.append((my + VALUE_BOX_DY, mx + VALUE_BOX_DX, VALUE_BOX_CELL))
+            changes[i] = {4: b'%d' % (mx + VALUE_TEXT_DX), 5: b'%d' % (my + VALUE_TEXT_DY)}
+        else:
+            top = max(y for _, y, _, _ in rows if y <= ty)
+            for li, y, _, c in rows:
+                if y in (top, top + ROW_H) and c in LIST_CELLS:
+                    changes.setdefault(li, {})[8] = b'1'
+            boxes.append((top + LIST_TOP_DY, row_x + NAME_BOX_X, NAME_BOX_CELL))
+            changes[i] = {4: b'%d' % (row_x + NAME_TEXT_DX), 5: b'%d' % (top + NAME_TEXT_DY)}
+    # apply the token changes, drop the old boxes, insert the new ones after the last picture line
+    out, last_picture, used = [], None, set()
+    for i, raw in enumerate(lines):
+        if i in rec:
+            k, n, t = rec[i]
+            if k == b'picture' and len(t) >= 8 and t[7].isdigit() and int(t[7]) in (VALUE_BOX_CELL, NAME_BOX_CELL):
+                continue
+            used.add(n)
+            if i in changes:
+                body, sep, comment = raw.partition(b'%')
+                raw = _set_tokens(body, changes[i]) + sep + comment
+            if k == b'picture':
+                last_picture = len(out)
+        out.append(raw)
+    ids = iter(n for n in range(FIRST_FREE_ID, 1000) if n not in used)
+    cr = b'\r' if out[last_picture].endswith(b'\r') else b''
+    new = [b'picture  %d  0  %d   %d  %d  %d   %d' % (next(ids), x, y, VALUE_BOX_W if c == VALUE_BOX_CELL else NAME_BOX_W, BOX_H, c) + cr
+           for y, x, c in sorted(boxes)]
+    return b'\n'.join(out[:last_picture + 1] + new + out[last_picture + 1:])
+
+
 def edit_dialog_script(data):
-    return PICTURES.sub(rb'\1intrf_hd/\2', data)
+    return console_dialog(PICTURES.sub(rb'\1intrf_hd/\2', data))
 
 
 def _find(folder, name):
