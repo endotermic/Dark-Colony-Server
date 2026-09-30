@@ -5733,3 +5733,60 @@ objectives (text fits again, OK centred), quit (hover brightens NO, CONTINUE, th
 options; `error.log` empty. Clean-copy patcher check: 16 of 16 dialog files = fixtures, the plate bank = the
 shipped one, the Ultimate copies = the tool chain (the `sed` that put the LOBJE / LQCE font line back had
 stripped the fixtures' CRs; both were rebuilt from the stock scripts through the tool chain). Uncommitted.
+
+#### 10.55 Save, objectives and quit dialogs on the black panel **(30 Sep 2026, maintainer: '"save messages", "objectives", "really quit" must have black background'; `tools/hud_console.py` (`_dialog_row`, `_list_form`, POPP cell 27), the patcher's `Edit-DialogConsole`; guide §6, §7, §8, §13 amended; data only, no exe byte; confirmed in game at 1920x1200: all four dialogs)**
+
+**What was wrong.** §10.54's ninth round made every dialog a form, but only the options form
+stood on the black panel (cells 16 / 17 / 18); the save, objectives and quit dialogs kept the
+§10.49 pipework rows (cells 1 / 2) between the header box, the list block and the buttons, and the
+save name's box lay over blank rows - grey compartments where the OPTIONS dialog shows black (the
+maintainer's screenshot of the four side by side).
+
+**The fix.** `console_dialog` now gives EVERY dialog the same body: rows 3..last are the framed
+black panel (cells 16 / 17 / 18) and the list block is a **compartment of that panel**: the list
+window's frame (x 6..269) and the scroll channel's frame (x 272..297) share the panel's side tubes,
+the 2 px between them (x 270..271) are the panel's black instead of ground, and the block's top and
+bottom edges are **full-width dividers** (the frames' own top / bottom tubes continued across
+x 266..275, the panel's side tubes drawn straight again over the frames' rounded corners - a clean
+T-junction, checked at 4x in game). Row kinds: **3** = a list top AT the panel's top (the objectives
+dialog: the panel's rounded corners, the two inner tubes hanging from its top edge), **27** (new,
+`LIST_TOP_INNER`) = a list top INSIDE the panel (the save dialog, under the name box: straight sides
++ divider on rows 0..3), **4** middle, **5** bottom (divider on rows 12..15; the buttons follow on
+black). The name box (cell 15) is now **280x24 inside the panel** at (row + 12, top row + 6), 2 px of
+black to the panel's tubes, the `in_text` at (row + 20, top row + 12) (was 264x24 at x 6 on the
+panel's own tube). The text buttons keep their own y (LSGE 752 / 776 bottom row at 1024x768:
+2 px above the panel's bottom tube). POPP.SPR has **28 cells**; the pipework rows 0 / 1 / 2 stay in
+the bank but no laid-out dialog uses them any more (the 640x480 dialogs are stock).
+
+**Which rows are the list's.** The kinds are derived from the `list` widget's y range (the rows
+with list cells inside `y0 - 16 < y < y0 + h`), not from the cells a row carries: the STOCK save
+dialog frames its name field with two list-top / middle cells (rows 3 / 4, y 240 / 256 at
+1024x768), and the first form of this pass took them for the list's top - only visible when the
+patcher laid the stock script out on a clean copy (`LSGE DIFFERS from fixture`: rows 3 / 4 as
+cells 3 / 4). The Python fixtures and the harness's inputs were all already laid out (name rows
+blank), so they could not show it. **The harness now runs the four stock scripts too** (18 inputs:
+the four laid-out dialogs, the Ultimate MUSIC copy, the §10.49 plain form, the §10.53 boxed forms
+at 1920x1200 and from `15fc03b`, the §10.54 forms from `HEAD`, the four stock scripts, boxed-then-
+music); pwsh 7 = 5.1 = Python on all of them, every input idempotent. Second slip of the same kind
+as §10.54's sixth round: `ROW_KINDS` did not list the new cell 27, so a second pass did not see the
+row and moved the list down a row - caught by the idempotence line of the preview script.
+
+**Regenerated.** The game folder (the maintainer's 1920x1200 set): `INTRF_HD/POPP.SPR` and
+`LSGE` / `LOBJE` / `LQCE` only - `INTRFACE.GIF`, `MAINBUT.SPR`, `SPRITES/CLOCK.SPR`, `MAINE`, `LOPTE`
+and the three `lopte` copies came out byte-identical from `hud_console.py apply` (the frame / bank
+hash routine); the six fixtures (`apply --no-bank`, the three dialogs per size, frames untouched;
+the game folder's three = the 1920x1200 fixture's); the patcher (1 531 715 bytes). Exe hashes
+unchanged.
+
+**Game test** (Classic 1920x1200 build from the game folder itself, `drive.py`: SPACE aborts the
+intro, TRAINING (869,804), name, START TRAINING (1130,722), NEXT (1228,822); F11; Game Option tab
+(1898,102), Objectives (1827,336), Quit (1827,131), Options (1827,213); the dialogs sit at row x 752,
+LSGE y0 408 at this size): Save Game, OBJECTIVES, REALLY QUIT? and OPTIONS all on black inside the
+panel, list block dividers closed, CANCEL / OK / NO, CONTINUE / CANCEL closed them, `error.log`
+empty. Not run: Ultimate, other sizes, 640x480 (stock).
+
+**Rules.** (1) A pass that derives a layout from cell kinds is proven only on the STOCK input - keep
+the stock scripts in the harness. (2) A list-type cell is not a list row; the `list` widget's range
+says which rows are the list's. (3) Every dialog body is the black panel; a frame inside it either
+shares the panel's tubes (a compartment with dividers) or keeps 2 px of black to them (a box).
+Uncommitted at the time of writing.

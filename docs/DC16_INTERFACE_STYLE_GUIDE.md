@@ -192,17 +192,21 @@ the same and every list gets its scroll channel:
 | 6..9 | list frame (11, 35, 107, 35) |
 | **10..265** | **list window** (256 px black) - the `list` widget's x = row + 10 |
 | 266..269 | list frame (35, 107, 35, 11) |
-| 270..271 | ground |
+| 270..271 | black (the panel's interior between the two frames; ground before §10.55) |
 | 272..275 | scroll channel frame |
 | **276..293** | **scroll channel** (18 px black): the 16x16 UP / DOWN plates at x 277 with 1 px black around, the engine's 10-px `scroll` bar at x 280 |
 | 294..297 | scroll channel frame |
 | 298..299 | ground |
 | 300..303 | panel border (11, 35, 107, 35) |
 
-Row kinds: **0** top (border on rows 0..3, pipework below), **1** plain (pipework), **2** bottom
-(pipework, border on rows 12..15), **3 / 4 / 5** list top / middle / bottom (the list and channel
-frames; the frame tops on rows 0..3 of cell 3, the bottoms on rows 12..15 of cell 5, so the list
-interior runs from the top row + 4 to the bottom row + 11). Title plates (cell 6, 112x24), OK (7),
+Row kinds: **16 / 17 / 18** the form panel top / middle / bottom (one tube frame x 6..297, black
+inside - the body of EVERY dialog since §10.55), **3 / 27 / 4 / 5** a list compartment of that
+panel: list top at the panel's top / list top inside the panel / middle / bottom (the list window's
+frame x 6..269 and the scroll channel's frame x 272..297 share the panel's side tubes; the block's
+top and bottom edges are full-width dividers - on rows 0..3 of cells 3 / 27, rows 12..15 of cell 5 -
+so the list interior runs from the top row + 4 to the bottom row + 11), **24 / 25** blank / blank top
+under the header box. Cells **0 / 1 / 2** (pipework top / plain / bottom) are the pre-10.55 rows and
+are no longer laid out. Title plates (cell 6, 112x24), OK (7),
 cancel (8) and the arrows (10 up, 11 down, 12 left, 13 right) are placed by the script. Two more
 cells are **text boxes** (§7): 14 the value box 78x24, 15 the name box 264x24.
 
@@ -216,8 +220,12 @@ so a dialog letterboxed to any resolution comes out right.
 (cell 19, 292x44 at x 6, y0 + 4) with the title as a font-1 (`MFONTO2`) label inside it, the red
 title and label plates are gone, and the buttons are text buttons with their captions in font 2
 (`MFONTO5`): OK (id 56) at x 158 and CANCEL (id 55) at x 56 as 90x26 plates (a lone OK centred at
-x 107), the quit dialog's YES, QUIT / NO, CONTINUE as 180x26 plates (cell 26) at x 62. The list
-dialogs keep their list window and scroll channel; the save name sits in its box over blank rows.
+x 107), the quit dialog's YES, QUIT / NO, CONTINUE as 180x26 plates (cell 26) at x 62. Rows 3..last
+are the black panel in every dialog (§10.55): the list block is a compartment of it (cells 3 / 27 /
+4 / 5, dividers full width), the save name sits in a 280x24 box (cell 15) inside the panel at
+(x 12, top row + 6), the buttons stand on the panel's black. Which rows are the list's is decided by
+the `list` widget's y range, never by a row's cell (the stock save dialog frames its name field with
+two list cells).
 The body font (font 0) is switched to `MFONTO5` only where the text is ours - the options form;
 the objectives list's lines are wrapped for `MFONTO7` and overflow the window in a wider font.
 
@@ -252,8 +260,9 @@ Any text the engine writes - a read-out (`in_text ... read_only`), an entry fiel
   element - label, "<", value, ">" - has its own capsule (§3) and the capsules of a line are joined
   by bars, the lobby's slot-row look; the light-tube box per value (POPP cell 14, 78x24, the 30 Sep
   morning form) is kept as a spare cell but is not the style: heavy frames belong to screens;
-* **name box** (save game): the list frame's width, 264 px, the field 4 px in from the interior's
-  left edge; a field is left-aligned, a read-out centred;
+* **name box** (save game): 280 px inside the panel (x 12..291, 2 px of black to the panel's
+  tubes), the field 4 px in from the interior's left edge; a field is left-aligned, a read-out
+  centred;
 * **list window**: 256 px inside its frame; the list widget paints its own black and its own text
   inset - do not add a second frame inside it.
 
@@ -267,7 +276,7 @@ the lobby's rows), `remap 0` for button captions, `CAPTION_RED` for BUILD; never
 
 The engine draws the `scroll` widget itself (a 10-px red track with a red thumb). It always lives in
 a **scroll channel**: a black column 18 px wide with UP above and DOWN below, wrapped in the frame,
-2 px of ground from the list frame (§6). On menu screens the same channel is drawn into the
+2 px of the panel's black from the list frame (§6). On menu screens the same channel is drawn into the
 background picture (`patch_online.frame_rects`: UP x - 4 .. x + w + 4). Never let a bar run over
 pipework or over the panel border.
 
@@ -329,7 +338,10 @@ over a frame or a text line are removed from the script, the art under them stay
   elements of one row are joined by bars.
 * No open frame: a compartment cut by a screen, a plate or the screen edge, a border line cut by a
   screen's ring, or a rounded end drawn as a loose arc. Check the edges at 4x before shipping.
-* No text on bare pipework; no black-only dialogs (every black area is a framed screen or a plate).
+* No text on bare pipework; no pipework inside a dialog: a dialog's body is the black panel, and
+  every black area on it is a framed compartment, a box or a plate.
+* No layout pass proven on already laid-out inputs only: keep the STOCK scripts in the harness
+  (§10.55's name-field rows).
 * No 1-px frames, no frames touching each other or the border.
 * No index 0 for visible black in a sprite cell; no cyan ramp in art that must keep its colour in a
   `pushb` cell.

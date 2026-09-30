@@ -1393,10 +1393,12 @@ SCROLL_TOP_DY, SCROLL_SPAN_DY = 21, -26  # the bar between the arrows: y = top +
 BOX_H = 24                            # a single-line text box: frame 4 + interior 16 + frame 4
 VALUE_BOX_W, VALUE_BOX_DX, VALUE_BOX_DY = 78, 16, -4   # LOPTE's read-out between "-" (x, y) and "+": box at (x + 16, y - 4)
 VALUE_TEXT_DX, VALUE_TEXT_DY = 23, 3  # its in_text (8 columns, centred) at ("-" x + 23, "-" y + 3)
-NAME_BOX_W, NAME_BOX_X = 264, LIST_FRAME_X             # LSGE's name field: the list frame's width and x
-NAME_TEXT_DX, NAME_TEXT_DY = LIST_X + 4, LIST_TOP_DY + 6  # its in_text at (row x + 14, top row + 10)
+NAME_BOX_W, NAME_BOX_X, NAME_BOX_DY = 280, 12, 6     # LSGE's name field: a box inside the panel, 2 px of black to the
+                                                    # panel's tubes (x 12..291, y top row + 6 under the panel's top tube)
+NAME_TEXT_DX, NAME_TEXT_DY = NAME_BOX_X + 8, NAME_BOX_DY + 6  # its in_text at (row x + 20, top row + 12)
 VALUE_BOX_CELL, NAME_BOX_CELL = 14, 15  # the two cells appended to POPP.SPR (stock: 14 cells, 0..13)
-ROW_CELLS, LIST_CELLS = range(0, 6), (3, 4, 5)
+LIST_TOP_INNER = 27                   # a list top row INSIDE the panel (a compartment divider), cell 3 = at the panel's top
+ROW_CELLS, LIST_CELLS = range(0, 6), (3, 4, 5, LIST_TOP_INNER)
 FIRST_FREE_ID = 23                    # box pictures take the lowest free widget ids from here
 # the options form (doc 10.54): the pre-battle menus' option row - a plain label left, the value between
 # KNOBE's 14x14 arrows right (MULTIE), 90x26 text buttons (LOADGE), a large-font title (LOADGE)
@@ -1408,7 +1410,7 @@ HEADER_DY, HEADER_H, HEADER_W, HEADER_X = 4, 44, 292, 6    # header box y0 + 4..
 TITLE_X_INSET, TITLE_Y, TITLE_H = 4, 13, 28          # the title label's rect lies INSIDE the box (its black background must not erase the tubes):
                                                     # x + 4, 284 wide; y box + 13, 28 tall - the 21-px MFONTO2 glyphs (oy 2) centred in the 36-px interior
 BLANK_ROW, BLANK_TOP = 24, 25                       # rows 0..2 under the header box: border + ground only, no pipework
-ROW_KINDS = set(ROW_CELLS) | {PANEL_TOP, PANEL_MID, PANEL_BOTTOM, BLANK_ROW, BLANK_TOP}   # every cell a dialog row can carry
+ROW_KINDS = set(ROW_CELLS) | {PANEL_TOP, PANEL_MID, PANEL_BOTTOM, BLANK_ROW, BLANK_TOP, LIST_TOP_INNER}   # every cell a dialog row can carry
 OPTION_DY, OPTION_PITCH = 63, 32                    # the k-th option's arrows at y0 + 63 + 32 k (strip 58..81); buttons after the last
 # one option row is a strip picture (cell 23, 282x24 at row + 11): four lobby capsules - label 140, "<" 22, value 70,
 # ">" 32 (plate + rounded end) - joined by 6-px bars (TCPWAIT.GIF slot rows, measured: 3-px outline 23 | 65 | 23, rounded outer ends)
@@ -1494,20 +1496,36 @@ def text_box(w, h):
 
 
 def _dialog_row(i, w=ROW_W, h=ROW_H):
-    """One 304x16 dialog row: 0 top, 1 plain, 2 bottom (panel border + pipework), 3 / 4 / 5 list
-    top / middle / bottom, 16 / 17 / 18 options panel top / middle / bottom, 24 / 25 blank / blank top
-    under the options form's header box (doc 10.54),
-    top / middle / bottom (the list window in its frame at x 6..269 and the scroll channel in its
-    frame at x 272..297, 11-grey seams between border and frames).  Pipework is seeded per row
-    index, so every row of one kind is identical and rows of one kind tile."""
+    """One 304x16 dialog row: 0 top, 1 plain, 2 bottom (panel border + pipework; the pre-10.55 rows,
+    unused by the laid-out dialogs), 16 / 17 / 18 form panel top / middle / bottom (one tube frame
+    x 6..297, black inside), 3 / 27 / 4 / 5 a list compartment of that panel - top at the panel's
+    top / top inside the panel / middle / bottom (the list window in its frame at x 6..269 and the
+    scroll channel in its frame at x 272..297, sharing the panel's side tubes), 24 / 25 blank /
+    blank top under the header box (doc 10.54).  Pipework is seeded per row index, so every row of
+    one kind is identical and rows of one kind tile."""
     FAR = 1000
     cv = Canvas(w, h, D11)
     pw = Pipework(cv, seed=5000 + i)
+    px1 = OPT_PANEL_X + OPT_PANEL_W - 1                 # 297
     if i in LIST_CELLS:
-        ty0 = 0 if i == 3 else -FAR
+        # a compartment of the black panel (doc 10.55): the panel's tubes at x 6..9 / 294..297 (its rounded
+        # top corners on cell 3), inside it the list window's frame and the scroll channel's frame with
+        # 2 px of black between them; a list top inside the panel (cell 27) and every list bottom (cell 5)
+        # are full-width dividers - the frames' own top / bottom tubes continued across x 266..275, the
+        # panel's side tubes drawn straight again over the frames' rounded corners
+        py0 = 0 if i == 3 else -FAR
+        tube_frame(cv, OPT_PANEL_X, py0, px1, FAR)
+        ty0 = 0 if i in (3, LIST_TOP_INNER) else -FAR
         ty1 = h - 1 if i == 5 else FAR
         tube_frame(cv, LIST_FRAME_X, ty0, LIST_X + LIST_W + 3, ty1)
         tube_frame(cv, CHANNEL_X - 4, ty0, CHANNEL_X + CHANNEL_W + 3, ty1)
+        tube_frame(cv, OPT_PANEL_X, py0, px1, FAR, fill=False)
+        if i == LIST_TOP_INNER:
+            for k, c in enumerate(TUBE):
+                cv.hline(OPT_PANEL_X + 4, px1 - 4, k, c)
+        if i == 5:
+            for k, c in enumerate(TUBE):
+                cv.hline(OPT_PANEL_X + 4, px1 - 4, h - 1 - k, c)
     elif i in (BLANK_ROW, BLANK_TOP):                   # under the options form's header box: border + ground only
         pass
     elif i in (PANEL_TOP, PANEL_MID, PANEL_BOTTOM):     # the options panel: one frame, full inner width, no channel;
@@ -1568,6 +1586,7 @@ def build_popp(game):
         cells.append(dict(w=ROW_W, h=ROW_H, ox=0, oy=0, px=_dialog_row(kind).px))
     c = knobe[0]                                            # 26: the lobby's 180x26 text button (LARGEBUTTON) for the quit dialog
     cells.append(dict(w=c['w'], h=c['h'], ox=0, oy=0, px=bytearray(c['px'])))
+    cells.append(dict(w=ROW_W, h=ROW_H, ox=0, oy=0, px=_dialog_row(LIST_TOP_INNER).px))    # 27: a list top inside the panel
     return popp['flags'], cells, [tuple(pal[i * 3:i * 3 + 3]) for i in range(256)]
 
 
@@ -1682,12 +1701,13 @@ def console_dialog(data):
       the scroll channel at x row + 277 (UP top row + 5, DOWN bottom row - 5) and the `scroll` bar
       between them (x row + 280, 10 px wide); OK (id 56) / CANCEL (id 55) are 90x26 text buttons at
       x row + 158 / + 56 (a lone OK centred at + 107) on their own y;
-    * an `in_text` without a "-" / "+" pair (the save name): its two rows become blank rows and a
-      name box picture (cell 15, 264x24) is laid over them at (row + 6, top row + 4), the in_text at
-      (row + 14, top row + 10);
-    * a dialog with "-" / "+" pairs (the options dialog): rows 3..last are one framed panel (cells
-      16 / 17 / 18), every option a capsule strip (cell 23) with its label, the value between KNOBE's
-      arrows (cells 21 / 22) and CANCEL / OK under the last option;
+    * rows 3..last of EVERY dialog are one framed black panel (cells 16 / 17 / 18, doc 10.55); the
+      list rows are compartments of it (cell 3 at the panel's top, 27 for a list top inside the panel,
+      4, 5 - full-width dividers), the buttons and boxes sit on its black;
+    * an `in_text` without a "-" / "+" pair (the save name): a name box picture (cell 15, 280x24)
+      inside the panel at (row + 12, top row + 6), the in_text at (row + 20, top row + 12);
+    * a dialog with "-" / "+" pairs (the options dialog): every option a capsule strip (cell 23) with
+      its label, the value between KNOBE's arrows (cells 21 / 22) and CANCEL / OK under the last option;
     * the quit dialog (pushb 57 present): two 180x26 text buttons (cell 26) at x row + 62 with the
       YES, QUIT / NO, CONTINUE texts (textmsg 2 / 3), the two label widgets that carried them dropped;
     * box pictures are regenerated on every pass (old ones dropped), numbered with the lowest free
@@ -1752,7 +1772,7 @@ def console_dialog(data):
     if minus:
         _options_layout(rec, ordered, row_x, sorted(minus, key=lambda p: p[1]), option_of, changes, rebuilt, boxes)
     else:
-        _list_form(rec, rows, row_x, quit_form, changes, rebuilt, drop, boxes)
+        _list_form(rec, rows, ordered, row_x, quit_form, changes, rebuilt, drop, boxes)
     # apply the changes, drop the old box pictures, insert the new ones after the last picture line
     out, last_picture, used = [], None, set()
     for i, raw in enumerate(lines):
@@ -1812,19 +1832,35 @@ def _options_layout(rec, ordered, row_x, minus, option_of, changes, rebuilt, box
                 changes[i] = {4: b'%d' % (row_x + LABEL_X), 5: b'%d' % (y0 + OPTION_DY + OPTION_PITCH * o + OPTION_TEXT_DY), 6: b'%d' % LABEL_W, 7: b'14'}
 
 
-def _list_form(rec, rows, row_x, quit_form, changes, rebuilt, drop, boxes):
-    """The save, objectives and quit dialogs: the name field in a name box over blank rows, the
-    buttons as text buttons on their own y (OK right / CANCEL left, a lone OK centred; the quit
-    dialog's two 180-px YES, QUIT / NO, CONTINUE buttons centred, their label widgets dropped)."""
+def _list_form(rec, rows, ordered, row_x, quit_form, changes, rebuilt, drop, boxes):
+    """The save, objectives and quit dialogs (doc 10.55): rows 3..last are the same black panel as the
+    options form's (cells 16 / 17 / 18), the list rows are compartments of it (cell 3 when the list
+    starts at the panel's top, 27 for a list top inside the panel, 4, 5), the name field sits in a
+    name box inside the panel, the buttons are text buttons on their own y (OK right / CANCEL left,
+    a lone OK centred; the quit dialog's two 180-px YES, QUIT / NO, CONTINUE buttons centred, their
+    label widgets dropped).  A list ending on the dialog's last row is not laid out (no such dialog).
+    List rows are the list-cell rows inside a `list` widget's y range: the stock save dialog frames
+    its name field with two list-top / middle cells (rows 3 / 4) that are panel rows here."""
     has_cancel = any(k == b'pushb' and n == CANCEL_ID for k, n, t in rec.values())
+    list_y = set()
+    for k, n, t in rec.values():
+        if k == b'list':
+            ly0, lh = int(t[4]), int(t[6])
+            list_y.update(y for _, y, _, c in rows if c in LIST_CELLS and ly0 - ROW_H < y < ly0 + lh)
+    l_top, l_bottom = (min(list_y), max(list_y)) if list_y else (None, None)
+    for idx, (li, y, x, c) in enumerate(ordered):
+        if idx < 3:
+            continue
+        if y in list_y:
+            kind = (3 if idx == 3 else LIST_TOP_INNER) if y == l_top else 5 if y == l_bottom else 4
+        else:
+            kind = PANEL_TOP if idx == 3 else PANEL_BOTTOM if idx == len(ordered) - 1 else PANEL_MID
+        changes.setdefault(li, {})[8] = b'%d' % kind
     for i, (k, n, t) in rec.items():
         if k == b'in_text':
             ty = int(t[4])
             top = max(y for _, y, _, _ in rows if y <= ty)
-            for li, y, _, c in rows:
-                if y in (top, top + ROW_H):
-                    changes.setdefault(li, {})[8] = b'%d' % BLANK_ROW
-            boxes.append((top + LIST_TOP_DY, row_x + NAME_BOX_X, NAME_BOX_CELL))
+            boxes.append((top + NAME_BOX_DY, row_x + NAME_BOX_X, NAME_BOX_CELL))
             changes[i] = {4: b'%d' % (row_x + NAME_TEXT_DX), 5: b'%d' % (top + NAME_TEXT_DY)}
         elif k == b'pushb' and n in (OK_ID, CANCEL_ID, QUIT_NO_ID) and b'list' not in t[8:]:
             by = int(t[4])
