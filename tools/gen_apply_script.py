@@ -105,12 +105,12 @@ def hd_data(g, mode=None):
     # Since 21 Sep 2026 the patcher GENERATES the INTRF_HD set (Write-InterfaceSet), so what it needs
     # are the stock inputs: the INTRFACE scripts, pictures, FIN lists and loading screens the set is
     # derived from (named after the repository's INTRF_HD: every output has a same-named input,
-    # except the three shipped pictures, see set_sources), the four GAMESTAT briefing lists, the
+    # except the four shipped pictures, see set_sources), the four GAMESTAT briefing lists, the
     # shared re-baked logo banks, and for Council Wars the exp\ overrides and the OZI lists.
     hd = [f.rsplit('\\', 1)[-1] for f in _tree(g, 'INTRF_HD') if '\\' not in f[len('INTRF_HD\\'):]]
     files = []
     for name in hd:
-        if name.upper() in ('INTRG.GIF', 'INTRO.GIF', 'INTRFACE.GIF'):
+        if name.upper() in SHIPPED_PICTURES:
             continue                                    # shipped per size (set_sources)
         if name.upper().endswith('SCENE.TXT'):
             continue                                    # the briefing lists come from GAMESTAT (below)
@@ -135,10 +135,14 @@ def hd_data(g, mode=None):
     return files
 
 
+SHIPPED_PICTURES = ('INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF')
+
+
 def set_sources(g, mode):
-    """The three pictures of a resolution that cannot be derived: the painted main-menu backdrops and
-    the spliced HUD frame, shipped as INTRF_HD\<WxH>\*.GIF."""
-    out = ['INTRF_HD\\%s\\%s' % (mode, x) for x in ('INTRG.GIF', 'INTRO.GIF', 'INTRFACE.GIF')]
+    """The four pictures of a resolution that cannot be derived: the painted main-menu backdrops
+    (INTRG / INTRO with their bottom bands, BACKDROP without one - the pre-battle screens' ground,
+    doc 10.56) and the spliced HUD frame, shipped as INTRF_HD\<WxH>\*.GIF."""
+    out = ['INTRF_HD\\%s\\%s' % (mode, x) for x in SHIPPED_PICTURES]
     for f in out:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
@@ -1209,8 +1213,9 @@ W(r'''<#
       * for an HD resolution the script also WRITES the interface data the patched exe reads
         (INTRF_HD\, exp\intrf_hd\, ozi_ns\intrf_hd\: menu scripts, HUD script, briefing lists,
         letterboxed backgrounds, loading screens) from the stock 640x480 files of the game folder and
-        the three pictures per size that ship with the game (INTRF_HD\<WxH>\INTRG.GIF, INTRO.GIF,
-        INTRFACE.GIF).  Re-encoding the GIF backgrounds needs a small GIF reader/writer: its C# SOURCE
+        the four pictures per size that ship with the game (INTRF_HD\<WxH>\INTRG.GIF, INTRO.GIF,
+        BACKDROP.GIF, INTRFACE.GIF; the menu screens are laid over BACKDROP.GIF, the main menu's planet
+        without its bottom band, inside a grey panel frame).  Re-encoding the GIF backgrounds needs a small GIF reader/writer: its C# SOURCE
         TEXT is in this file and is compiled in memory by Add-Type when the set is built, with the
         .NET compiler that is part of Windows (no download, no install, ~2 s).  Doing the same in
         plain PowerShell would take 15-30 s per set under Windows PowerShell 5.1 and minutes under
@@ -1754,13 +1759,16 @@ function Write-LoadingScreens([string] $GameDir, [string] $Mode) {
 #  patch_movies.py), reproduced here line by line; the output is byte-identical for every text
 #  file and pixel-identical for every picture, checked against the tools' output for all sizes.
 #
-#  Three pictures per size cannot be derived and ship with the game: INTRF_HD\<WxH>\INTRG.GIF and
-#  INTRO.GIF (the procedurally painted main-menu planet) and INTRFACE.GIF (the HUD frame).
+#  Four pictures per size cannot be derived and ship with the game: INTRF_HD\<WxH>\INTRG.GIF and
+#  INTRO.GIF (the procedurally painted main-menu planet, with the Take 2 / SSI bottom bands),
+#  BACKDROP.GIF (the same planet without a band: since 1 Oct 2026 the ground of every letterboxed
+#  menu screen, which sits on it in a grey panel frame instead of on black - doc 10.56) and
+#  INTRFACE.GIF (the HUD frame).
 #
 #  ---- A NOTE ON THE COMPILED CODE BELOW ------------------------------------------------------------
 #  The 15 menu backgrounds are GIF files.  The game's loader (gifload.c) insists that the picture is
-#  exactly the size of the screen, so each 640x480 picture has to be decoded, centred on a black
-#  WIDTHxHEIGHT canvas and encoded again (LZW).  That inner loop runs over some 30 million pixels per
+#  exactly the size of the screen, so each 640x480 picture has to be decoded, centred on the
+#  WIDTHxHEIGHT backdrop (remapped into the picture's own palette) and encoded again (LZW).  That inner loop runs over some 30 million pixels per
 #  set.  This script therefore carries the small C# source text of a GIF reader/writer
 #  ($GifCodecSource, about 250 lines, plain to read) and hands it to Add-Type, which compiles it in
 #  memory when the set is built:
@@ -1781,7 +1789,9 @@ using System.Collections.Generic;
 using System.IO;
 
 // DcGif: read one GIF (87a/89a, global or local colour table, interlaced or not, extension blocks
-// skipped), centre it on a black canvas of another size, write it back as a plain GIF the game's
+// skipped), centre it on a canvas of another size - black, or the backdrop picture remapped into the
+// GIF's palette with a grey panel frame around the picture (pad_background.compose_over_backdrop,
+// doc 10.56) - and write it back as a plain GIF the game's
 // loader accepts: header, 256-entry global colour table, one image descriptor at (0,0) filling the
 // screen, no extension blocks, no interlace, LZW with an 8-bit minimum code size.  The LZW output
 // is byte-identical to Pillow's (same clear-code and code-width rules), checked on all 15 backgrounds.
@@ -1975,7 +1985,30 @@ public static class DcGif
     }
 
     // pad_background.pad_gif: the picture centred on a canvas of the first black palette entry.
-    public static byte[] Pad(byte[] src, int W, int H)
+    // pad_background.nearest_grey: the neutral entry (never 0) nearest to g, the first of equals
+    static int NearestGrey(byte[] pal, int g)
+    {
+        int best = -1, bestD = 1 << 30;
+        for (int i = 1; i < 256; i++)
+        {
+            int r = pal[3 * i];
+            if (r == pal[3 * i + 1] && r == pal[3 * i + 2] && Math.Abs(r - g) < bestD) { bestD = Math.Abs(r - g); best = i; }
+        }
+        if (best < 0) throw new Exception("palette has no neutral grey entry");
+        return best;
+    }
+
+    // the panel frame around the picture, outside in (pad_background.FRAME_GREYS)
+    static readonly int[] FrameGreys = new int[] { 35, 107, 35, 11, 11 };
+
+    public static byte[] Pad(byte[] src, int W, int H) { return Pad(src, W, H, null); }
+
+    // backdrop: the BACKDROP.GIF of the size (null = black border).  pad_background.pad_gif /
+    // compose_over_backdrop: every backdrop palette entry goes to the nearest entry of the picture's
+    // palette (index 0 excluded, squared RGB distance, first of equals), black to the padding index;
+    // then the frame rings with the palette's nearest greys, the outer ring's corner pixels ground
+    // and the light ring's corners 35; then the picture itself.
+    public static byte[] Pad(byte[] src, int W, int H, byte[] backdrop)
     {
         Image im = Decode(src);
         if (im.Width > W || im.Height > H) throw new Exception("picture " + im.Width + "x" + im.Height + " does not fit " + W + "x" + H);
@@ -1983,8 +2016,45 @@ public static class DcGif
         for (int i = 0; i < 256; i++) if (im.Palette[i * 3] == 0 && im.Palette[i * 3 + 1] == 0 && im.Palette[i * 3 + 2] == 0) { pad = i; break; }
         if (pad < 0) throw new Exception("no black palette entry to pad with");
         byte[] canvas = new byte[W * H];
-        if (pad != 0) for (int i = 0; i < canvas.Length; i++) canvas[i] = (byte)pad;
         int x0 = (W - im.Width) / 2, y0 = (H - im.Height) / 2;
+        if (backdrop == null)
+        {
+            if (pad != 0) for (int i = 0; i < canvas.Length; i++) canvas[i] = (byte)pad;
+        }
+        else
+        {
+            Image bg = Decode(backdrop);
+            if (bg.Width != W || bg.Height != H) throw new Exception("backdrop is " + bg.Width + "x" + bg.Height + ", not " + W + "x" + H);
+            byte[] lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                int r = bg.Palette[3 * i], g = bg.Palette[3 * i + 1], b = bg.Palette[3 * i + 2];
+                if (r == 0 && g == 0 && b == 0) { lut[i] = (byte)pad; continue; }
+                int best = 1, bestD = 1 << 30;
+                for (int j = 1; j < 256; j++)
+                {
+                    int dr = r - im.Palette[3 * j], dg = g - im.Palette[3 * j + 1], db = b - im.Palette[3 * j + 2];
+                    int d = dr * dr + dg * dg + db * db;
+                    if (d < bestD) { bestD = d; best = j; }
+                }
+                lut[i] = (byte)best;
+            }
+            for (int i = 0; i < canvas.Length; i++) canvas[i] = lut[bg.Pixels[i]];
+            int n = FrameGreys.Length;
+            for (int k = 0; k < n; k++)
+            {
+                byte gi = (byte)NearestGrey(im.Palette, FrameGreys[k]);
+                int X0 = x0 - n + k, Y0 = y0 - n + k, X1 = x0 + im.Width + n - 1 - k, Y1 = y0 + im.Height + n - 1 - k;
+                for (int x = X0; x <= X1; x++) { canvas[Y0 * W + x] = gi; canvas[Y1 * W + x] = gi; }
+                for (int y = Y0; y <= Y1; y++) { canvas[y * W + X0] = gi; canvas[y * W + X1] = gi; }
+            }
+            {
+                int X0 = x0 - n, Y0 = y0 - n, X1 = x0 + im.Width + n - 1, Y1 = y0 + im.Height + n - 1;
+                byte g11 = (byte)NearestGrey(im.Palette, 11), g35 = (byte)NearestGrey(im.Palette, 35);
+                canvas[Y0 * W + X0] = g11; canvas[Y0 * W + X1] = g11; canvas[Y1 * W + X0] = g11; canvas[Y1 * W + X1] = g11;
+                canvas[(Y0 + 1) * W + X0 + 1] = g35; canvas[(Y0 + 1) * W + X1 - 1] = g35; canvas[(Y1 - 1) * W + X0 + 1] = g35; canvas[(Y1 - 1) * W + X1 - 1] = g35;
+            }
+        }
         for (int y = 0; y < im.Height; y++) Array.Copy(im.Pixels, y * im.Width, canvas, (y + y0) * W + x0, im.Width);
         // always GIF87a: Pillow writes 87a whenever no 89a feature (extension block) is used, whatever
         // the source said, and the game accepts both - so the output stays byte-identical to the
@@ -2442,7 +2512,7 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $intrface = Join-Path $GameDir 'INTRFACE'; $hd = Join-Path $GameDir 'INTRF_HD'; $gamestat = Join-Path $GameDir 'GAMESTAT'
     $src = Join-Path $hd $Mode
-    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'INTRFACE.GIF') { if (-not (Find-CI $src $need)) { throw "INTRF_HD\$Mode\$need is missing: the painted backdrops and HUD frame for $Mode ship with the game and cannot be generated" } }
+    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF') { if (-not (Find-CI $src $need)) { throw "INTRF_HD\$Mode\$need is missing: the painted backdrops and HUD frame for $Mode ship with the game and cannot be generated" } }
     Initialize-GifCodec
     $written = 0
     $introScreens = @('bintroe', 'introe', 'buttonse', 'dintroe')
@@ -2482,13 +2552,15 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
         }
         $gifsToPad[[System.IO.Path]::GetFileName($gif).ToUpper()] = $gif
     }
-    # --- backgrounds: the painted / spliced ones ship per size, the rest are letterboxed here
-    foreach ($shipped in 'INTRG.GIF', 'INTRO.GIF', 'INTRFACE.GIF') {
+    # --- backgrounds: the painted / spliced ones ship per size, the rest are letterboxed here - laid
+    # over BACKDROP.GIF (the main menu's planet without its bottom band) in a grey panel frame (doc 10.56)
+    foreach ($shipped in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF') {
         $gifsToPad.Remove($shipped)
         [System.IO.File]::Copy((Find-CI $src $shipped), (Join-Path $hd $shipped), $true); $written++
     }
+    $backdrop = [System.IO.File]::ReadAllBytes((Find-CI $src 'BACKDROP.GIF'))
     foreach ($k in @($gifsToPad.Keys | Sort-Object)) {
-        $bytes = [DcGif]::Pad([System.IO.File]::ReadAllBytes($gifsToPad[$k]), $W, $H)
+        $bytes = [DcGif]::Pad([System.IO.File]::ReadAllBytes($gifsToPad[$k]), $W, $H, $backdrop)
         [System.IO.File]::WriteAllBytes((Join-Path $hd ([System.IO.Path]::GetFileName($gifsToPad[$k]))), $bytes); $written++
     }
     # --- briefing lists.  HSCENE/GSCENE name the campaign endings: the Classic `movies` fix makes the
@@ -3150,7 +3222,7 @@ function Get-RequirementLines($Build, $Patch) {
         $lines += ('needs {0} data files next to the exe: {1} - checked before writing' -f $n, ($parts -join ', '))
     }
     if ($Patch.ContainsKey('SetSources')) {
-        $lines += 'writes the INTRF_HD interface set for this resolution (scripts, briefing lists, letterboxed backgrounds, loading screens; exp\intrf_hd and ozi_ns\intrf_hd too) from the stock files and the three shipped pictures - the GIF codec is C# source in this file, compiled by Add-Type (see the INTERFACE SET section)'
+        $lines += 'writes the INTRF_HD interface set for this resolution (scripts, briefing lists, letterboxed backgrounds on the shipped BACKDROP.GIF in a grey panel frame, loading screens; exp\intrf_hd and ozi_ns\intrf_hd too) from the stock files and the four shipped pictures - the GIF codec is C# source in this file, compiled by Add-Type (see the INTERFACE SET section)'
     }
     return $lines
 }

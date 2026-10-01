@@ -27,6 +27,19 @@ So letterboxing a screen is three coupled edits, which is why they live in one t
     b. set the script's `size` to `0 0 W H` (the rect is erased at open; it must stay full-screen);
     c. add the content offset (X, Y) to every positioned widget's x and y.
 
+Since 1 Oct 2026 (doc 10.56; maintainer: "pre battle dialogs on higher resolutions than original
+are on black background ... create realistic picture based on main menu background which can be
+used as a background for all prebattle forms including main menu") the canvas of (a) is not black
+but the main menu's backdrop - `paint_intro.py`'s realistic Mars scene without its bottom band,
+BACKDROP.GIF, shipped per size as INTRF_HD/<WxH>/BACKDROP.GIF - and the 640x480 picture sits in
+a panel frame on it: from the outside `35 | 107 | 35` (the style guide's tube, seen from outside),
+then 2 px of ground (11), then the picture; the outer ring's corner pixel is ground and the light
+ring's corner is 35, as every frame in the guide. Every screen keeps its own palette (the sprites
+drawn on it are decoded through it), so the backdrop is remapped through a 256-entry nearest-colour
+table into the screen's palette (black -> the screen's padding index) and the frame greys are the
+palette's nearest neutral greys. Without a backdrop (`--backdrop none`, or no BACKDROP.GIF for the
+size) the border is black as before.
+
 The four sub-window dialogs without a background (LOBJE, LOPTE, LQCE, LSGE: objectives, options,
 quit and save/load over the battlefield) are shifted instead by half the growth, ((W-640)/2,
 (H-480)/2), rect and widgets alike, so they stay centred on the map view, which grows
@@ -109,6 +122,103 @@ HUD_SCRIPT = 'maine'
 # with the picture centred, the same treatment as the GIF backgrounds. The BitBlt destination
 # cannot be moved instead: it is two `push 0` imm8 bytes and 192 does not fit in a signed byte.
 LOADING_BITMAPS = ('LOAD.BMP', 'LOAD2.BMP')
+
+# The pre-battle screens' ground (doc 10.56): the main menu's backdrop without its bottom band,
+# one file per size beside the other shipped pictures (INTRF_HD/<WxH>/BACKDROP.GIF), and the
+# panel frame around the 640x480 picture, outside in (style guide section 3: the tube seen from
+# outside, then ground). The patcher's DcGif.Pad is the byte-identical port.
+BACKDROP_GIF = 'BACKDROP.GIF'
+FRAME_GREYS = (35, 107, 35, 11, 11)
+
+
+def nearest_grey(palette, grey):
+    """Index (never 0) of the neutral palette entry nearest to `grey`; the first of equals wins."""
+    best, best_d = None, 1 << 30
+    for i in range(1, 256):
+        r, g, b = palette[3 * i], palette[3 * i + 1], palette[3 * i + 2]
+        if r == g == b and abs(r - grey) < best_d:
+            best, best_d = i, abs(r - grey)
+    if best is None:
+        raise ValueError('palette has no neutral grey entry')
+    return best
+
+
+def backdrop_lut(bg_palette, palette, black):
+    """256-entry table: backdrop palette index -> nearest entry of `palette` (index 0 excluded,
+    squared RGB distance, first of equals wins); the backdrop's blacks -> `black`."""
+    lut = [0] * 256
+    for i in range(256):
+        r, g, b = bg_palette[3 * i], bg_palette[3 * i + 1], bg_palette[3 * i + 2]
+        if r == g == b == 0:
+            lut[i] = black
+            continue
+        best, best_d = 1, 1 << 30
+        for j in range(1, 256):
+            d = (r - palette[3 * j]) ** 2 + (g - palette[3 * j + 1]) ** 2 + (b - palette[3 * j + 2]) ** 2
+            if d < best_d:
+                best, best_d = j, d
+        lut[i] = best
+    return lut
+
+
+def compose_over_backdrop(im, backdrop, width, height, black):
+    """The paletted picture `im` (sw x sh) centred on the backdrop (a paletted width x height
+    image) remapped into im's palette, inside the FRAME_GREYS panel frame. Returns a P image."""
+    Image = need_pil()
+    if backdrop.size != (width, height):
+        raise ValueError('backdrop is %dx%d, not %dx%d' % (backdrop.size + (width, height)))
+    palette = im.getpalette()
+    lut = backdrop_lut(backdrop.getpalette(), palette, black)
+    canvas = backdrop.point(lut)                           # indices through the table
+    canvas.putpalette(palette)
+    sw, sh = im.size
+    x0, y0 = (width - sw) // 2, (height - sh) // 2
+    n = len(FRAME_GREYS)
+    px = canvas.load()
+    for k, grey in enumerate(FRAME_GREYS):                 # k = 0 is the outermost ring
+        gi = nearest_grey(palette, grey)
+        X0, Y0, X1, Y1 = x0 - n + k, y0 - n + k, x0 + sw + n - 1 - k, y0 + sh + n - 1 - k
+        for x in range(X0, X1 + 1):
+            px[x, Y0] = gi
+            px[x, Y1] = gi
+        for y in range(Y0, Y1 + 1):
+            px[X0, y] = gi
+            px[X1, y] = gi
+    X0, Y0, X1, Y1 = x0 - n, y0 - n, x0 + sw + n - 1, y0 + sh + n - 1
+    g11, g35 = nearest_grey(palette, 11), nearest_grey(palette, 35)
+    for x, y in ((X0, Y0), (X1, Y0), (X0, Y1), (X1, Y1)):
+        px[x, y] = g11                                     # the outer ring drops its corner pixel
+    for x, y in ((X0 + 1, Y0 + 1), (X1 - 1, Y0 + 1), (X0 + 1, Y1 - 1), (X1 - 1, Y1 - 1)):
+        px[x, y] = g35                                     # the light ring's corner is 35
+    canvas.paste(im, (x0, y0))
+    return canvas
+
+
+def find_backdrop(intrface_dir, width, height):
+    """The backdrop picture for a size: INTRF_HD/<WxH>/BACKDROP.GIF under the game root (the
+    shipped copy), else a BACKDROP.GIF of that size beside the scripts or in the base INTRFACE
+    (paint_intro.py's fresh output); None when there is none."""
+    Image = need_pil()
+    d = os.path.abspath(intrface_dir)
+    root = os.path.dirname(d)
+    if os.path.basename(root).lower() == OVERRIDE_PARENT:
+        root = os.path.dirname(root)
+    cands = []
+    hd = next((os.path.join(root, fn) for fn in os.listdir(root) if fn.lower() == HD_DIR), None)
+    if hd:
+        cands.append(os.path.join(hd, '%dx%d' % (width, height), BACKDROP_GIF))
+    for folder in [d] + base_intrface_dirs(intrface_dir):
+        cands.append(os.path.join(folder, BACKDROP_GIF))
+    for c in cands:
+        folder, name = os.path.dirname(c), os.path.basename(c)
+        if not os.path.isdir(folder):
+            continue
+        hit = next((os.path.join(folder, fn) for fn in os.listdir(folder) if fn.lower() == name.lower()), None)
+        if hit:
+            with Image.open(hit) as im:
+                if im.size == (width, height) and im.mode == 'P':
+                    return hit
+    return None
 
 
 def need_pil():
@@ -284,8 +394,10 @@ def check_gif_layout(path):
     return None
 
 
-def pad_gif(src, dst, width, height):
-    """Centre src on a width x height canvas, preserving the palette exactly."""
+def pad_gif(src, dst, width, height, backdrop=None):
+    """Centre src on a width x height canvas, preserving the palette exactly: on black, or (with
+    `backdrop`, a BACKDROP.GIF path of that size) on the main menu's backdrop inside the panel
+    frame (compose_over_backdrop). Returns (sw, sh, pad index)."""
     Image = need_pil()
     with Image.open(src) as im:
         if im.mode != 'P':
@@ -299,9 +411,13 @@ def pad_gif(src, dst, width, height):
                     if tuple(palette[i * 3:i * 3 + 3]) == (0, 0, 0)), None)
         if pad is None:
             raise ValueError('%s has no black palette entry to pad with' % src)
-        canvas = Image.new('P', (width, height), pad)
-        canvas.putpalette(palette)
-        canvas.paste(im, ((width - sw) // 2, (height - sh) // 2))
+        if backdrop:
+            with Image.open(backdrop) as bg:
+                canvas = compose_over_backdrop(im, bg, width, height, pad)
+        else:
+            canvas = Image.new('P', (width, height), pad)
+            canvas.putpalette(palette)
+            canvas.paste(im, ((width - sw) // 2, (height - sh) // 2))
         canvas.save(dst, format='GIF', version=version, interlace=False, optimize=False)
     return sw, sh, pad
 
@@ -400,7 +516,9 @@ def q(p):
 
 def cmd_plan(args, jobs, skipped):
     from PIL import Image
-    print('target framebuffer %d x %d\n' % (args.width, args.height))
+    print('target framebuffer %d x %d' % (args.width, args.height))
+    bd = resolve_backdrop(args)
+    print('  letterbox ground: %s\n' % (bd if bd else 'black (no backdrop picture)'))
     gifs = {}
     for script, gif, gw, gh in jobs:
         gifs.setdefault(gif, []).append((script, gw, gh))
@@ -460,8 +578,21 @@ def cmd_plan(args, jobs, skipped):
     return 0
 
 
+def resolve_backdrop(args):
+    """The backdrop path from --backdrop (a file, or `none`), else the one find_backdrop finds."""
+    if args.backdrop:
+        if args.backdrop.lower() == 'none':
+            return None
+        if not os.path.isfile(args.backdrop):
+            raise SystemExit('%s: no such backdrop picture' % args.backdrop)
+        return args.backdrop
+    return find_backdrop(args.dir, args.width, args.height)
+
+
 def cmd_apply(args, jobs, skipped):
     done, problems = {}, []
+    backdrop = resolve_backdrop(args)
+    print('letterbox ground: %s' % (backdrop if backdrop else 'black (no backdrop picture)'))
     for script, gif, gw, gh in jobs:
         if gw > args.width or gh > args.height:
             problems.append('%s: %dx%d does not fit %dx%d'
@@ -470,7 +601,7 @@ def cmd_apply(args, jobs, skipped):
         if gif not in done:
             backup(gif)
             try:
-                sw, sh, pad = pad_gif(gif + '.bak', gif, args.width, args.height)
+                sw, sh, pad = pad_gif(gif + '.bak', gif, args.width, args.height, backdrop)
             except ValueError as e:
                 shutil.copy2(gif + '.bak', gif)
                 problems.append(str(e))
@@ -484,8 +615,9 @@ def cmd_apply(args, jobs, skipped):
                 done[gif] = None
                 continue
             done[gif] = (sw, sh)
-            print('padded  %-24s %dx%d -> %dx%d, border index %d'
-                  % (os.path.basename(gif), sw, sh, args.width, args.height, pad))
+            print('padded  %-24s %dx%d -> %dx%d, %s'
+                  % (os.path.basename(gif), sw, sh, args.width, args.height,
+                     'on the backdrop in a panel frame' if backdrop else 'border index %d' % pad))
         if done[gif] is None:
             continue
         sw, sh = done[gif]
@@ -570,6 +702,9 @@ def main(argv=None):
     ap.add_argument('--only', help='act on one script only, e.g. NEWGAMEE')
     ap.add_argument('--include-hud', action='store_true',
                     help='also pad MAINE (almost certainly wrong: see the docstring)')
+    ap.add_argument('--backdrop', help='the BACKDROP.GIF to lay the screens on (default: the one '
+                                       'for the size under INTRF_HD/<WxH>/ or beside the scripts), '
+                                       'or `none` for a black border')
     args = ap.parse_args(argv)
 
     if not os.path.isdir(args.dir):

@@ -5827,3 +5827,177 @@ wall pixels at x 1796 / 1797 read (33,32,33) / (107,105,107) before and after cl
 **Rule: a picture widget's rect is erased before every repaint - whatever the frame shows inside
 that rect must be in the picture, transparency only saves the first paint.** And: a dialog's `size`
 rect must cover every row (check `size` against the last row when adding rows).
+
+#### 10.56 A realistic Mars backdrop for the main menu and every pre-battle screen **(1 Oct 2026, maintainer: "pre battle dialogs on higher resolutions than original are on black background. I need you to create realistic picture based on main menu background which can be used as a background for all prebattle forms including main menu"; `tools/paint_intro.py` (`paint`, `scene`, `render(..., band=False)`, `crescent_tail_row`), `tools/pad_background.py` (`compose_over_backdrop`, `--backdrop`), `tools/split_hd_data.py` (`HD_ONLY`), the patcher's `DcGif.Pad(src, W, H, backdrop)` / `Write-InterfaceSet`; a fourth shipped picture per size, `INTRF_HD/<WxH>/BACKDROP.GIF`; data only, no exe byte; confirmed in game at 1920x1200 in both builds)**
+
+**What was wrong.** Every full-screen menu other than the main menu is the stock 640x480 picture
+letterboxed by `pad_background.py` (§10.1): the GIF is centred on a black canvas and the widgets
+are shifted by the content offset. At 1024x768 the black border is 192 px wide, at 1920x1200 it is
+640 px: the race selection, the network screens, LOAD GAME, the story and victory screens sat as a
+small picture in a black field. The main menu itself was repainted full-frame in §10.11 (a
+procedural starfield and the rim-lit limb of Mars, measured from the stock art), but as a painted
+gradient - a flat orange band with faint noise.
+
+**The picture.** `paint_intro.paint` renders the scene realistically now, on the stock geometry
+exactly: the planet circle (centre (320.2, 351) of 640x480, radius 291.4 rows), the lit crescent
+45 px deep at the top of the limb, the 10 px glow outside it and the star density (4.95e-3 per sky
+pixel) are the measured constants of §10.11, so every menu layout rule built on them (the DC logo
+under the crescent's tail at row 112 of the 480-row design - `CRESCENT_TAIL`, `cw_menu_lift`; the
+credits box; the button block hung from the title) holds without a change. Inside that frame:
+
+* the planet is a sphere lit by a sun above and behind it (`sun_direction`: the elevation that puts
+  the terminator 45 px inside the limb on the centre line, tan β = sqrt(2d-d²)/(1-d), β = 32.3°);
+  the surface is a height field of rolling terrain and 900 bowl craters with raised rims (power-law
+  radii, flat floors above 20 texture px), bump-mapped under a Mars-like albedo map (broad dark
+  regions from a smoothstepped low-frequency noise, mottled plains, fine dust streaks); the Lambert
+  term is steepened near the terminator (`nl^1.6`, rough-surface shadowing) and multiplied by an
+  envelope on the FLAT sphere's n·L (`clip(nl/0.10)^2.5`), so no lit crater rim pokes beyond the
+  geometric terminator - that envelope is what keeps the DC logo rows black (first renders put lit
+  rims 7-10 rows below the limit at 1024x768 and 1280x720); a thin dust haze brightens the lit rim
+  and glows outside the limb in two layers (dense warm, thin pale), fading with the angle from the
+  top as the stock glow did;
+* the sphere is parametrised about the VIEW axis (latitude = angular distance from the limb,
+  longitude = position around it): the visible crescent then holds no texture pole and features
+  foreshorten radially the way real terrain does. The first render used a pole at the top of the
+  limb and every streak converged there;
+* stars follow a magnitude-like brightness distribution (`0.075·(1-u)^-0.85`, many faint, a heavy
+  bright tail), colour temperatures from blue-white to orange with rare red, point-source sizes
+  that do not grow with the canvas, a soft halo on the bright ones;
+* quantisation to the master palette (index 0 excluded, black = 254) with an ordered 4x4 Bayer
+  dither of ±10/255 over the planet and its glow only, and only where the pixel is brighter than
+  20/255, so the shading mixes the palette's orange, brown and tan ramps instead of banding while
+  the dark fall-off towards the terminator and the sky stay clean. The sky and the stars are never
+  dithered.
+
+`render` now measures the result: `crescent_tail_row` is the last row over the DC logo's 310
+columns with a pixel brighter than 7/255 (the measurement behind `CRESCENT_TAIL`), and a render
+whose tail passes round(112·H/480) − 1 raises. Measured: 172 / 178 at 1024x768, 163 / 167 at
+1280x720, 178 / 186 at 1280x800, 217 / 238 at 1280x1024, 228 / 251 at 1920x1080, 249 / 279 at
+1920x1200, 228 / 251 at 3840x1080 (tail / limit). The scene is painted once per size and shared by
+the three pictures (`scene`, a module cache): **INTRG.GIF** and **INTRO.GIF** with their stock
+bottom bands as before, and the new **BACKDROP.GIF** without a band - the pre-battle screens'
+ground. `paint_intro.py apply` writes INTRFACE/BACKDROP.GIF and `split_hd_data.py` moves it to
+INTRF_HD (`HD_ONLY`: a file with no stock counterpart that belongs to the set); the shipped copies
+are `INTRF_HD/<WxH>/BACKDROP.GIF` for all seven sizes (34-90 KB each), beside INTRG, INTRO and
+INTRFACE.
+
+**The screens.** `pad_background.pad_gif(src, dst, W, H, backdrop)` lays the 640x480 picture on
+the backdrop instead of black, in a **panel frame** (style guide §3, the tube seen from outside):
+outside in `35 | 107 | 35`, then 2 px of ground (11), then the picture; the outer ring's corner
+pixel is ground and the light ring's corner is 35 like every frame in the guide. The frame makes the
+cut deliberate - at 1024x768 the form's top edge (y 144) crosses the lit crescent (rows 96..179),
+which is unavoidable with one picture for every screen and a 640x480 form that is 62 % of the
+width; as a framed console window in front of the planet view it reads as intended. Every screen
+keeps its own palette (the sprites drawn on it are decoded through it; MULTIWIN's differs from the
+master in 155 entries, LOADER's in 55), so the backdrop goes through a 256-entry nearest-colour
+table into the screen's palette (`backdrop_lut`: squared RGB distance, index 0 excluded, first of
+equals; the backdrop's blacks to the screen's padding index - index 0 in every stock GIF, as the
+black letterbox used) and the frame greys are the palette's nearest neutral entries
+(`nearest_grey`). Measured remap error against the master palette: 0.7-0.9/255 mean for 13 of the
+15 screens; LOADER.GIF and TCPWAIT.GIF have no (0,0,0) but index 0 and no dark grey below (7,7,7),
+so their ground is 7 - invisible behind the frame. `--backdrop PATH|none`; by default the tool
+takes `INTRF_HD/<WxH>/BACKDROP.GIF` under the game root, else a BACKDROP.GIF of the size beside
+the scripts or in the base INTRFACE, else black as before. ONLINEBG.GIF is derived from the new
+LOADER.GIF as before (`patch_online.online_background`) and inherits the backdrop and the frame.
+The loading screens LOAD.BMP / LOAD2.BMP are not screens (LoadImageA + BitBlt) and keep their
+black border.
+
+**Patcher.** `set_sources` lists four shipped pictures (`SHIPPED_PICTURES`); `Write-InterfaceSet`
+throws when `INTRF_HD\<WxH>\BACKDROP.GIF` is missing, like the other three, and passes its bytes
+to `DcGif.Pad(src, W, H, backdrop)` - the byte-identical C# port of `compose_over_backdrop` (LUT,
+rings, corners, picture; `NearestGrey`, `FrameGreys`); the black form `Pad(src, W, H)` stays for
+callers without a backdrop. Compiled and compared under pwsh 7 and PowerShell 5.1: the C# output
+for MULTIWIN at 1024x768 equals `pad_gif`'s file byte for byte. Clean-copy check at 1024x768 and 1920x1200 under both shells: sets = fixtures (57 of 57 comparable
+files; HSCENE/GSCENE differ by the known DC ending names), exe hashes unchanged - data only.
+
+**Regenerated.** The seven shipped sets `INTRF_HD/<WxH>/{INTRG,INTRO,BACKDROP}.GIF`; the 15
+letterboxed GIFs + ONLINEBG.GIF + INTRG/INTRO of the six fixtures `hd_sets/<WxH>/INTRF_HD`; the
+game folder's active 1920x1200 set (same 18 files); the patcher. Scripts, banks, HUD frame and
+exes untouched. **In game (1920x1200, both builds):** main menu (planet, logo on black, title,
+credits, button block), LOAD GAME, NEW CAMPAIGN's race selection and MULTI PLAYER WAR's network
+screen, each centred in its frame on the planet view; QUIT exits 0; `error.log` empty. Not run:
+the other sizes in game, the lobby / TCPWAIT / story / victory / encyclopedia screens (same code
+path, same letterbox), 640x480 (stock files, untouched).
+
+**Rig.** `drive.py` from the game folder at 1920x1200: SPACE aborts the intro only once the movie
+plays (the first SPACE at 5 s was too early - press it again), Classic menu LOAD GAME (869, 830),
+MULTI PLAYER WAR (1050, 777), QUIT (1050, 857), LOADGE BACK (953, 807), NET MAIN MENU (1183, 813);
+Ultimate QUIT (1056, 966). Park the pointer at (5, 5) before a capture.
+
+**Lessons.** A texture parametrisation must put its poles where the camera cannot see them. A
+physically lit sphere disagrees with a hand-painted crescent exactly where layout rules were
+measured (the terminator dips at the logo's outer columns) - measure the constraint in the render
+and enforce it with an envelope, do not move the layout. Dither only where there is light to
+dither: an ordered pattern over the dark fall-off lifts pixels past the 7/255 threshold the menu
+rules rest on.
+
+#### 10.57 The real Mars on the sphere: MOLA relief and the Viking colour mosaic **(1 Oct 2026, maintainer after seeing §10.56 in game: "planet is looking like an asteroid. Can you please take a real Martian topology and wrap on the sphere?"; `tools/mars_maps.py` (new), `tools/mars/` (new, the derived maps), `tools/paint_intro.py` (`mars_maps`, the planet block, `MARS_TILT` / `MARS_LON0` / `MARS_RELIEF`); data only, no exe byte, patcher unchanged; confirmed in game at 1920x1200)**
+
+**Sources** (downloaded with the maintainer's permission, both public domain, kept in
+`Dark-Colony-development/mars_maps/` outside the repositories): the MOLA MEGDR grid
+`megt90n000eb.img` + `.lbl` (NASA PDS Geosciences Node, 16 px/degree, 5760x2880, MSB 16-bit metres
+above the areoid, simple cylindrical, longitude 0..360 east from the left edge, +90 at the top,
+33 MB) and the USGS "Mars Viking Colorized Global Mosaic 232m" 1 km JPEG
+`mars_viking_mdim21_clrmosaic_1km.jpg` (21339x10670, 37 MB). `mars_maps.py prepare SRC` derives
+what the render needs and what the Server repository carries (`tools/mars/`, 13.7 MB):
+`mola_height_4096.png` (4096x2048 16-bit, metres = value·scale + offset from `mars_maps.json`;
+box-filtered from the 16 ppd grid; 10.9 MB - 16-bit terrain compresses poorly, an 8-bit map would
+step the slopes in 115 m terraces), `viking_color_4096.jpg` (Lanczos, quality 92, 2.8 MB) and
+`mars_maps.json`. Two checks are built in and printed: the lowest point of the height map must be
+the floor of Hellas (found at 32.8 S 62.2 E, −8163 m), and the colour mosaic's longitude origin is
+detected by Syrtis Major, the darkest albedo feature at 8 N 70 E - the USGS JPEG runs −180..180
+(Syrtis luminance 70 at the −180 position vs 117 at the 0..360 one) and is rolled by 2048 columns to
+the MOLA convention.
+
+**Wrapping.** `paint_intro.paint` keeps everything of §10.56 but the surface: the view-space normal
+of every disc pixel is rotated into the planet frame - the view normal rolled about the view direction by
+`MARS_ROLL` = −83°, the pole tilted `MARS_TILT` = 174° about the screen's x axis (the axis almost
+along the view direction, south pole towards the viewer), then the planet turned so longitude
+`MARS_LON0` = 179 E faces the top of the limb - giving latitude / longitude, which sample both maps bilinearly (the maps wrap
+in longitude). The relief is the finite difference of the height along the sphere (dh/dlon over
+R·cos(lat), dh/dlat over R, R = 3396 km) exaggerated `MARS_RELIEF` = 2.5 times (6 until the maintainer's "lights and shading right now are
+too aggressive") - at 12 px per degree the true slopes are invisible - and applied as a bump to the normal through the planet's east /
+north tangents rotated back into view space; the albedo is the mosaic's brightness (gamma 0.85) coloured with
+`MARS_TINT` (1.05, 0.62, 0.36) - the stock crescent's orange - plus 1.2x the mosaic's own chroma for
+the dark and light albedo regions, lit by a warm low sun (1.0, 0.68, 0.45), ×`BODY_GAIN` 2.6 (3.2
+until the same complaint: the lit canyon walls clipped to full orange, "glows as a mirror"). After
+the maintainer's "edges of obstacles are too bright" a sun-facing slope may brighten at most
+`SLOPE_LIGHT_CAP` = 0.10 (in n·L) above the flat terrain around it while shadows keep their depth, and
+the slope maps are blurred by `SLOPE_SMOOTH` = 2 passes of a 5-point kernel so the relief has no
+one-texel edges (the first real-map
+render used the mosaic's own butterscotch-brown; the maintainer: "make it warmer, more orange like
+before"). Lambert
+steepening, the terminator envelope, twilight, rim haze, glow, stars and the dither are unchanged.
+The first adopted view (tilt 75, 245 E) put the Tharsis rise with Olympus Mons and the three Tharsis
+Montes under the top of the limb and Valles Marineris down the right flank; the maintainer then asked
+for "the side of Mars containing Mariner valley" (second view: tilt 86 / 285 E, the canyon along the
+lit band just inside the limb) then "canyon must go from viewers night side across horizon but
+not in 90 degrees. better to do 75 degrees angle to horizon", and finally "mariner valley must set to
+50 degrees instead of 75 degrees". At the limb itself every surface
+direction projects onto the horizon (the surface is edge-on there), so the angle is defined a little
+inside: a brute-force search over roll and tilt (1° steps) puts the canyon's western end (7 S 268 E)
+at the top of the limb and asks that the canyon point 12° further east lie inside the disc with the
+screen vector from the limb point at the asked angle below the horizontal - 75° gave roll −83 /
+tilt 178 / 178 E (78° measured), the final 50° gives roll −83 / tilt 174 / 179 E (49°). The canyon then climbs from the night side across the lit band and over the
+horizon, the Tharsis plateau beside it; to keep the inner half of the band readable the lighting
+fall-off was eased where the tail limit allows: `LAMBERT_POWER` 1.6 → 1.3 (`ENVELOPE_NL` 0.10 and
+`ENVELOPE_POWER` 2.5 unchanged - 0.08 / 2.0 put lit canyon walls at row 184 over the DC logo columns
+at 1024x768, 6 past the limit, and 171 / 167 at 1280x720; 1.3 / 0.10 / 2.5 gives 176 / 178 and
+165 / 167, so the canyon now points at the logo rows and sits 2 rows inside the rule). Tried and rejected on the way: tilt 62 / 285 E (the canyons cut
+by the terminator), tilt 45 / 300 E (on the limb, little relief), tilt 100 / 290 E with rolls of
+0 / 30 / 60° under the old fall-off (lost in the dim half of the band), tilt 94 (a bead line on the
+limb), relief 3 (too flat). The first realistic render's procedural cratered surface (`crater_field`,
+`TEXTURE_SHAPE`, `CRATERS`) is gone from the tool.
+
+**Tails** (`crescent_tail_row` / limit): 178 / 178 at 1024x768, 167 / 167 at 1280x720, 185 / 186
+at 1280x800, 216 / 238, 228 / 251, 253 / 279, 228 / 251 - the real relief lights a few ridges
+right up to the limit at the small sizes; the envelope still holds. **Regenerated:** the seven
+shipped sets (INTRG, INTRO, BACKDROP), the six fixtures' 18 GIFs, the game folder's 1920x1200 set.
+The patcher is untouched (it copies the shipped pictures; the composition rule did not change).
+**In game** (1920x1200, Classic): main menu and LOAD GAME on the new planet, QUIT exits 0,
+`error.log` empty. `MARS_TINT`, `sun_col` and the chroma factor in the planet block are the colour knobs.
+
+**Lessons.** Check a downloaded planetary map's conventions against two landmarks before wrapping
+it (lowest point, darkest feature) - the two public-domain products disagreed on the longitude
+origin. Keep the heavy originals outside the repositories and commit a derived, documented
+product the tool can regenerate from them.

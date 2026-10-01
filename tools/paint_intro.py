@@ -12,19 +12,32 @@ only in the bottom band (Take 2 logo and copyright in INTRG, SSI logo, red rule 
 INTRO). At 1024x768 `pad_background.py` letterboxes them, which leaves black borders around a
 640x480 picture. This tool paints genuine full-frame versions instead.
 
-Design rules (docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.11):
+Design rules (docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.11, the realistic rendering 10.56):
 
 * Nothing is resampled. The starfield and the planet are *procedural*: the master is the code and
   its parameters below, measured from the stock art (planet circle centre (320, 351) radius 291
   in the 640x480 frame, 10 px atmospheric glow outside the limb, a lit crescent 45 px deep at the
-  top that fades out by +-75 degrees, 4.95e-3 stars per pixel with 2/3 of them faint). Any later
-  resolution is a re-render. The SSI logo, rule and copyright line are pixel art at UI scale like
-  the buttons and the DC logo; they are copied 1:1 from the stock file (the rule is extended to
-  the full width), never scaled.
+  top, 4.95e-3 stars per pixel with 2/3 of them faint). Any later resolution is a re-render. The
+  SSI logo, rule and copyright line are pixel art at UI scale like the buttons and the DC logo;
+  they are copied 1:1 from the stock file (the rule is extended to the full width), never scaled.
+* Since 1 Oct 2026 the scene is rendered realistically (maintainer: "create realistic picture
+  based on main menu background which can be used as a background for all prebattle forms
+  including main menu"): the planet is a shaded sphere lit by a sun above and behind it, with a
+  bump-mapped, cratered surface under a Mars-like albedo map and a dust haze on the lit rim and
+  outside the limb; the stars follow a magnitude-like distribution with colour temperatures. The
+  stock geometry is kept exactly (same circle, the terminator 45 px inside the limb on the centre
+  line, the glow's extent), so every menu layout rule built on it still holds; `render` checks
+  that nothing brighter than 7/255 lies below row CRESCENT_TAIL over the DC logo's columns.
+* The same scene is written three times per size: INTRG.GIF and INTRO.GIF with their stock bottom
+  bands (main menu) and BACKDROP.GIF without a band - the ground on which pad_background.py lays
+  every pre-battle screen (the 640x480 picture centred in a grey panel frame) instead of black.
+  The three ship per size as INTRF_HD/<WxH>/*.GIF; the patcher copies them.
 * The 256-entry colour table is the game's master palette (identical to PALETTE.GIF) and is kept
   byte for byte: gifload.c feeds indices straight into the shade LUT and INTRO.RGB / INTRO.RMP
   are derived from this palette. The render is quantised to the nearest existing colour (index 0
-  excluded: it is the sprite-transparent black; black is index 254 as in the stock file).
+  excluded: it is the sprite-transparent black; black is index 254 as in the stock file) with an
+  ordered dither over the planet and its glow so the shading uses the palette's orange, brown and
+  tan ramps together instead of banding; sky and stars are never dithered.
 * The output keeps the byte layout the game's GIF parser expects (GIF87a, global colour table,
   image descriptor next, no extension blocks) - verified with pad_background.check_gif_layout.
 * The logo sprites drawn `unmask` over the picture carry the stock backdrop baked into their
@@ -48,7 +61,8 @@ CLI
     python paint_intro.py preview GAME_DIR OUT.png [--script bintroe]   # logo, title, buttons
 
 `apply` renders INTRFACE/INTRG.GIF and INTRO.GIF (keeping a .bak of each stock 640x480 file if
-none exists yet), re-bakes DCUK.SPR, DCUT.SPR and DCSS.SPR, and rewrites `bintroe`, `introe`,
+none exists yet) and INTRFACE/BACKDROP.GIF (no stock counterpart; split_hd_data.py moves it to
+INTRF_HD), re-bakes DCUK.SPR, DCUT.SPR and DCSS.SPR, and rewrites `bintroe`, `introe`,
 `BUTTONSE`, `DINTROE` and the `exp/intrface` overrides from their pristine copies.
 `pad_background.py` recognises the result (a script already at `size W H` for the target size)
 and leaves it alone; its `revert` restores the stock files.
@@ -77,6 +91,43 @@ PLANET_CX, PLANET_CY, PLANET_R = 320.2 / STOCK_W, 351.0 / STOCK_H, 291.4 / STOCK
 GLOW_PX = 10.0            # atmospheric glow outside the limb, at 480 rows
 LIT_DEPTH_PX = 45.0       # depth of the lit crescent at the top of the limb, at 480 rows
 STAR_DENSITY = 4.95e-3    # stars per sky pixel (1244 over 251 198 px in the stock file)
+# the realistic rendering (1 Oct 2026, doc 10.56): surface texture in a (lat, lon) map about the
+# view axis, crater count and the radius from which craters get flat floors (texture px), ordered
+# dither amplitude (+-/255) and the brightness (/255) below which nothing is dithered - the dark
+# fall-off towards the terminator must stay clean so that CRESCENT_TAIL holds
+# The surface is the real one since 1 Oct 2026 (doc 10.57, maintainer: "take a real Martian topology
+# and wrap on the sphere"): MOLA heights and the Viking colour mosaic from tools/mars/ (mars_maps.py).
+# Orientation: the pole tilted MARS_TILT degrees towards the viewer about the screen's x axis (0 =
+# north up, the polar cap at the top of the limb; 90 = pole at the disc centre, the equator on the
+# limb), then the planet turned so that longitude MARS_LON0 (east) faces the top of the limb.
+# MARS_RELIEF exaggerates the slopes for the bump shading (the real 1:1 relief is invisible at a
+# few pixels per degree).
+# Maintainer, 1 Oct 2026: "canyon must go from viewers night side across horizon but not in 90 degrees"
+# - first 75, then "mariner valley must set to 50 degrees": the western end of Valles Marineris
+# (7 S 268 E) sits at the top of the limb and the canyon's trace 12 degrees further east lies inside
+# the disc 49 degrees below the horizontal (brute-force solve in the 1 Oct session, doc 10.57), so the
+# canyon climbs from the night side across the lit band and over the horizon, the Tharsis plateau
+# beside it.
+MARS_TILT = 174.0          # the axis almost along the view direction, south pole towards the viewer
+MARS_ROLL = -83.0          # ... and rolled, so that east runs obliquely up the screen at the crossing
+MARS_LON0 = 179.0          # the longitude under the top of the limb
+MARS_RELIEF = 2.5          # 6 until the maintainer's "lights and shading right now are too aggressive"
+SLOPE_LIGHT_CAP = 0.10     # a sun-facing slope is at most this much (in n.L) brighter than flat ground
+SLOPE_SMOOTH = 2           # passes of a 5-point blur over the slope maps
+MARS_TINT = (1.05, 0.62, 0.36)   # the mosaic's brightness is coloured with this (x the sun) - the stock orange
+MARS_RADIUS_M = 3396000.0
+# lighting fall-off towards the terminator: Lambert steepened (shadowing) and the flat sphere's n.L
+# envelope (nothing lit beyond it); 1.6 / 0.10 / 2.5 until the canyon view, which needs the inner half
+# of the band readable (maintainer: the canyon runs from the night side across the horizon); 0.08 / 2.0
+# put lit canyon walls 6 rows past the DC logo limit at 1024x768, so only the Lambert power eased
+LAMBERT_POWER = 1.3
+BODY_GAIN = 2.6            # overall surface brightness; 3.2 clipped the lit canyon walls to full orange ("glows as a mirror")
+ENVELOPE_NL = 0.10
+ENVELOPE_POWER = 2.5
+DITHER_AMP = 10.0
+DITHER_MIN = 20
+LOGO_W = 310              # the DC logo sprite's width (crescent_tail_row measures under it)
+BACKDROP_GIF = 'BACKDROP.GIF'   # the bare backdrop (no bottom band): ground of the pre-battle screens
 
 # Bottom band of the stock files, copied 1:1 (rows 421..478; above and below it is black). In
 # INTRO.GIF: SSI logo rows 423..447, a full-width red rule 448..458, copyright 462..475; in
@@ -183,6 +234,23 @@ def need_pil():
         sys.exit('this tool needs NumPy and Pillow: pip install numpy Pillow')
 
 
+_MARS_MAPS = None
+
+
+def mars_maps(np):
+    """(height metres float32, colour 0..1 float32) from tools/mars/ (mars_maps.py prepare)."""
+    global _MARS_MAPS
+    if _MARS_MAPS is None:
+        import mars_maps as mm
+        try:
+            hgt, rgb, _ = mm.load_maps()
+        except (OSError, KeyError) as e:
+            raise SystemExit('the Mars surface maps are missing (%s): run tools/mars_maps.py prepare, '
+                             'see its docstring for the sources' % e)
+        _MARS_MAPS = (hgt, rgb)
+    return _MARS_MAPS
+
+
 # ------------------------------------------------------------------ noise
 def value_noise(np, rng, shape, cells):
     """Smooth value noise over `shape` with about `cells` lattice cells across the width."""
@@ -221,41 +289,60 @@ def fbm(np, rng, shape, cells, octaves, gain=0.5, ridged=False):
 
 
 # ------------------------------------------------------------------ painting
+def sun_direction():
+    """Unit vector towards the sun in view space (x right, y down, z towards the viewer). The sun
+    sits above and behind the planet, at the elevation that puts the terminator LIT_DEPTH_PX inside
+    the limb on the centre line - the depth measured in the stock picture: with d = depth / R the
+    terminator (n.L = 0) at ny = -(1-d), nz = sqrt(2d-d^2) gives tan(beta) = sqrt(2d-d^2) / (1-d),
+    32.3 degrees for 45 px of 291.4."""
+    d = LIT_DEPTH_PX / (PLANET_R * STOCK_H)
+    beta = math.atan2(math.sqrt(2 * d - d * d), 1 - d)
+    return beta, (0.0, -math.sin(beta), -math.cos(beta))
+
+
 def paint(np, width, height, seed):
-    """Float RGB (0..1) canvas plus the boolean planet-disc mask."""
+    """Float RGB (0..1) canvas plus the boolean planet-disc mask.
+
+    The realistic rendering of 1 Oct 2026 (doc 10.56 / 10.57): the stock geometry - circle, lit
+    depth, glow extent, star density - with a physically shaded sphere instead of the stock's
+    painted gradient. Sun direction from sun_direction(); the surface is the REAL one: the MOLA
+    elevation grid gives the relief (finite differences along the sphere, exaggerated MARS_RELIEF
+    times, bump-mapped) and the Viking colour mosaic the albedo (tools/mars/, mars_maps.py), the
+    planet oriented by MARS_TILT / MARS_LON0; lit with a Lambert term steepened near the
+    terminator (rough-surface shadowing) and kept inside the flat sphere's terminator envelope, so
+    no ridge lights up beyond it (the menu's DC logo rows below CRESCENT_TAIL stay black, see
+    crescent_tail_row); a thin dust haze brightens the lit rim and glows outside the limb in two
+    layers. The first realistic render (the morning of 1 Oct) used a procedural cratered surface
+    in a texture parametrised about the view axis; the maintainer: "planet is looking like an
+    asteroid" - hence the real maps. Stars: a magnitude-like brightness distribution, colour
+    temperatures from blue-white to orange, point-source sizes that do not grow with the canvas,
+    a soft halo on the bright ones."""
     rng = np.random.default_rng(seed)
     s = height / STOCK_H                        # 1.0 at 640x480, 1.6 at 1024x768
     cx, cy, R = PLANET_CX * width, PLANET_CY * height, PLANET_R * height
     if abs(width / height - 4 / 3) > 1e-3:
         cx = width / 2                          # other aspects: centre the planet
     yy, xx = np.mgrid[0:height, 0:width].astype(float)
-    dx, dy = xx - cx, yy - cy
+    dx, dy = xx + 0.5 - cx, yy + 0.5 - cy
     dist = np.sqrt(dx * dx + dy * dy)
     disc = dist <= R
-
     rgb = np.zeros((height, width, 3))
 
-    # ---- stars: everything outside the disc. Faint majority, heavy-tailed brightness, sizes
-    # in output pixels (a star is a point of light, it does not grow with the canvas).
+    # ---- stars: everything outside the disc
     sky_px = int((~disc).sum())
     n_stars = int(sky_px * STAR_DENSITY)
     sx = rng.random(n_stars) * width
     sy = rng.random(n_stars) * height
     u = rng.random(n_stars)
-    bright = 0.06 * (1 - u) ** -0.9             # 2/3 below 0.16 (stock: 67 %), ~5 % saturate
-    bright = np.minimum(bright, 1.6)
-    tint_kind = rng.random(n_stars)
+    bright = np.minimum(0.075 * (1 - u) ** -0.85, 1.5)     # many faint, a heavy bright tail
+    t = rng.random(n_stars)
     tint = np.ones((n_stars, 3))
-    warm = rng.normal(0, 0.03, n_stars)
-    tint[:, 0] += warm
-    tint[:, 2] -= warm
-    blue = tint_kind < 0.06
-    tint[blue] = (0.70, 0.82, 1.00)
-    purple = (tint_kind >= 0.06) & (tint_kind < 0.09)
-    tint[purple] = (0.85, 0.55, 1.00)
-    red = (tint_kind >= 0.09) & (tint_kind < 0.12)
-    tint[red] = (1.00, 0.72, 0.72)
-    sigma = 0.42 + 0.45 * np.minimum(bright, 1.0) + rng.random(n_stars) * 0.15
+    tint[t < 0.18] = (0.78, 0.86, 1.00)                 # blue-white
+    tint[(t >= 0.18) & (t < 0.30)] = (0.90, 0.94, 1.00)
+    tint[(t >= 0.55) & (t < 0.75)] = (1.00, 0.95, 0.84)  # yellow-white
+    tint[(t >= 0.75) & (t < 0.88)] = (1.00, 0.86, 0.66)  # orange
+    tint[t >= 0.96] = (1.00, 0.70, 0.55)                # red
+    sigma = 0.45 + 0.40 * np.minimum(bright, 1.0) + rng.random(n_stars) * 0.12
     order = np.argsort(bright)                  # bright ones last so they win overlaps
     pad = 6
     for i in order:
@@ -270,73 +357,134 @@ def paint(np, width, height, seed):
         blob = np.exp(-d2 / (2 * sg * sg))
         blob *= b / blob.max()                  # the nearest pixel carries the full brightness
         patch = blob[:, :, None] * tint[i][None, None, :]
-        if b > 0.9:                             # bright stars: faint cross, cold blue-violet halo
-            cross = np.exp(-np.minimum(abs(px + 0.5 - x), abs(py + 0.5 - y)) ** 2 / 0.4)
-            cross *= np.exp(-d2 / (2 * 3.0 ** 2)) * 0.10 * b
-            halo = 0.14 * b * np.exp(-d2 / (2 * 1.8 ** 2))
-            patch += cross[:, :, None] * tint[i][None, None, :]
-            patch += halo[:, :, None] * np.array([0.35, 0.15, 1.0])[None, None, :]
+        if b > 0.8:                             # bright stars: a soft wider halo
+            halo = 0.10 * b * np.exp(-d2 / (2 * 2.2 ** 2))
+            patch += halo[:, :, None] * tint[i][None, None, :]
         rgb[y0:y1, x0:x1] += patch
     rgb[disc] = 0.0                             # the planet occludes the stars
 
-    # ---- planet: the sun sits above and behind it, so only a crescent along the top of the
-    # limb is lit. The profile is the one measured in the stock file: brightness
-    # 0.85*cos(theta)^1.6 at the limb, falling as (1 - d/D)^1.3 over a depth D = 45 px *
-    # cos(theta)^2.2 (theta = angle from the top of the limb), gone by +-75 degrees; a 10 px
-    # atmospheric glow outside the limb with the same angular fade.
+    # ---- planet: a sphere, the sun above and behind it (sun_direction), the REAL surface
+    # (doc 10.57): MOLA heights and the Viking colour mosaic (tools/mars_maps.py) wrapped on it
+    _, L = sun_direction()
+    L = np.array(L)
     rho = np.clip(dist / R, 0, 1)
+    nx, ny = dx / R, dy / R
     nz = np.sqrt(np.clip(1 - rho * rho, 0, 1))
-    cos_t = np.where(dist > 0, -dy / np.maximum(dist, 1e-9), 1.0)   # 1 at the top of the limb
-    cosp = np.clip(cos_t, 0, 1)
+    nvec = np.stack([nx, ny, nz], -1)
+    hgt_map, col_map = mars_maps(np)
+    # view -> planet frame: tilt the pole towards the viewer by MARS_TILT (about the screen x
+    # axis), then turn the planet by MARS_LON0 about its own axis (which longitude faces the top
+    # of the limb). Screen y points down, so "up" is -y.
+    tilt = math.radians(MARS_TILT)
+    roll = math.radians(MARS_ROLL)
+    up0 = -ny
+    nx_r = nx * math.cos(roll) - up0 * math.sin(roll)        # roll the axis about the view direction
+    up = nx * math.sin(roll) + up0 * math.cos(roll)
+    px_ = nx_r
+    py_ = up * math.cos(tilt) - nz * math.sin(tilt)          # planet "up" (towards the north pole)
+    pz_ = up * math.sin(tilt) + nz * math.cos(tilt)          # planet "towards the viewer" meridian
+    lat = np.arcsin(np.clip(py_, -1, 1))
+    lon = (np.arctan2(px_, pz_) + math.radians(MARS_LON0)) % (2 * math.pi)
+    th, tw = hgt_map.shape
+    # bilinear samples of height (metres) and colour; the maps run 0..360 east, +90 at the top
+    fx = lon / (2 * math.pi) * tw - 0.5
+    fy = (0.5 - lat / math.pi) * th - 0.5
+    x0 = np.floor(fx).astype(int)
+    y0 = np.clip(np.floor(fy).astype(int), 0, th - 2)
+    wx = (fx - x0)[..., None]
+    wy = (fy - y0)[..., None]
+    x0 %= tw
+    x1 = (x0 + 1) % tw
+
+    def sample(m):
+        m = m if m.ndim == 3 else m[..., None]
+        a = m[y0, x0] * (1 - wx) + m[y0, x1] * wx
+        b = m[y0 + 1, x0] * (1 - wx) + m[y0 + 1, x1] * wx
+        return a * (1 - wy) + b * wy
+
+    H = sample(hgt_map)[..., 0]
+    C = sample(col_map)
+    # relief: finite differences of the height along the sphere (metres per metre), exaggerated
+    # MARS_RELIEF times; the tangent frame is the planet's east / north at the pixel
+    Rm = MARS_RADIUS_M
+    dlon = 2 * math.pi / tw
+    dlat = math.pi / th
+    hx = (np.roll(hgt_map, -1, 1) - np.roll(hgt_map, 1, 1)) / (2 * dlon)      # dh / dlon
+    hy = -(np.roll(hgt_map, -1, 0) - np.roll(hgt_map, 1, 0)) / (2 * dlat)     # dh / dlat (rows run south)
+    for _ in range(SLOPE_SMOOTH):                   # soften the one-texel edges of the relief
+        hx = (hx + np.roll(hx, 1, 1) + np.roll(hx, -1, 1) + np.roll(hx, 1, 0) + np.roll(hx, -1, 0)) / 5
+        hy = (hy + np.roll(hy, 1, 1) + np.roll(hy, -1, 1) + np.roll(hy, 1, 0) + np.roll(hy, -1, 0)) / 5
+    slope_e = sample(hx)[..., 0] / (Rm * np.maximum(np.cos(lat), 0.05)) * MARS_RELIEF
+    slope_n = sample(hy)[..., 0] / Rm * MARS_RELIEF
+    # east and north unit tangents in the planet frame, rotated back into view space
+    east_p = np.stack([np.cos(lon - math.radians(MARS_LON0)), np.zeros_like(lon),
+                       -np.sin(lon - math.radians(MARS_LON0))], -1)
+    north_p = np.stack([-np.sin(lat) * np.sin(lon - math.radians(MARS_LON0)), np.cos(lat),
+                        -np.sin(lat) * np.cos(lon - math.radians(MARS_LON0))], -1)
+
+    def to_view(v):          # planet frame (x, up, towards viewer) -> view frame (x, y down, z)
+        vx, vu, vz = v[..., 0], v[..., 1], v[..., 2]
+        up_v = vu * math.cos(tilt) + vz * math.sin(tilt)
+        z_v = -vu * math.sin(tilt) + vz * math.cos(tilt)
+        x_v = vx * math.cos(roll) + up_v * math.sin(roll)    # undo the roll
+        up_v = -vx * math.sin(roll) + up_v * math.cos(roll)
+        return np.stack([x_v, -up_v, z_v], -1)
+
+    npert = nvec - slope_e[..., None] * to_view(east_p) - slope_n[..., None] * to_view(north_p)
+    npert /= np.linalg.norm(npert, axis=-1, keepdims=True) + 1e-12
+    nl_flat = (nvec * L).sum(-1)
+    nl = (npert * L).sum(-1)
+    # a slope may darken freely (shadow) but brighten only SLOPE_LIGHT_CAP above the flat terrain
+    # (maintainer: "edges of obstacles are too bright")
+    nl = np.minimum(nl, nl_flat + SLOPE_LIGHT_CAP)
+    # steeper than Lambert near the terminator (shadowing), inside the flat terminator envelope
+    diff = np.clip(nl, 0, 1) ** LAMBERT_POWER * np.clip(nl_flat / ENVELOPE_NL, 0, 1) ** ENVELOPE_POWER
+    sun_col = np.array([1.0, 0.68, 0.45])        # a low, dust-reddened sun
+    # the mosaic's brightness in the menu's orange (MARS_TINT, the stock crescent's hue) plus a
+    # share of the mosaic's own chroma for the dark / light albedo regions (maintainer, after the
+    # first real-map render: "make it warmer, more orange like before")
+    grey = C.mean(-1, keepdims=True)
+    base_col = np.clip(grey ** 0.85 * np.array(MARS_TINT)[None, None, :] + (C - grey) * 1.2, 0, 1)
+    body = base_col * (diff[:, :, None] * sun_col[None, None, :]) * BODY_GAIN
+    twilight = 0.02 * np.exp(-np.clip(-nl_flat, 0, None) / 0.002) * (nl_flat < 0.02)
+    body += twilight[:, :, None] * np.array([1.0, 0.45, 0.2])[None, None, :] * grey
     depth_in = np.clip(R - dist, 0, None) / s   # px inside the limb, in 480-row units
+    lit_angle = np.clip(-ny, 0, 1)              # 1 at the top of the limb
+    rim = np.exp(-depth_in / 3.5) * lit_angle ** 1.3        # dust haze brightens the lit rim
+    body += 0.30 * rim[:, :, None] * np.array([1.0, 0.72, 0.50])[None, None, :]
+    body = np.clip(body, 0, 1)
+    body[~disc] = 0
+    rgb[disc] = body[disc]
+
+    # ---- atmosphere outside the limb: a dense warm lower haze and a thin paler upper one, both
+    # fading with the angle from the top like the stock glow (GLOW_PX sets the visible extent)
     depth_out = np.clip(dist - R, 0, None) / s
-    lit_depth = LIT_DEPTH_PX * cosp ** 2.2
-    lit = np.clip(1 - depth_in / np.maximum(lit_depth, 1e-6), 0, 1) ** 1.3
-    lit[lit_depth <= 0.5] = 0.0
-    angle_fade = cosp ** 1.6
-
-    # surface: two scales of noise in a longitude/latitude parametrisation so that features
-    # foreshorten towards the limb the way real terrain does
-    lon = np.arctan2(dx / R, nz + 1e-9)
-    lat = np.arcsin(np.clip(dy / R, -1, 1))
-    uu = ((lon / math.pi) * 0.5 + 0.5)
-    vv = ((lat / (math.pi / 2)) * 0.5 + 0.5)
-    tex_shape = (768, 1536)
-    coarse = fbm(np, rng, tex_shape, 6, 4)
-    fine = fbm(np, rng, tex_shape, 24, 4, ridged=True)
-    ti = np.clip((vv * (tex_shape[0] - 1)).astype(int), 0, tex_shape[0] - 1)
-    tj = np.clip((uu * (tex_shape[1] - 1)).astype(int), 0, tex_shape[1] - 1)
-    albedo = 1.0 + 0.60 * (coarse[ti, tj] - 0.5) + 0.24 * (fine[ti, tj] - 0.5)
-    albedo = np.clip(albedo, 0.55, 1.35)
-
-    # terrain modulates the lit surface; the thin atmospheric rim at the edge does not
-    rim = np.exp(-depth_in / 8.0)
-    body = 0.85 * angle_fade * lit * (0.78 * albedo + 0.22 * rim)
-    body = np.clip(body, 0, 1.0)
-    body[~disc] = 0.0
-    # colour: the stock ramp is (255,107,0)*t; darker terrain leans browner
-    brown = np.clip((1.0 - albedo) * 0.6, 0, 0.35)
-    col = np.stack([body * 1.00,
-                    body * (0.42 - 0.10 * brown),
-                    body * (0.00 + 0.08 * brown)], axis=-1)
-    rgb[disc] = col[disc]
-
-    glow = 0.45 * np.exp(-depth_out / 3.8) * angle_fade
-    glow[disc] = 0.0
-    rgb += glow[:, :, None] * np.array([1.0, 0.40, 0.0])[None, None, :]
+    glow_fade = lit_angle ** 1.6
+    g1 = 0.50 * np.exp(-depth_out / (GLOW_PX * 0.26)) * glow_fade
+    g2 = 0.16 * np.exp(-depth_out / (GLOW_PX * 0.60)) * glow_fade
+    g1[disc] = 0
+    g2[disc] = 0
+    rgb += g1[:, :, None] * np.array([1.0, 0.52, 0.22])[None, None, :]
+    rgb += g2[:, :, None] * np.array([0.95, 0.62, 0.45])[None, None, :]
     return np.clip(rgb, 0, 1), disc
 
 
-def quantise(np, rgb, palette, dither_mask=None, rng=None):
-    """Nearest palette colour per pixel; index 0 is never used (sprite-transparent black)."""
+BAYER4 = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+
+
+def quantise(np, rgb, palette, dither_mask=None, amp=DITHER_AMP):
+    """Nearest palette colour per pixel; index 0 is never used (sprite-transparent black). Where
+    dither_mask is set an ordered 4x4 Bayer pattern of +-amp/255 is added first, so the planet's
+    smooth shading dithers between the palette's orange, brown and tan entries instead of
+    banding; the sky and the stars are never dithered."""
     h, w, _ = rgb.shape
     pal = np.array(palette, float).reshape(256, 3)
     cand = np.arange(1, 256)
     pc = pal[cand]
     src = rgb * 255.0
     if dither_mask is not None:
-        noise = rng.uniform(-2.0, 2.0, src.shape)
-        src = src + noise * dither_mask[:, :, None]
+        tile = np.tile((np.array(BAYER4, float) / 16.0 - 0.5), (h // 4 + 1, w // 4 + 1))[:h, :w]
+        src = src + (tile * amp * dither_mask)[:, :, None]
     out = np.zeros((h, w), np.uint8)
     step = max(1, 2_000_000 // (len(cand) * w))
     for y0 in range(0, h, step):
@@ -346,8 +494,44 @@ def quantise(np, rgb, palette, dither_mask=None, rng=None):
     return out
 
 
-def render(stock_path, width, height, seed):
-    """Index array (height x width, uint8) plus the stock palette (768 ints)."""
+_SCENE_CACHE = {}
+
+
+def scene(np, width, height, seed, palette):
+    """The quantised backdrop (index array) of one size, without any bottom band: painted once per
+    (size, seed, palette) and shared by INTRG.GIF, INTRO.GIF and BACKDROP.GIF."""
+    key = (width, height, seed, bytes(palette[:768]))
+    if key not in _SCENE_CACHE:
+        rgb, disc = paint(np, width, height, seed)
+        s = height / STOCK_H
+        cx, cy, R = PLANET_CX * width, PLANET_CY * height, PLANET_R * height
+        if abs(width / height - 4 / 3) > 1e-3:
+            cx = width / 2
+        yy, xx = np.mgrid[0:height, 0:width].astype(float)
+        dist = np.sqrt((xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2)
+        # dither the planet and its glow only, and only where there is light to dither
+        mask = (disc | (dist <= R + GLOW_PX * s * 2.5)).astype(float)
+        mask[rgb.max(-1) < DITHER_MIN / 255.0] = 0
+        _SCENE_CACHE[key] = quantise(np, rgb, palette, dither_mask=mask)
+    return _SCENE_CACHE[key].copy()
+
+
+def crescent_tail_row(np, idx, palette, width, height):
+    """Last row (0-based) over the DC logo's columns (LOGO_W px centred) that holds a pixel brighter
+    than 7/255, looking at the upper 60 % of the picture - the measurement behind CRESCENT_TAIL and
+    cw_menu_lift. The limit for a size is round(CRESCENT_TAIL * height / 480) - 1."""
+    pal = np.array(palette).reshape(256, 3)
+    lx0 = (width - LOGO_W) // 2
+    bright = pal[idx[:, lx0:lx0 + LOGO_W]].max(-1) > 7
+    rows = np.where(bright.any(1))[0]
+    rows = rows[rows < height * 0.6]
+    return int(rows.max()) if len(rows) else -1
+
+
+def render(stock_path, width, height, seed, band=True):
+    """Index array (height x width, uint8) plus the stock palette (768 ints). With `band` the
+    bottom band of the stock file (logo, rule, copyright) is copied in 1:1; without it the result
+    is the bare backdrop (BACKDROP.GIF, the pre-battle screens' ground)."""
     np = need_np()
     Image = need_pil()
     with Image.open(stock_path) as st:
@@ -355,20 +539,25 @@ def render(stock_path, width, height, seed):
             raise ValueError('%s: expected the stock 640x480 paletted INTRO.GIF' % stock_path)
         palette = st.getpalette()
         stock = np.array(st)
-    rgb, disc = paint(np, width, height, seed)
-    rng = np.random.default_rng(seed + 1)
-    idx = quantise(np, rgb, palette, dither_mask=disc.astype(float), rng=rng)
+    idx = scene(np, width, height, seed, palette)
+    tail = crescent_tail_row(np, idx, palette, width, height)
+    limit = int(round(CRESCENT_TAIL * height / STOCK_H)) - 1
+    if tail > limit:
+        raise ValueError('%dx%d: the crescent reaches row %d over the logo columns, limit %d (CRESCENT_TAIL)'
+                         % (width, height, tail, limit))
+    if not band:
+        return idx, palette
 
     # bottom band, 1:1 from the stock file, same distance from the bottom edge, centred
     ox, oy = (width - STOCK_W) // 2, height - STOCK_H
-    band = stock[BAND_TOP:BAND_BOTTOM]
+    bandpx = stock[BAND_TOP:BAND_BOTTOM]
     for r in range(BAND_TOP, BAND_BOTTOM):
         row = stock[r]
         if (row != 254).sum() >= RULE_MIN_PX:               # a rule: solid across the full width
             vals, counts = np.unique(row[:200], return_counts=True)
             idx[r + oy, :] = vals[counts.argmax()]
     region = idx[BAND_TOP + oy:BAND_BOTTOM + oy, ox:ox + STOCK_W]
-    region[band != 254] = band[band != 254]                 # logo, rule detail, copyright
+    region[bandpx != 254] = bandpx[bandpx != 254]                 # logo, rule detail, copyright
     return idx, palette
 
 
@@ -741,9 +930,10 @@ def logo_jobs(game_dir, width, height):
 
 # ------------------------------------------------------------------ commands
 def cmd_render(args):
-    idx, palette = render(args.stock, args.width, args.height, args.seed)
+    idx, palette = render(args.stock, args.width, args.height, args.seed, band=not args.no_band)
     save_gif(idx, palette, args.out)
-    print('wrote %s (%dx%d, seed %d)' % (args.out, args.width, args.height, args.seed))
+    print('wrote %s (%dx%d, seed %d%s)' % (args.out, args.width, args.height, args.seed,
+                                           ', no bottom band' if args.no_band else ''))
 
 
 def gifs_needed(game_dir):
@@ -756,6 +946,8 @@ def cmd_plan(args):
         gif, stock = stock_gif(idir, name)
         print('%-10s -> %dx%d procedural repaint from %s' % (name, args.width, args.height,
                                                             os.path.basename(stock)))
+    print('%-10s -> %dx%d the same scene without the bottom band (pre-battle screens)'
+          % (BACKDROP_GIF, args.width, args.height))
     for name, (mode, gif, stock_xy, new_xy) in logo_jobs(args.dir, args.width, args.height).items():
         for spr, spr_stock in logo_sprs(args.dir, name):
             print('%-22s -> %s re-bake of all cells: backdrop %s, sprite at (%d,%d) instead of '
@@ -784,6 +976,13 @@ def cmd_apply(args):
             stocks[name] = np.array(im)
         print('painted %-26s %dx%d, seed %d' % (os.path.relpath(gif, args.dir), args.width,
                                                 args.height, args.seed))
+    # the bare backdrop for the pre-battle screens (pad_background.py lays them over it)
+    gif, stock = stock_gif(idir, 'INTRG.GIF')
+    bd = os.path.join(idir, BACKDROP_GIF)
+    idx, palette = render(stock, args.width, args.height, args.seed, band=False)
+    save_gif(idx, palette, bd)
+    print('painted %-26s %dx%d, seed %d (no bottom band)' % (os.path.relpath(bd, args.dir),
+                                                            args.width, args.height, args.seed))
     for name, (mode, gif, stock_xy, new_xy) in logo_jobs(args.dir, args.width, args.height).items():
         for spr, spr_stock in logo_sprs(args.dir, name):
             if spr_stock == spr:
@@ -841,6 +1040,8 @@ def main(argv=None):
     r = sub.add_parser('render')
     r.add_argument('out')
     r.add_argument('--stock', required=True, help='a stock 640x480 INTRG.GIF / INTRO.GIF')
+    r.add_argument('--no-band', action='store_true',
+                   help='the bare backdrop without the bottom band (BACKDROP.GIF)')
     p = sub.add_parser('plan')
     p.add_argument('dir', help='a game directory (DC - Classic, DC - Council wars, ...)')
     a = sub.add_parser('apply')

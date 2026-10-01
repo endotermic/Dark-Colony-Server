@@ -1,0 +1,29 @@
+{
+  "height": {
+    "file": "mola_height_4096.png",
+    "width": 4096,
+    "height": 2048,
+    "unit": "metre",
+    "scale": 0.44760814831769286,
+    "offset": -8163.0,
+    "source": "MOLA MEGDR megt90n000eb.img (NASA PDS, 16 ppd)",
+    "lowest_point": {
+      "lat": -32.8,
+      "lon_east": 62.2,
+      "metres": -8163
+    }
+  },
+  "color": {
+    "file": "viking_color_4096.jpg",
+    "width": 4096,
+    "height": 2048,
+    "source": "USGS Mars Viking Colorized Global Mosaic 232m, 1 km JPEG",
+    "source_origin": "-180..180 (rolled by 2048 px)",
+    "syrtis_luminance": {
+      "at_0_360": 116.6,
+      "at_m180_180": 70.2
+    }
+  },
+  "convention": "simple cylindrical, longitude 0..360 east from the left edge, latitude +90 at the top",
+  "licence": "NASA / USGS public domain"
+}

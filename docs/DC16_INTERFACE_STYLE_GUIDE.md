@@ -313,6 +313,38 @@ drawn into the background GIF (`online_background`): header + list, scroll chann
 same 35/107/35 tube as §3 with the 2-px black gap. Decorative animated gadgets that would repaint
 over a frame or a text line are removed from the script, the art under them stays.
 
+**The ground of every menu screen is the planet view** (1 Oct 2026, §10.56; maintainer: "create
+realistic picture based on main menu background which can be used as a background for all
+prebattle forms including main menu"): `paint_intro.py` renders the main menu's scene - the
+realistic Mars crescent and starfield on the stock geometry - three times per size, INTRG.GIF and
+INTRO.GIF with their bottom bands for the main menu and **BACKDROP.GIF** without a band, and
+`pad_background.py` lays every letterboxed 640x480 screen on BACKDROP.GIF instead of black, in a
+**panel frame**: outside in `35 | 107 | 35`, then 2 px of ground, then the picture (§3's tube seen
+from outside; corner pixels off as always). Rules that follow:
+
+* A letterboxed screen is a framed console window in front of the planet; nothing of the screen
+  may be drawn outside its 640x480 rectangle, and nothing is drawn into the border but the frame.
+* Every screen keeps its own palette: the backdrop is remapped into it through a 256-entry
+  nearest-colour table (black to the screen's padding index), the frame greys are the palette's
+  nearest neutral entries (`pad_background.backdrop_lut`, `nearest_grey`; the patcher's
+  `DcGif.Pad(src, W, H, backdrop)` is the byte-identical port). Never give a screen the master
+  palette to "fix" its colours - its sprites are decoded through its own table.
+* The main menu's layout rules were measured on the planet's geometry (the DC logo rows below
+  `CRESCENT_TAIL` must be black, the credits box and the button block hang from the title): a
+  backdrop change keeps the circle, the lit depth and the glow extent, and `paint_intro.render`
+  raises when the crescent reaches the logo rows. Enforce such a constraint in the lighting (the
+  terminator envelope), never by moving the layout.
+* The planet and its glow are dithered (ordered 4x4, ±10/255) where they are brighter than 20/255;
+  the sky, the stars and the dark fall-off are never dithered. Stars are point sources - their
+  size does not grow with the canvas.
+* BACKDROP.GIF is the fourth shipped picture per size (`INTRF_HD/<WxH>/`): regenerate all seven
+  sizes together with INTRG / INTRO (`paint_intro.render`), then the fixtures' GIFs and ONLINEBG,
+  the game folder's active set and the patcher.
+* The planet's surface is the real one (§10.57): MOLA relief and the Viking colour mosaic from
+  `tools/mars/` (`mars_maps.py`), oriented by `MARS_TILT` / `MARS_LON0` so that Tharsis and Valles
+  Marineris lie in the lit crescent. No procedural terrain, no invented features; a change of view
+  is a change of those two constants, checked against the tail limit at every size.
+
 ## 12. Process: from idea to shipped file
 
 1. **Measure first.** Sample the reference picture (palette indices, run lengths) and write the

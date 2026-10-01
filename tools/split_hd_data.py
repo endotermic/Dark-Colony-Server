@@ -12,6 +12,8 @@ they drew the 1024x768 pictures into a 640x480 frame.  The fix is a rename, not 
     original exe keeps reading INTRFACE/;
   * a moved script's `background intrface/<gif>` line becomes `background intrf_hd/<gif>` when
     that GIF moved too (the two loading BMPs are opened by the exe directly);
+  * INTRFACE/BACKDROP.GIF (paint_intro.py, 1 Oct 2026: the pre-battle screens' ground, no stock
+    counterpart) moves to INTRF_HD as well;
   * the six briefing lists GAMESTAT/*SCENE.TXT (letterboxed globe markers) move to INTRF_HD/ as
     well - the exe's `gamestat/hscene` strings become `intrf_hd/hscene`, same length;
   * the re-baked logo animations SPRITES/DCSS.SPR, DCUK.SPR, DCUT.SPR become SPRITES/DCSS_HD.SPR
@@ -50,6 +52,9 @@ HD_PREFIX = b'intrf_hd/'
 SCENE_LISTS = ('hscene.txt', 'gscene.txt', 'htscene.txt', 'gtscene.txt', 'hxscene.txt', 'gxscene.txt')
 LOGO_BANKS = ('dcss', 'dcuk', 'dcut')     # SPRITES banks re-baked with the menu backdrop (paint_intro.py)
 DROP = {'dcss.spr', 'dcuk.spr', 'dcut.spr', 'multie~1.txt'}
+# Files with no stock counterpart that belong to the HD set all the same: paint_intro.py's
+# BACKDROP.GIF (the pre-battle screens' ground, doc 10.56) is moved to INTRF_HD, not left behind.
+HD_ONLY = {'backdrop.gif'}
 BACKGROUND = re.compile(rb'^([ \t]*background[ \t]+)intrface/(\S+)', re.M | re.I)
 
 
@@ -79,6 +84,11 @@ class Plan:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             with open(dst, 'wb') as fh:
                 fh.write(data)
+
+    def remove(self, path, why):
+        self.actions.append((path, why))
+        if self.apply:
+            os.remove(path)
 
 
 def rename_fin_banks(data, renamed):
@@ -119,6 +129,10 @@ def split_interface(game, stock, rel, hd_rel, moved_base, plan):
             continue
         s = find_ci(sdir, fn)
         if not s:
+            if fn.lower() in HD_ONLY:
+                plan.write(os.path.join(hd_dir, fn), read(os.path.join(idir, fn)), 'HD file (no stock counterpart)')
+                plan.remove(os.path.join(idir, fn), 'moved to %s' % '/'.join(hd_rel))
+                continue
             plan.notes.append('NOTE %s/%s has no stock counterpart, left in place' % ('/'.join(rel), fn))
             continue
         cur = read(os.path.join(idir, fn))
