@@ -399,7 +399,155 @@ routing matrix) and, when `../Dark-Colony` is present, checks Armageddon: 18 ven
 of the `.POP` have rate 0, every bit-9 cell is family 0, `next[a][a] = a`, one commander per team on
 its start position.
 
-## 13. Open points
+## 13. The map editor's greyed-out controls **(verified from `maped.exe` code, 1 Oct 2026)**
+
+`maped.exe` is a Borland C++ 4.5 program whose `.debug` section still carries the TD32 symbol table
+(`FB09`), so every function has its name: `TOP.C` (`WinMain 0x418030`, `WndProc 0x418338`,
+`ToolMainProc 0x41C88C`, the dialog procedures), `MAP.C` (`SaveScenario 0x412E23`,
+`SaveOutTriggerMap 0x413D1F`, `SaveOutTriggerFile 0x4155C4`, `SaveOutEruptStat 0x417C53`,
+`ReadScenario 0x416251`, `LoadMap 0x414A2F`, `LoadMED 0x414CEE`, `SaveMap 0x41403D`,
+`SuperGen 0x41259B`, `LookUpTroop 0x413DF2`), `LOAD.C`, `BLOCK.C`, `UPDATE.C`, `CHECKIT.C`. Code
+section `CODE` VA `0x410000` = file `0x600`, `DATA` VA `0x430000` = file `0x14E00`. The exe imports
+neither `EnableWindow` nor `EnableMenuItem`: **every greyed control is static in the resources**
+(`WS_DISABLED` in the DIALOG templates, `MF_GRAYED` in `MAINMENU`), and the code behind each of them
+is complete. `WndProc` dispatches menu ids 102..237 through one jump table (`0x4183F3`; ids with no
+case fall to the exit `0x419E01`); `ToolMainProc` handles the toolbar ids 112..145 (`0x41D25B`).
+The placement mode is the global `0xDD9330` (2 block, 3 troop, 4 artifact/site/generator, 6 LAR,
+7 trigger, 8 start position, 9 flag, 10 attribute, 11 light); a placed item is a 67-byte cell
+record whose word `+0x32` is its kind (vent rate 0..99, flag type 100..199, artifact kind
+200..206, light direction 300..303, generator kind 400..404) and `+0x34` its team/parameter.
+
+What `SaveScenario` writes from those records (`0x413665..0x413D0F`), as object lines
+`x z type player a b` (coordinates minus the editor's 10/9 border):
+
+| kind | written as | meaning |
+|---|---|---|
+| vent, team 8 / 9 | `x z 40 rate amount` / `x z 40 0 amount` | LAR tool; team 9 = dormant |
+| vent, team 0..7 | `x z 47|48 team -1 0` | pre-built mining tower of that team (47 human, 48 alien) |
+| 100..199 (flag) | `x z 47 (kind-100) priority` | **AI flag**, see below |
+| 200..205 | `x z 63..68 0 hp 0` | hand-placed artifact (LENS..ULTIMATE) |
+| 206 (site) | `x z 37 0 -1 0` + per content type `x z 63+i 0 -1 2` (count times) | artifact site and its contents |
+| 300..303 | `x z (51 + 3*dir + type) 8 0` | the twelve LIGHT objects 51..62, team 8 |
+| 400..404 | `x z 25|26|23|24|36 -1 radius number` | creature generators |
+| (end, type 0 only) | `x z 69 team -1 0` per active team at its start position | **auto commander** |
+
+The scenario type (`0xDD6D54`, first number of line 4, Scenario Stats radio Multiplayer = 0 /
+Campaign = 1) is ignored by the game (section 6) but steers the editor: with type 0 `DoSaveGenMap`
+also writes the `.TRO` (`0x412D34`) and `SaveScenario` appends the commanders (`0x413CB7`), and
+`ReadScenario` drops lieutenant objects when loading (`0x416B05`, they are regenerated); with any
+other type neither happens. `SetUpMap` gives a NEW map type 1 (`0x411F5F`), i.e. a fresh map is
+"Campaign" until the Multiplayer radio is clicked (code-read, not tested in the running editor).
+Saving a map = `SaveGenMap`: `SaveScenario` (.SCN), `SaveOutTriggerMap` (.MTG), `SaveOutTriggerFile`
+(.TRO, fixed templates only: the eruption triggers of section 7 and the artifact blocks
+`N norm 1 (s(6,0)==1)` -> `artifact x z` per site, `(s(6,0)==2|3)` -> `reinforce2 8 x z 63 1 64 1 65 1 66 1 67 1`
+resp. `.. 2`; `s(6,0)` is the lobby's artifact option), `SaveOutEruptStat` (.POP), then
+`system("pmap.exe %s")` for the `.PTH`.
+
+### 13.1 Why each control is greyed
+
+**Developer / campaign tooling, hidden from the public multiplayer editor** (menu `MF_GRAYED`,
+handlers present):
+
+* **Super Gen** (237) -> `SuperGen`: batch export - reads `dirlist.txt`, loads every `*.map` with its
+  `.mtg/.scn/.pop`, regenerates and saves, `copy default.pop %s` through the command processor.
+* **Load MED / Save MED** (233 / 103) -> `LoadMED` / `SaveMap`: the editor's own binary document
+  (`Maps (*.med)`, fwrite blocks of the editor state), the only form that keeps editor-only data such
+  as trigger names. (**Save Map** 234 is `SaveGenMap`, the game-file export above.)
+* **Edit Trigger String** (164) -> TRIGGERSTRING dialog (`TriggerString`), and the toolbar **Trigger**
+  button (117, `WS_DISABLED`) -> mode 7 `PasteTrg 0x41E73B`, which writes trigger ids into the
+  trigger map saved as `.MTG`. The `.TRO` conditions that would use them (`m(x,z)`, section 8) are
+  campaign scripts the editor never generates - the campaign toolchain, not the retail editor.
+* **Edit Text** (170), **City** (235), **Troops** (236) have **no handler at all** (jump table ->
+  exit). `TextDialogProc 0x421D44` (RICHED32, `scene.txt`, "Can't Load Scene Text") is referenced
+  nowhere. The BUILDINGS "City State" (`CityDialogProc 0x41EB94`), TROOPS "Troop Attributes"
+  (`TroopDialogProc 0x41F88B`) and TRIGGER "Trigger Editor" (`TriggerDialogProc 0x421EE2`) dialogs
+  are opened only by the WM_COMMAND ids **166 / 167 / 168**, which no menu item, accelerator
+  (MAINMENU: Tab -> 176/149/208; table 1: Enter -> 105) or toolbar button sends - unreachable in
+  every build, the renumbered menu left the handlers orphaned. BUILDINGS would edit the five
+  city-slot pairs (B/P radios 410..416 = 0 none / 1 buildable / 2 prebuilt + hit points 106..110,
+  money 114), which the game does read (section 6.1) - a working, hidden feature. TROOPS edits per
+  troop Buildable (500..508), Health (670..678), Weapon (300..302) and Armour (303..305); the save
+  writes only `0 0 weapon armour 0` for rows 0..7 (`0x413544`, buildable/health never saved), and the
+  game reads row j as **building** j of the race list (numbers [2]/[3] = that building's upgrade
+  levels) while the editor rows are troops - a semantic mismatch **(inferred reason)**. The ninth
+  row **Healer** (radio 508, edit 678; `WS_DISABLED`) is handled by the dialog (`cmp ebx,9`
+  `0x41FAA1`) but never saved (eight-row loop), so unlocking it changes nothing.
+* **Human / Alien Leutenant** (160 / 161) -> mode 3, troop index 23 / 22 -> type 69 / 73. Greyed
+  because the multiplayer save generates one type-69 commander per active team at the **Start**
+  tool's position (the game re-types it to the owner's race), and loading discards any in the file.
+* **Artifacts** (180..185) -> mode 4, kinds 200..205 -> `x z 63..68 0 hp 0`. Multiplayer artifacts
+  come from **Artifact Site** (198, enabled) plus the `s(6,0)` trigger templates, i.e. from the lobby's
+  artifact option; a hand-placed artifact would bypass it **(inferred reason)**.
+* **AI Flags** popup (Defense 200 -> `FlagType 0x430F64 = 100`), toolbar **Flag** (144,
+  `WS_DISABLED`, mode 9) and the FLAG dialog (Priority -> `0x430F68`, Type -> `0x430F64`): a flag is
+  stored through `PasteLar(.., prior, type, 0)` as a kind-100..199 record and saved as
+  `x z 47 (type-100) priority` (`0x4137F1`). Type 47 is the **Human mining tower** in the shipped
+  `GAMESTAT.TXT`; `dc16.exe` has no FLAG object type or keyword and `ai.c` reads nothing of the kind
+  (`DC16_AI.md`). The feature predates the shipped object table and is dead; `CheckIt` still reports
+  "ERROR : Flag on Blocking Terrain".
+* **Lights** popup (191..194 direction -> `LightDir 0x430F70` 300..303, 195..197 type -> `LightType
+  0x430F6C` 0..2) -> mode 11 -> the LIGHT objects 51..62 (team 8), which the game draws. Shipped
+  scenarios use them almost never (one each in ALIEN07 (53), HUMAN06 (55), aero02 (55), coun03 (55),
+  globo03 (59); none in a multiplayer map). The Objects menu's **Path Light** (230, enabled) is troop
+  index 36 -> type **94 "Vision sight"**, not a light. Why the popup is greyed is not in the code
+  **(inferred: campaign decoration)**.
+* **Block Type** popup (greyed as a whole): its items 108..125 have handlers, but the toolbar buttons
+  119..136 select the same 18 block types - redundant.
+* **Recalculate Priorities** (186, enabled) has no handler and `CalcPriorities 0x413FC8` no caller.
+
+**Team Attributes (RACE dialog, menu "Team Stats" 165): 51 of 57 controls disabled** -
+`RaceDialogProc 0x41E7B9` reads and writes every one of them:
+
+* **AI Type** (edit 107 -> `%AI`), **Team Colour** (radios 108..115 -> `%TeamColour`), **AI Slots**
+  (edits 126..140 -> the 15 numbers of `%AISlots`): the game reads `%Race`, `%AI` and `%TeamColour`
+  only for campaign game types (`0x41BF73`, `0x41BFEC`, `0x41C01F`: `[scenario+0x14F0]` 0 or 3), in
+  multiplayer the lobby's values rule, and `%AISlots` is read and dropped (`0x41C206`). For a
+  multiplayer editor these fields change nothing - hence disabled; the editor writes them anyway.
+* **Allies** (radios 117..124 -> `%TeamAllies`): the game reads them in BOTH modes (`0x41C141`,
+  `ally(i,j)` plus the team's own flags), but the lobby's team numbers (`'n'`, protocol doc) create
+  alliances too, so file allies would add fixed alliances the lobby cannot undo **(inferred reason)**.
+  Race (650/651) and Start Money (142 -> `%Money`, always read) stay enabled.
+
+**Pure leftovers**: the `ATTRIB2` "Team Attributes" template (125 controls, 34 disabled radios of a
+Mobility / Visibility / Weapon / Armour matrix for the early unit names Security Troop, Merc
+Infantry, Crusader, Thunderbolt, Cyborg, VTOL, Exploiter, Carry All; the disabled cells mark levels a
+unit could not reach) is created nowhere - its name is not in DATA. The **MAPSIZE** buttons Atlantis
+/ Training Set / Special Set (16 / 21 / 22) are handled (`SizeDialogProc`, block sets 2/3/4) but need
+`\scenario\atlantis.set`, `trainh.set`, `special.set`, which the retail game never shipped (section 3.3).
+
+### 13.2 What the ozi_ns editor changed
+
+Resource edits only (code byte-identical, section "Map editor notes" of CLAUDE.md): `WS_DISABLED`
+cleared on MAPSIZE 16/21/22, RACE 108..125 and TROOPS 508/678, **and `MF_GRAYED` cleared on the menu
+items 237 Super Gen, 233 Load MED, 103 Save MED, 160/161 Leutenant, 180..185 Artifacts and the
+Lights popup**, while **Defense (200) was greyed**. Still greyed there: 164, 170, Block Type, 235, 236,
+AI Flags, RACE 106/107 + AI Slots, TOD Campaign, toolbar Trigger / Flag. The Healer unlock is
+cosmetic (unreachable dialog, unsaved row); the artifact and lieutenant unlocks produce object lines
+the game accepts; the MED items work.
+
+### 13.3 Everything un-greyed (1 Oct 2026, maintainer: "enable everything what is disabled")
+
+`tools/patch_maped.py` now carries fourteen fixes = the patcher's `MapEditor` build before `icon`:
+the four ozi_ns ones (`blocksets`, `teams`, `healer`, `troopsframe`) and `race` (AI Type + AI Slots,
+33 edits), `campaign` (TOD radio 107), `medfiles` (237/233/103), `blockmenu` (the popup), `teamdialogs`
+(235/236 un-greyed **and re-pointed to 166/167**, the command ids `CityDialogProc` / `TroopDialogProc`
+listen to - the first menu-id edits), `lieutenants` (160/161), `artifacts` (180..185), `lights` (the
+popup), `trigger` (TOOLMAIN 117 + menu 164), `aiflags` (TOOLMAIN 144 + the AI Flags popup; offered
+with a warning, since a flag saves as a player-0 mining tower). 79 one-byte edits in `.rsrc`
+(`WS_DISABLED` byte 3 `58 -> 50`, `MF_GRAYED` flag byte `01 -> 00` / `81 -> 80` / popups `11 -> 10`, the two
+ids `eb -> a6`, `ec -> a7`), located by walking the resource tree, the DLGTEMPLATEs and the MENU
+template; `verify` recognises the re-pointed ids on a patched exe. Not touched: **Edit Text** (170,
+no handler, no code path) and the never-created `ATTRIB2`. Build: `Dark Colony Map Editor.exe`
+SHA-256 **`de8076dc…`** (was `c72dd205…`); tool chain = patcher under pwsh 7 = PowerShell 5.1, byte
+for byte. Tested live (scratchpad `edtest.py`: the exe copied beside the editor's DLLs, driven with
+`PostMessage WM_COMMAND`, menu states read with `GetMenuState`, dialogs captured with `PrintWindow`):
+every targeted menu entry enabled, Edit Text and the separators greyed; New Map; Team Attributes
+(AI Type 107, Slots 126..140 enabled), City State via the menu id 166 ("City Attributes - Team 0 Red",
+B/P radios + hit points live), Troop Attributes via 167 (rows 500..508, 670..678 live), Scenario Stats
+(both type radios enabled); toolbar Trigger and Flag enabled. Not tested: saving a map with the newly
+reachable fields and loading it in the game.
+
+## 14. Open points
 
 * Attribute bits 5 and 8 and the exact use of the terrain class (section 3.2) are not traced.
 * The trigger condition language (`s`, `m`, `c`, `S`, `r`) and the action arguments are recorded

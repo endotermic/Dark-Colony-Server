@@ -178,6 +178,12 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
            'healer': ('patch_maped.py', ['--fix', 'healer']), 'troopsframe': ('patch_maped.py', ['--fix', 'troopsframe']),
+           # 1 Oct 2026: everything else the editor greys out (DC16_MAP_FILES.md section 13)
+           'race': ('patch_maped.py', ['--fix', 'race']), 'campaign': ('patch_maped.py', ['--fix', 'campaign']),
+           'medfiles': ('patch_maped.py', ['--fix', 'medfiles']), 'blockmenu': ('patch_maped.py', ['--fix', 'blockmenu']),
+           'teamdialogs': ('patch_maped.py', ['--fix', 'teamdialogs']), 'lieutenants': ('patch_maped.py', ['--fix', 'lieutenants']),
+           'artifacts': ('patch_maped.py', ['--fix', 'artifacts']), 'lights': ('patch_maped.py', ['--fix', 'lights']),
+           'trigger': ('patch_maped.py', ['--fix', 'trigger']), 'aiflags': ('patch_maped.py', ['--fix', 'aiflags']),
            # the high-resolution icon, last but one in the Ultimate build, last in the others (it appends a section); the .ico is in the game folder
            'icon': ('patch_icon.py', ['--ico', ICON_FILE]),
            # ONLINE WAR (29 Sep 2026, Ultimate only): appends the code section .dccode after .dcicon, so it follows icon
@@ -188,7 +194,11 @@ PLAN_OF = {'nocd': 'nocd',
            'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
+           'race': 'maped', 'campaign': 'maped', 'medfiles': 'maped', 'blockmenu': 'maped', 'teamdialogs': 'maped',
+           'lieutenants': 'maped', 'artifacts': 'maped', 'lights': 'maped', 'trigger': 'maped', 'aiflags': 'maped',
            'icon': 'icon', 'online': 'online'}
+MAPED_STEPS = ['blocksets', 'teams', 'healer', 'troopsframe', 'race', 'campaign', 'medfiles', 'blockmenu',
+               'teamdialogs', 'lieutenants', 'artifacts', 'lights', 'trigger', 'aiflags']
 PLAN_ARGS = {'maped': ['--fix', 'all'], 'icon': ['--ico', ICON_FILE]}      # plan-time arguments per plan name (default: none)
 _plans = {}
 
@@ -941,6 +951,87 @@ knows the healing units (GAMESTAT.TXT rows 49 and 50).  Two single-byte edits cl
       desc='''Cosmetic, taken over from the ozi_ns editor: the Troop Attributes dialog's frame style changes from
 WS_THICKFRAME (a sizing border, useless for a fixed layout) to WS_SYSMENU (a title-bar close box).
 One byte in the DIALOG template's style dword.'''),
+ # ---- map editor, 1 Oct 2026: everything else the editor ships greyed out (maintainer: "enable everything
+ # what is disabled, so all features of the game are available").  The editor is the developers' campaign
+ # tool released as a multiplayer map editor; it imports neither EnableWindow nor EnableMenuItem, so every
+ # greyed state is a static flag in the resources and the code behind it is complete (DC16_MAP_FILES.md §13).
+ dict(id='race', name='Team Attributes: AI Type and AI Slots editable', date='1 Oct 2026', tool='tools/patch_maped.py --fix race',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('race'), editor_only=True,
+      desc='''The remaining greyed part of the Team Attributes dialog: the AI Type edit (written as %AI - the
+computer player's personality 1..4, read by the game in campaign scenarios only; in a multiplayer game
+the lobby decides who is human and who is AI) and the fifteen AI Slots edits (written as %AISlots, a
+line the game reads and ignores).  33 single-byte edits clear WS_DISABLED on the edits, their labels
+and the two group boxes.  The dialog procedure handled every one of them all along.'''),
+ dict(id='campaign', name='Scenario Stats: Campaign scenario type selectable', date='1 Oct 2026', tool='tools/patch_maped.py --fix campaign',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('campaign'), editor_only=True,
+      desc='''The Scenario Stats dialog shows the scenario type as two radio buttons, Multiplayer (0) and Campaign (1),
+the second greyed out.  The number is the first value of the fourth line of the .SCN; the game ignores
+it, but the editor itself does not: for a multiplayer scenario the save also writes the .TRO trigger
+file (vent eruptions, artifact sites) and appends one commander per active team at its start position,
+for a campaign scenario it writes neither (campaign missions bring their own scripts and units).  A new
+map starts as type 1, so until now the only way to a multiplayer map was to press Multiplayer once; this
+fix lets you switch back.  One byte.'''),
+ dict(id='medfiles', name='File menu: Super Gen, Load MED File, Save MED File', date='1 Oct 2026', tool='tools/patch_maped.py --fix medfiles',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('medfiles'), editor_only=True,
+      desc='''Three greyed entries of the File menu with complete handlers.  Load MED File / Save MED File read and
+write the editor's own document (Maps (*.med), a binary dump of the whole editor state - the only form
+that keeps editor-only data such as trigger names); "Save Map" is the export to the game's files (.SCN,
+.MAP, .MTG, .TRO, .POP and, through pmap.exe, .PTH).  Super Gen is the developers' batch export: it reads
+dirlist.txt beside the editor, loads every *.map listed there with its .mtg/.scn/.pop and re-exports it.
+Three single-byte edits clear MF_GRAYED in the MAINMENU resource.'''),
+ dict(id='blockmenu', name='Block Type menu selectable', date='1 Oct 2026', tool='tools/patch_maped.py --fix blockmenu',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('blockmenu'), editor_only=True,
+      desc='''The whole Block Type menu (the eighteen block classes 0 Default .. 17 River Left) is greyed out; its items
+are handled and do exactly what the numbered toolbar buttons do.  One byte clears MF_GRAYED on the popup.'''),
+ dict(id='teamdialogs', name='Team Attributes menu: City State and Troop Attributes dialogs reachable', date='1 Oct 2026', tool='tools/patch_maped.py --fix teamdialogs',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('teamdialogs'), editor_only=True,
+      desc='''The Team Attributes menu has two greyed entries, City and Troops, whose command ids (235, 236) have no
+handler in the editor's window procedure at all - un-greying them would give dead menu items.  The two
+dialogs they were meant to open exist and are complete, but hang on the command ids 166 and 167, which
+nothing in the editor ever sends (the menu was renumbered at some point and the handlers were left
+behind).  This fix clears MF_GRAYED on the two entries and changes their command ids to 166 and 167
+(low byte only, four single-byte edits).  City State sets, per team, which of the five city buildings
+start as buildable or prebuilt and with how many hit points, plus the start money - the five pairs of
+the TEAM block that the game does read.  Troop Attributes sets a weapon and an armour level per troop
+row; the file keeps only those two numbers (the game interprets them as upgrade levels of the race's
+production buildings), the Buildable and Health columns are never saved and the Healer row is not
+written at all.'''),
+ dict(id='lieutenants', name='Troops menu: Human and Alien Leutenant placeable', date='1 Oct 2026', tool='tools/patch_maped.py --fix lieutenants',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('lieutenants'), editor_only=True,
+      desc='''The two commander entries of the Troops menu are greyed because a multiplayer save generates the
+commanders itself: one per active team, at the position set with the Start tool (the game turns it into
+the owner's race), and loading a multiplayer scenario discards any commander found in the file.  With
+the entries un-greyed (two single-byte edits) commanders can be placed by hand, which matters for
+campaign-type scenarios, where nothing is generated.'''),
+ dict(id='artifacts', name='Artifacts menu: single artifacts placeable', date='1 Oct 2026', tool='tools/patch_maped.py --fix artifacts',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('artifacts'), editor_only=True,
+      desc='''Solar Lens, Maktor, Lunatek, Pinball, Tektarra and Ultimate are greyed in the Artifacts menu; only
+Artifact Site is selectable.  In a multiplayer map artifacts are meant to come from the sites, whose
+contents the generated .TRO hands out according to the lobby's artifact setting (s(6,0)); a loose
+artifact placed by hand (an object of type 63..68 lying on the map) bypasses that setting.  The
+handlers are complete; six single-byte edits clear MF_GRAYED.'''),
+ dict(id='lights', name='Lights menu: light objects placeable', date='1 Oct 2026', tool='tools/patch_maped.py --fix lights',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('lights'), editor_only=True,
+      desc='''The Lights menu (direction left/right/up/down, type Flicker/Medium/Bright) places the game's twelve
+LIGHT objects, types 51..62, as team-8 objects; the game draws them on its light plane.  The shipped
+scenarios use them in a handful of campaign maps and never in a multiplayer map.  One byte clears
+MF_GRAYED on the popup.  ("Path Light" in the Objects menu is a different object, type 94.)'''),
+ dict(id='trigger', name='Trigger tool and Edit Trigger String', date='1 Oct 2026', tool='tools/patch_maped.py --fix trigger',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('trigger'), editor_only=True,
+      desc='''The toolbar's Trigger button (greyed) paints trigger ids onto map cells; they are saved in the .MTG file,
+which the game's campaign scripts test with m(x,z).  Edit Trigger String (Scenario menu, greyed) names
+the current trigger.  The editor writes only its fixed multiplayer trigger templates into the .TRO, so
+a script that uses the painted ids must still be written by hand - the two controls are the campaign
+authors' half of that workflow.  Two single-byte edits (WS_DISABLED on the button, MF_GRAYED on the
+menu entry).'''),
+ dict(id='aiflags', name='Flag tool and AI Flags menu (dead feature - see description)', date='1 Oct 2026', tool='tools/patch_maped.py --fix aiflags',
+      doc='DC16_MAP_FILES.md section 13 (Dark-Colony-Server)', blocks=blocks_maped('aiflags'), editor_only=True,
+      desc='''The toolbar's Flag button and the AI Flags menu (Defense) place "AI flags" with a priority and a type.
+WARNING: the editor saves such a flag as the object line "x z 47 <type-100> <priority>", and object type
+47 is the Human mining tower in the shipped GAMESTAT.TXT - the released game has no flag object and its
+computer player reads no map flags.  A placed flag therefore becomes a mining tower of player 0 (type
+"Defense") standing on open ground.  Included because the maintainer asked for every greyed control;
+leave it unticked unless you want to experiment.  Two single-byte edits.'''),
  # ---- every build, always last
  dict(id='icon', name='High-resolution icon (Explorer, taskbar, desktop shortcut) + per-monitor DPI-aware manifest (games)', date='25 Sep 2026 / 27-28 Sep 2026', tool='tools/patch_icon.py (icon: tools/make_dc_icon.py -> DC - Council wars\\DC_HD.ICO)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.38 (icon) and 10.43 (manifest)', blocks=blocks_icon,
@@ -1030,7 +1121,7 @@ BUILDS = [
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
-      steps=['blocksets', 'teams', 'healer', 'troopsframe', 'icon']),
+      steps=MAPED_STEPS + ['icon']),
 ]
 
 def hexs(b):
