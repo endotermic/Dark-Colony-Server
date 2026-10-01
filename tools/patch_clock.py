@@ -94,8 +94,13 @@ def main(argv=None):
     ap.add_argument('exe')
     ap.add_argument('--width', type=int, default=1024, help='screen width the HUD was rebuilt for')
     ap.add_argument('--height', type=int, default=768, help='screen height the HUD was rebuilt for')
+    ap.add_argument('--part', choices=('all', 'anchors', 'bank'), default='all',
+                    help='which edits: the two anchor dwords (part of the one display fix of the patcher), the bank string '
+                         'sprites/cloc -> sprites/clock (the dark-theme fix `console`, 1 Oct 2026), or both (default)')
     a = ap.parse_args(argv)
     target = (STOCK[0] + a.width - 640, STOCK[1] + a.height - 480)
+    do_anchors = a.part in ('all', 'anchors')
+    do_bank = a.part in ('all', 'bank')
 
     data = bytearray(open(a.exe, 'rb').read())
     yoff, xoff, cur, va = find_site(data)
@@ -108,18 +113,22 @@ def main(argv=None):
                                                 else 'sprites/clock (redrawn SPRITES/CLOCK.SPR)'))
     if a.command == 'verify':
         return 0
-    print('  -> anchor (%d, %d) for %dx%d' % (target[0], target[1], a.width, a.height))
-    print('  -> bank path %#x: sprites/cloc -> sprites/clock (SPRITES/CLOCK.SPR, the dial redrawn in the menu style)' % boff)
+    if do_anchors:
+        print('  -> anchor (%d, %d) for %dx%d' % (target[0], target[1], a.width, a.height))
+    if do_bank:
+        print('  -> bank path %#x: sprites/cloc -> sprites/clock (SPRITES/CLOCK.SPR, the dial redrawn in the menu style)' % boff)
     if a.command == 'plan':
         return 0
-    if cur == target and not stock_bank:
+    if (cur == target or not do_anchors) and (not stock_bank or not do_bank):
         print('nothing to do')
         return 0
     bak = a.exe + '.clock.bak'
     shutil.copyfile(a.exe, bak)
-    struct.pack_into('<I', data, xoff, target[0])
-    struct.pack_into('<I', data, yoff, target[1])
-    data[boff:boff + len(BANK_NEW)] = BANK_NEW
+    if do_anchors:
+        struct.pack_into('<I', data, xoff, target[0])
+        struct.pack_into('<I', data, yoff, target[1])
+    if do_bank:
+        data[boff:boff + len(BANK_NEW)] = BANK_NEW
     open(a.exe, 'wb').write(data)
     print('written %s; backup %s' % (a.exe, bak))
     return 0

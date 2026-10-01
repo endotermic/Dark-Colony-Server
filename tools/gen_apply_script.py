@@ -45,16 +45,30 @@ GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.jo
 # stock mode = the build without its HD fixes; every HD mode is a separate replay of the two tools
 # that take --width/--height (`resolution`, `clock`), emitted as per-mode variants of those fixes
 # (same Id, `Mode` field).  All HD modes share the one INTRF_HD folder (maintainer decision), so
-# `hdpaths` is the same in every HD mode; the patcher checks that the folder's set is the chosen size
-# by reading the GIF header of INTRF_HD\INTRFACE.GIF (`DataSize`).  Doc 10.25.
+# the INTRF_HD path strings are the same in every HD mode (part of the one `resolution` fix since
+# 1 Oct 2026).  Doc 10.25, 10.58.
 STOCK_MODE = '640x480'
 HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800', '1920x1080', '1920x1200', '3840x1080']  # several sizes per aspect ratio since 27 Sep 2026 (maintainer: 1920x1080, 1920x1200; until then one per ratio, 22 Sep 2026). The window preselects the LAST recommended mode of this list, so within one ratio the larger size must come after the smaller
-DEFAULT_MODE = '1024x768'           # the mode of the exes published in the repository
+PUBLISHED_MODE = '1024x768'         # the mode of the exes published in the repository (NOT a default: since 1 Oct 2026 the
+                                    # resolution is always chosen explicitly - window page 1, CLI -Resolution)
 # tools replayed per mode (--width/--height): the display fixes differ per size; `movies` and `ozi` have
 # a 640x480 variant (the exe is pointed at copies of the lists / the menu script that the original exe
 # never reads, since the stock files must stay untouched) and one shared HD variant
 MODE_STEPS = {'resolution', 'clock', 'movies', 'ozi', 'music'}
-HD_STEPS = {'resolution', 'hdpaths', 'clock'}   # fixes that do not exist in the stock mode
+HD_STEPS = {'resolution', 'hdpaths', 'clock', 'console'}   # replay steps that do not exist in the stock mode
+# The battlefield interface theme (1 Oct 2026, maintainer: "dark mode must be optional but not preselected, customer
+# must be forced to select light mode (classic) or dark mode of battlefield interface"): the console-style HUD of
+# 28-30 Sep 2026 (doc 10.49-10.55) is the DARK theme = data (INTRF_HD\<WxH>\INTRFACE.GIF, the banks INTRF_HD\MAINBUT.SPR /
+# POPP.SPR, SPRITES\CLOCK.SPR, the console script edits) plus ONE exe edit, the clock bank string `sprites/cloc` ->
+# `sprites/clock` = fix `console` (Theme 'dark', HD only).  The LIGHT theme = the stock metal interface: the shipped
+# INTRF_HD\<WxH>\INTRFACE_LIGHT.GIF (hud_layout.py build), the stock banks, no console edits, no `console` fix.
+THEMES = ('light', 'dark')
+# 1 Oct 2026 (maintainer: "combine all patches related to resolution change into one single patch"): the
+# three display tools are replayed one after the other and attributed as ONE fix `resolution` per HD size
+# (until then the fixes `resolution`, `hdpaths` and `clock`, with Requires between them).  A fix id in
+# COMPOSITE names the consecutive replay steps folded into it; FIX_OF maps a step to its fix.
+COMPOSITE = {'resolution': ['resolution', 'hdpaths', 'clock']}
+FIX_OF = {s: f for f, ss in COMPOSITE.items() for s in ss}
 CUR_MODE = None
 
 
@@ -115,8 +129,7 @@ def hd_data(g, mode=None):
         if name.upper().endswith('SCENE.TXT'):
             continue                                    # the briefing lists come from GAMESTAT (below)
         if name.upper().endswith('.SPR'):
-            files.append('INTRF_HD\\' + name)           # the console-style banks ship as they are (hud_console.py, doc 10.49)
-            continue
+            continue                                    # the console-style banks belong to the dark theme (console_data)
         if name.upper() in ('ONLINE', 'ONLINEBG.GIF'):
             continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51)
         src = os.path.join(GAME_DIR[g], 'INTRFACE', name)
@@ -124,7 +137,6 @@ def hd_data(g, mode=None):
         files.append('INTRFACE\\' + name)
     files += ['GAMESTAT\\' + x for x in ('HSCENE.TXT', 'GSCENE.TXT', 'HTSCENE.TXT', 'GTSCENE.TXT')]
     files += _tree(g, 'SPRITES', pattern=r'_HD\.SPR$') + _tree(g, 'ANIMATE', pattern=r'_HD\.FIN$')
-    files += ['SPRITES\\CLOCK.SPR']                     # the day/night hand cells with the redrawn dial face (fix clock, doc 10.49)
     if g == 'cw':
         files += ['exp\\intrface\\' + x for x in ('bintroe', 'introe', 'shumane')]
         files += ['exp\\gamestat\\' + x for x in ('hxscene.txt', 'gxscene.txt')]
@@ -135,7 +147,7 @@ def hd_data(g, mode=None):
     return files
 
 
-SHIPPED_PICTURES = ('INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF')
+SHIPPED_PICTURES = ('INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF', 'INTRFACE_LIGHT.GIF')
 
 
 def set_sources(g, mode):
@@ -143,6 +155,15 @@ def set_sources(g, mode):
     (INTRG / INTRO with their bottom bands, BACKDROP without one - the pre-battle screens' ground,
     doc 10.56) and the spliced HUD frame, shipped as INTRF_HD\<WxH>\*.GIF."""
     out = ['INTRF_HD\\%s\\%s' % (mode, x) for x in SHIPPED_PICTURES]
+    for f in out:
+        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+    return out
+
+
+def console_data(g, mode=None):
+    """The dark theme's banks (fix `console`): the console-style HUD cells and dialog plates, and the
+    redrawn clock dial the exe reads as sprites/clock (hud_console.py, doc 10.49)."""
+    out = ['INTRF_HD\\MAINBUT.SPR', 'INTRF_HD\\POPP.SPR', 'SPRITES\\CLOCK.SPR']
     for f in out:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
@@ -170,7 +191,11 @@ ICON_FILE = os.path.join(GAME, 'DC - Council wars', 'DC_HD.ICO')
 
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
-           'pool': 'patch_pool.py', 'clock': 'patch_clock.py',
+           'pool': 'patch_pool.py',
+           # the clock tool's two anchor dwords are part of the one display fix; its bank string is the dark-theme fix `console`
+           'clock': ('patch_clock.py', ['--part', 'anchors']), 'console': ('patch_clock.py', ['--part', 'bank']),
+           # default game speed 150 % (10 Sep 2026; dropped 21 Sep 2026; back since 1 Oct 2026, maintainer: "return back patch for 150% game speed by default")
+           'speed': ('patch_speed.py', ['--percent', '150']),
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
            'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py',
@@ -190,7 +215,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'online': 'patch_online.py'}
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
-           'clock': 'clock', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
+           'clock': 'clock', 'console': 'clock', 'speed': 'speed', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
            'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
@@ -199,7 +224,7 @@ PLAN_OF = {'nocd': 'nocd',
            'icon': 'icon', 'online': 'online'}
 MAPED_STEPS = ['blocksets', 'teams', 'healer', 'troopsframe', 'race', 'campaign', 'medfiles', 'blockmenu',
                'teamdialogs', 'lieutenants', 'artifacts', 'lights', 'trigger', 'aiflags']
-PLAN_ARGS = {'maped': ['--fix', 'all'], 'icon': ['--ico', ICON_FILE]}      # plan-time arguments per plan name (default: none)
+PLAN_ARGS = {'maped': ['--fix', 'all'], 'icon': ['--ico', ICON_FILE], 'speed': ['--percent', '150']}      # plan-time arguments per plan name (default: none)
 _plans = {}
 
 def tool_of(step):
@@ -413,14 +438,30 @@ def blocks_pool(g):
     m = re.search(r'site file 0x([0-9a-f]+)', plan(g, 'pool'))
     return [(int(m.group(1), 16), 5, 'mov eax,imm32 before call SMalloc_Pool: pool size 11 500 000 (0x00AF79E0) -> 33 554 432 bytes (0x02000000, 32 MiB)')]
 
+def blocks_speed(g):
+    t = plan(g, 'speed'); out = []
+    m = re.search(r'tick_ms initialiser\s+file 0x([0-9a-f]+)', t)
+    out.append((int(m.group(1), 16), 4, 'game-state initialiser: imm32 of mov dword ptr [esi+970h],imm32 (gs->tick_ms) 66 ms -> 44 ms'))
+    m = re.search(r'persistent setting \(desired tick\)\s+file 0x([0-9a-f]+)', t)
+    out.append((int(m.group(1), 16), 4, 'DGROUP: persistent "desired tick" settings global (4th of four settings dwords) 66 ms -> 44 ms'))
+    return out
+
+def blocks_display(g):
+    """The one `resolution` fix (1 Oct 2026) = the display sweep + the 30 INTRF_HD path strings + the clock
+    anchor, each tool's blocks as before; the three tools touch disjoint bytes (attribute() asserts it)."""
+    return blocks_resolution(g) + blocks_hdpaths(g) + blocks_clock(g)
+
 def blocks_clock(g):
     t = plan(g, 'clock')
     m = re.search(r'y dword at file 0x([0-9a-f]+), x dword at file 0x([0-9a-f]+)', t)
     w, h = mode_wh(CUR_MODE)
     b = re.search(r'hand bank path at file 0x([0-9a-f]+)', t)
     return [(int(m.group(1), 16), 4, 'clock_draw: imm32 of mov edx,ANCHOR_Y - bottom-right anchor y 450 (0x1C2) -> %d (0x%X)' % (h - 30, h - 30)),
-            (int(m.group(2), 16), 4, 'clock_draw: imm32 of mov eax,ANCHOR_X - bottom-right anchor x 608 (0x260) -> %d (0x%X)' % (w - 32, w - 32)),
-            (int(b.group(1), 16), 14, 'DGROUP string "sprites/cloc" -> "sprites/clock": the hand cells carry the dial face, SPRITES\\CLOCK.SPR is the face redrawn in the menu style (doc 10.49); the stock SPRITES\\CLOC.SPR stays for the original exe')]
+            (int(m.group(2), 16), 4, 'clock_draw: imm32 of mov eax,ANCHOR_X - bottom-right anchor x 608 (0x260) -> %d (0x%X)' % (w - 32, w - 32))]
+
+def blocks_console(g):
+    b = re.search(r'hand bank path at file 0x([0-9a-f]+)', plan(g, 'clock'))
+    return [(int(b.group(1), 16), 14, 'DGROUP string "sprites/cloc" -> "sprites/clock": the hand cells carry the dial face, SPRITES\\CLOCK.SPR is the face redrawn in the menu style (doc 10.49); the stock SPRITES\\CLOC.SPR stays for the original exe and for the light theme')]
 
 def blocks_movies(g):
     out = []
@@ -436,7 +477,7 @@ def blocks_sounds(g):
 def movie_data(g, mode=None):
     """The AVI resources of the `movies` fix: the Classic movies under their own names.  The two
     INTRF_HD campaign lists that name the endings are interface resources and belong to `hd_data`
-    (fix `hdpaths`, which `movies` requires) - maintainer request 15 Sep 2026: interface resources and
+    (part of fix `resolution`, which `movies` requires) - maintainer request 15 Sep 2026: interface resources and
     AVI resources are checked as separate groups.  Fixed list (large binaries, not in `git ls-files`
     at generation time)."""
     files = ['AVI\\DCINTRO.AVI', 'AVI\\DCAENDING.AVI', 'AVI\\DCHENDING.AVI']
@@ -543,14 +584,20 @@ CD in a drive.  This one fix removes the whole CD business from the exe:
 
 Every edit sits inside an existing instruction or string; nothing moves.  The patched exe no
 longer needs HBNFUFL.A01 / .A02 (the untouched originals still read the drive letter from them).'''),
- dict(id='resolution', name=lambda mode: '%s display' % mode, date='9 Sep 2026 (any size since 21 Sep 2026)', tool='tools/patch_resolution.py (Dark-Colony-Server)',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10, 10.24, 10.25', blocks=blocks_resolution,
-      requires=['hdpaths'], data=hd_data, datasize=True,
-      desc=lambda mode: (lambda g: '''The engine is hard-wired for 640x480: the DirectDraw display mode, the framebuffer stride
-(y*640 done as shl 7 + add), clip rectangles, the map viewport (16x14 tiles), the minimap
-position, the movie blit, the 44 code-positioned main-menu elements, the terrain light plane's
-512-byte row advances and the size of draw_terrain's stack lightmap.  Every one of those
-constants was read out of the disassembly and is replaced by the %(mode)s equivalent here:
+ dict(id='resolution', name=lambda mode: '%s display: screen mode, interface data from INTRF_HD, clock hand' % mode,
+      date='9 / 13 / 14 Sep 2026 (one fix since 1 Oct 2026)', tool='tools/patch_resolution.py + patch_hd_paths.py + patch_clock.py (Dark-Colony-Server)',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10, 10.15, 10.17, 10.24, 10.25, 10.58', blocks=blocks_display,
+      data=hd_data, datasize=True,
+      desc=lambda mode: (lambda g: """Everything the screen size changes, in ONE fix (until 1 Oct 2026 the three fixes "display",
+"interface data from INTRF_HD" and "clock hand", which only worked together and were always
+selected together; the maintainer asked for one).  Three tools are replayed one after the other:
+
+A. THE DISPLAY (patch_resolution.py).  The engine is hard-wired for 640x480: the DirectDraw
+display mode, the framebuffer stride (y*640 done as shl 7 + add), clip rectangles, the map
+viewport (16x14 tiles), the minimap position, the movie blit, the 44 code-positioned main-menu
+elements, the terrain light plane's 512-byte row advances and the size of draw_terrain's stack
+lightmap.  Every one of those constants was read out of the disassembly and is replaced by the
+%(mode)s equivalent here:
   stage 1  display mode, framebuffer stride (%(stride)s), clip rect
   stage 2  full-screen chrome, mouse, cursor clip, loading screens, and the 44 menu elements
            moved by (+%(dx)d,+%(dy)d) - the same offset the letterboxed 640x480 menu screens use
@@ -564,37 +611,66 @@ Every edit swaps one immediate constant or one arithmetic opcode inside an exist
 instruction; no code is added and no instruction moves.  Council Wars is the same code at
 +0x60 (AUTO) / +0x28 (DGROUP) with three site fixups, hence the slightly different offsets.
 
-REQUIRES the interface data rebuilt for %(mode)s next to the exe - in the INTRF_HD/ folder,
-read through the "Interface data from INTRF_HD" patch below (select both).  One INTRF_HD folder
-serves every resolution, so it must hold the set built for THIS size: the patcher reads the
-size of INTRF_HD\\INTRFACE.GIF and refuses a mismatch (with a 1024x768 set the game would draw
-the menus and the HUD frame at the wrong size).  The two loading screens INTRF_HD\\LOAD.BMP /
-LOAD2.BMP are not part of a set: this patcher writes them for the chosen size from the stock
-INTRFACE\\LOAD.BMP / LOAD2.BMP (the 640x480 picture centred on a black %(mode)s canvas) whenever
-the ones in place have another size.''' % dict(
+B. INTERFACE DATA FROM INTRF_HD (patch_hd_paths.py, 30 edits).  The rebuilt menus, HUD frame,
+loading screens, briefing-marker lists and re-baked logo sprites used to replace the stock files
+under their stock names, so the untouched original exe could no longer run from the same folder.
+They live under their stock names in INTRF_HD/ (Council Wars also exp/intrf_hd/ and
+ozi_ns/intrf_hd/), the stock 640x480 files are back in INTRFACE/ and GAMESTAT/, and the re-baked
+logo animations are SPRITES/DCSS_HD.SPR, DCUK_HD.SPR, DCUT_HD.SPR with matching ANIMATE/*_HD.FIN.
+The game opens each of those files through a literal path in the data section ("intrface/bintro"
+plus the language letter, "gamestat/hscene" plus ".txt", ...), so the 8-byte directory part of
+exactly the 30 strings whose files were rebuilt is rewritten: "intrface" / "gamestat" ->
+"intrf_hd", same length, in place.  Fonts, text files, per-screen sprite lists without logo
+banks and every other file keep their stock path and single copy; the two lists that do name
+logo banks (INTRG.DAT, INTRO.DAT) are redirected to INTRF_HD copies that say dcuk_hd.fin etc.
+No code changes.  With this the untouched dc16.exe / ENGEXP16.EXE (stock data) and the patched
+exe (INTRF_HD data) run side by side from one folder.
+
+C. THE DAY/NIGHT CLOCK HAND (patch_clock.py --part anchors, 2 edits).  The HUD's dial is a sprite
+cell that clock.c blits by code with its top-left corner at (608,450) - two plain immediates that
+are neither 640 nor 480, so the sweep in A did not touch them.  At %(mode)s that point lies inside
+the enlarged map view and the terrain paints over the dial every frame.  The anchor moves to
+(%(cx)d,%(cy)d), where the rebuilt HUD frame has the clock face.  (The dark battlefield interface
+also renames the dial's bank - that is the separate fix "console" below.)
+
+REQUIRES the interface data built for %(mode)s next to the exe in the INTRF_HD/ folder.  One
+INTRF_HD folder serves every resolution, so it must hold the set built for THIS size: applying
+this fix makes the patcher WRITE that set (Write-InterfaceSet) from the stock 640x480 files and
+the five pictures per size that ship with the game (INTRF_HD\\%(mode)s\\INTRG.GIF, INTRO.GIF,
+BACKDROP.GIF, and the HUD frame INTRFACE.GIF for the dark battlefield interface or
+INTRFACE_LIGHT.GIF for the light one - the theme is chosen with the resolution): menu scripts,
+HUD script, briefing lists, letterboxed backgrounds,
+the two loading screens INTRF_HD\\LOAD.BMP / LOAD2.BMP (the 640x480 picture centred on a black
+%(mode)s canvas), Council Wars' exp\\intrf_hd and ozi_ns\\intrf_hd copies.  With a set of another
+size the game would draw the menus and the HUD frame at the wrong size.""" % dict(
           mode=mode, dx=g.menu_dx, dy=g.menu_dy, vw=g.view_w, vh=g.view_h, tx=g.tiles_x, ty=g.tiles_y,
           mx=g.minimap_x, m0=g.movie_rect[0], m1=g.movie_rect[1], m2=g.movie_rect[2], m3=g.movie_rect[3],
+          cx=mode_wh(mode)[0] - 32, cy=mode_wh(mode)[1] - 30,
           stride='a shift, %d is a power of two' % g.w if g.pow2 else 'imul: %d is not a power of two' % g.w,
           slack=' plus %d spare rows given to the taller HUD bottom bar' % g.slack_y if g.slack_y else '',
           lm='the six lightmap row idioms x144 -> x%d (more than 34 tiles across),' % g.lm_stride if g.lm_stride_patch else ''))(geometry(mode))),
- dict(id='hdpaths', name='Interface data from INTRF_HD (rebuilt files renamed)', date='14 Sep 2026', tool='tools/patch_hd_paths.py',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.17', blocks=blocks_hdpaths,
-      requires=['resolution'], data=hd_data,
-      desc='''The rebuilt (1024x768 or another HD size) menus, HUD frame, loading screens, briefing-marker lists and re-baked logo sprites
-used to replace the stock files under their stock names, so the untouched original exe could no
-longer run from the same folder.  They now live under their stock names in INTRF_HD/ (Council Wars
-also exp/intrf_hd/ and ozi_ns/intrf_hd/), the stock 640x480 files are back in INTRFACE/ and
-GAMESTAT/, and the re-baked logo animations are SPRITES/DCSS_HD.SPR, DCUK_HD.SPR, DCUT_HD.SPR with
-matching ANIMATE/*_HD.FIN.  The game opens each of those files through a literal path in the data
-section ("intrface/bintro" plus the language letter, "gamestat/hscene" plus ".txt", ...), so this
-patch rewrites the 8-byte directory part of exactly the 30 strings whose files were rebuilt:
-"intrface" / "gamestat" -> "intrf_hd", same length, in place.  Fonts, text files, per-screen
-sprite lists without logo banks and every other file keep their stock path and single copy; the two
-lists that do name logo banks (INTRG.DAT, INTRO.DAT) are redirected to INTRF_HD copies that say
-dcuk_hd.fin etc.  No code changes.  With this patch the untouched dc16.exe / ENGEXP16.EXE
-(stock data) and the patched exe (INTRF_HD data) run side by side from one folder.  Only
-meaningful together with the display patch, and REQUIRES the INTRF_HD/ folder holding the set built for the chosen
-resolution (one folder for every size, maintainer decision 21 Sep 2026).'''),
+ dict(id='console', name='Dark battlefield interface: the console-style HUD, dialogs and clock dial', date='28-30 Sep 2026 (a choice since 1 Oct 2026)',
+      tool='tools/patch_clock.py --part bank (data: tools/hud_console.py)', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.49-10.55, 10.58; docs/DC16_INTERFACE_STYLE_GUIDE.md',
+      blocks=blocks_console, requires=['resolution'], data=console_data, theme='dark',
+      desc="""The DARK battlefield interface (the maintainer's choice of 1 Oct 2026: "dark mode must be optional
+but not preselected, customer must be forced to select light mode (classic) or dark mode").  From
+28 to 30 Sep 2026 the brushed-metal battlefield HUD was redrawn in the visual language of the
+game's menus: a grey pipework frame (INTRF_HD\\INTRFACE.GIF), buttons on the lobby's red-ringed
+black plates with the original unit and building portraits (INTRF_HD\\MAINBUT.SPR), the dialogs
+(save, options, objectives, quit) as black forms with grey tube frames and the lobby's text
+buttons (INTRF_HD\\POPP.SPR, laid out by the console dialog pass of the set writer), and the
+day/night dial redrawn in the same style (SPRITES\\CLOCK.SPR: light right half with a sun, dark
+left half with a moon, a red hand).  Almost all of that is data the patcher writes with the
+interface set when this fix is selected; this fix's ONE byte edit is the exe's name of the dial
+bank, "sprites/cloc" -> "sprites/clock" (14 bytes in DGROUP, same length, in place), so the exe
+draws SPRITES\\CLOCK.SPR instead of the stock metal dial SPRITES\\CLOC.SPR.
+
+The LIGHT (classic) interface = this fix not selected: the set writer takes the shipped
+INTRF_HD\\<WxH>\\INTRFACE_LIGHT.GIF (the metal frame spliced to the size by hud_layout.py), the
+scripts keep the stock banks INTRFACE\\MAINBUT.SPR / POPP.SPR and the stock dialog layouts (plus
+the MUSIC row for Dark Colony Ultimate), and the exe keeps "sprites/cloc".  Only at the HD sizes:
+at 640x480 (original) the game keeps its own interface and the theme is not asked.  The exes
+published in the repository are the dark 1024x768 build."""),
  dict(id='cursor', name='Windows pointer stays hidden', date='10 Sep 2026', tool='tools/patch_cursor.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.12', blocks=blocks_cursor,
       desc='''The game draws its own cursor and hides the Windows pointer with SetCursor(NULL), but two
@@ -619,15 +695,16 @@ info, game state, AI, widgets) is carved from one arena created at start-up with
 786 KB each, and extra sprite banks exhausted the arena ("SMalloc: Out of memory in local
 pool" in error.log).  The fix is the constant: 0x00AF79E0 -> 0x02000000 (32 MiB).  Block
 headers are 32-bit and the size check unsigned, so nothing else changes.'''),
- dict(id='clock', name=lambda mode: 'Day/night clock hand re-anchored (%s)' % mode, date='13 Sep 2026', tool='tools/patch_clock.py',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.15', blocks=blocks_clock,
-      requires=['resolution'],
-      desc=lambda mode: '''The HUD's day/night hand is a sprite cell that clock.c blits by code with its bottom-right
-corner at (608,450) - two plain immediates that are neither 640 nor 480, so the resolution
-sweep did not touch them.  At %s that point lies inside the enlarged map view and the
-terrain paints over the hand every frame.  The anchor moves to (%d,%d), where the rebuilt
-HUD frame has the clock face.  Only meaningful together with the %s display patch.''' % (
-          mode, mode_wh(mode)[0] - 32, mode_wh(mode)[1] - 30, mode)),
+ dict(id='speed', name='Default game speed 150 %', date='10 Sep 2026 (back since 1 Oct 2026)', tool='tools/patch_speed.py --percent 150',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.14', blocks=blocks_speed,
+      desc="""One simulation tick runs every gs->tick_ms milliseconds.  Two stock values feed it and both
+must change or the game resets the speed within a second: the game-state initialiser
+("mov dword ptr [esi+970h],66") and the persistent "desired tick" setting in DGROUP that the
+options screen and the speed negotiation read.  66 ms = 100 %, 44 ms = 150 % (the slider shows
+6600 / tick_ms).  The default only: the GAME SPEED slider of the battlefield options dialog
+still changes the speed at any time (100..200 %).  Multiplayer speed comes from the relay
+server, saved games keep their own speed.  (In the patcher from 10 to 21 Sep 2026, removed at
+the maintainer's request, and back since 1 Oct 2026, again at the maintainer's request.)"""),
  dict(id='ddraw', name='Two-monitor start-up hang fixed', date='13 Sep 2026', tool='tools/patch_ddraw_lost.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.16', blocks=blocks_ddraw,
       desc='''With two monitors, SetDisplayMode(1024,768,16) makes Windows re-lay out the desktop and
@@ -830,7 +907,7 @@ lines themselves are data: the HUD script INTRF_HD\\MAINE written with the displ
 in_text 207..210 above the two stock chat lines (15 rows apart); the stock 640x480 MAINE keeps two.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
-      requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=movie_data,
+      requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=movie_data,
       desc='''Since 15 Sep 2026 both games run from the "DC - Council wars" folder.  Council Wars has its own
 INTRO.AVI, AENDING.AVI and HENDING.AVI, so the Classic movies live beside them as AVI/DCINTRO.AVI,
 DCAENDING.AVI and DCHENDING.AVI.  Without this fix the Classic exe in that folder plays the Council
@@ -858,7 +935,7 @@ the prefix (the four letters become NUL) so the loader opens MISSION/ and SOUND/
 only, in place, no code and no relocation entry changes.'''),
  dict(id='ozi', name='DARK COLONY and OZI MISSIONS menu modes (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.13 and 10.36', blocks=blocks_ozi, cw_only=True,
-      requires=lambda mode: [] if mode == STOCK_MODE else ['hdpaths'], data=ozi_data,
+      requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=ozi_data,
       desc='''Council Wars opens every data file through one helper that prefixes the name with the
 8-byte string at DGROUP 0x4826D0 ("exp/"); the wave loader has its own copy and the save
 folder name "esave" sits in two more slots.  A campaign *mode* is therefore the content of
@@ -1109,19 +1186,29 @@ their SHA-256; the C source they were compiled from is in the Dark-Colony-Server
 # became 'Dark Colony Map Editor' later that day at the maintainer's request); before that
 # dc16new.exe, engexp16new.exe (DCEXP16.EXE 10-15 Sep 2026) and maped_ozi_ns_v1.2.exe.  `orig_path` is where the
 # window finds the untouched original, relative to the repository root = the folder of the script.
+# Since 1 Oct 2026 (maintainer: "mark patching 'Dark Colony' executable as deprecated and disabled and skipped by
+# default") the Classic build carries `deprecated` = the reason shown everywhere: the window shows its page only when
+# the options page's box is ticked; `-All` without -Original skips it unless -IncludeDeprecated; and since the same day
+# (maintainer: "remove already patched 'Dark Colony.exe' from repo by default") `shipped=False`: the repository no
+# longer carries the patched file, the patcher writes it on request.  The order of this list is the order of the
+# window's pages and of `-All`.
+CLASSIC_DEPRECATED = ('Dark Colony Ultimate.exe plays the whole Dark Colony campaign (DARK COLONY, LOAD DC GAME, ACADEMY in its '
+                      'main menu) with every fix, so a separate Dark Colony.exe is no longer needed; it is kept for players '
+                      'who want the Classic executable on its own.')
 BUILDS = [
- dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
-      title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe)',
-      source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'movies', 'sounds', 'icon']),
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'cursor', 'pool', 'clock', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon', 'online']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon', 'online']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
       steps=MAPED_STEPS + ['icon']),
+ dict(id='Classic', g='classic', exe='Dark Colony.exe', product='Dark Colony', orig_name='dc16.exe', orig_path='DC - Council wars\\dc16.exe',
+      title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe) - DEPRECATED since 1 Oct 2026',
+      source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
+      deprecated=CLASSIC_DEPRECATED, shipped=False,
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'movies', 'sounds', 'icon']),
 ]
 
 def hexs(b):
@@ -1231,16 +1318,41 @@ for B in BUILDS:
         cur, states = replay(g, steps, mode)
         orig_sha, size = hashlib.sha256(cur).hexdigest(), len(cur)
         out_ = []
-        for step, nxt in states:
-            out_.append(attribute(g, step, cur, nxt, mode))
+        i = 0
+        while i < len(states):
+            step, nxt = states[i]
+            fix = FIX_OF.get(step, step)
+            if fix in COMPOSITE:
+                # the consecutive replay steps of a composite fix -> one diff, one fix (1 Oct 2026)
+                j = i
+                while j + 1 < len(states) and FIX_OF.get(states[j + 1][0], states[j + 1][0]) == fix:
+                    j += 1
+                assert [s for s, _ in states[i:j + 1]] == [s for s in COMPOSITE[fix] if s in steps], (g, fix, mode)
+                nxt = states[j][1]
+                i = j
+            out_.append(attribute(g, fix, cur, nxt, mode))
             cur = nxt
+            i += 1
         per_mode[mode] = out_
         ref_sha[mode] = hashlib.sha256(cur).hexdigest()
+        # the light theme = every fix but `console`: its edits reverted on the final bytes (nothing later touches them)
+        con = [pd for pd in out_ if pd['P']['id'] == 'console']
+        if con:
+            light = bytearray(cur)
+            for _, off, old, new, _ in con[0]['edits']:
+                assert bytes(light[off:off + len(new)]) == new, (g, mode, hex(off))
+                light[off:off + len(old)] = old
+            ref_sha[mode + '/light'] = hashlib.sha256(light).hexdigest()
     # merge: a fix outside MODE_STEPS must come out identical in every mode it exists in (the tools
     # touch disjoint bytes, so the edits' old bytes do not depend on the mode); it is emitted once.
-    # `hdpaths` exists in every HD mode (Mode 'hd'), `resolution`/`clock` once per HD mode.
+    # `resolution` (display + INTRF_HD paths + clock, one fix since 1 Oct 2026) once per HD mode.
     patches_out = []
-    for step in B['steps']:
+    fix_ids = []
+    for s in B['steps']:
+        f = FIX_OF.get(s, s)
+        if f not in fix_ids:
+            fix_ids.append(f)
+    for step in fix_ids:
         variants = [(m, pd) for m in modes for pd in per_mode[m] if pd['P']['id'] == step]
         if step in MODE_STEPS:
             # identical variants share one entry: all HD modes -> 'hd', every mode -> $null, else per mode
@@ -1269,7 +1381,10 @@ for B in BUILDS:
             first['mode'] = 'hd' if step in HD_STEPS else None
             patches_out.append(first)
     build_data.append(dict(B=B, orig_sha=orig_sha, size=size, patches=patches_out, modes=[m for m in modes if m],
-                           ref_sha={m: sha for m, sha in ref_sha.items() if m}, final_sha=ref_sha.get(DEFAULT_MODE, ref_sha[None] if None in ref_sha else None)))
+                           ref_sha={m: sha for m, sha in ref_sha.items() if m}, final_sha=ref_sha.get(PUBLISHED_MODE, ref_sha[None] if None in ref_sha else None)))
+    if None not in ref_sha:
+        for m in HD_MODES:
+            assert m + '/light' in ref_sha, (g, m)
 
 # ----------------------------------------------------------------------------------------------
 # emit PowerShell
@@ -1285,11 +1400,16 @@ W(r'''<#
     hand-modified exe cannot be signed and looks suspicious to antivirus heuristics, this script
     makes the modification fully transparent and reproducible:
 
-      * run without arguments it opens a window: the three originals beside this script (Dark Colony,
-        Council Wars, the map editor) are found and ticked with all their fixes, and one press of
-        "Patch selected executables" writes "Dark Colony.exe", "Dark Colony Ultimate.exe" and
-        "Dark Colony Map Editor.exe" with a shortcut of the same name on the desktop; untick what
-        you do not want - or drive it from the command line, see the examples
+      * run without arguments it opens an installer window: Welcome -> Options (the screen
+        resolution in a drop-down, 640x480 marked "(original)"; the battlefield interface, light =
+        the classic metal one or dark = the console style of the menus; and whether to patch the
+        DEPRECATED Dark Colony too - nothing is preselected, chosen once for both games) -> one page
+        per executable with its fixes, all ticked (Dark Colony Ultimate, the map editor, and Dark
+        Colony only when its box is ticked) -> a summary of what will be written -> Patch ->
+        Finished.  The originals beside this script are found by themselves; the result is "Dark
+        Colony Ultimate.exe" and "Dark Colony Map Editor.exe" (and "Dark Colony.exe" if asked for)
+        with a shortcut of the same name on the desktop - or drive it from the command line, see
+        the examples
       * it never touches the input file; it writes a new file
       * every patch is a list of (file offset, old bytes, new bytes, reason) in plain text below
       * a byte is only written if the file still holds the documented old bytes at that offset
@@ -1297,10 +1417,18 @@ W(r'''<#
         per-byte checks stay on)
       * after writing it prints the SHA-256 of the result; with every patch selected the result
         is byte-identical to the executable published in the repository and the script says so
-      * the screen resolution is chosen in a drop-down (or -Resolution): 640x480, 1024x768, 1280x1024,
-        1280x720, 1280x800, 1920x1080, 1920x1200, 3840x1080; the sizes with your monitor's aspect ratio are marked "recommended for your
-        screen" and the largest of them is preselected in the window (the command line defaults to
-        1024x768, the published exes)
+      * the screen resolution is chosen ONCE, explicitly: the window's first step (radio buttons, none
+        preselected) or -Resolution on the command line (required for the games): 640x480 (original),
+        1024x768, 1280x1024, 1280x720, 1280x800, 1920x1080, 1920x1200, 3840x1080; the sizes with your
+        monitor's aspect ratio are marked "recommended for your screen"; the exes published in the
+        repository are the 1024x768 build.  Everything the size changes is ONE fix per size
+        ("WxH display: screen mode, interface data from INTRF_HD, clock hand")
+      * the battlefield interface is chosen with it (-Theme light|dark, required at an HD size; the
+        window's options page): LIGHT (classic) keeps the original brushed-metal HUD, dialogs and
+        clock dial (the shipped INTRF_HD\<WxH>\INTRFACE_LIGHT.GIF as the frame); DARK is the console
+        style of the menus drawn 28-30 Sep 2026 (INTRFACE.GIF, the INTRF_HD banks, the console dialog
+        layouts) plus the one-edit fix "console" that points the exe at the redrawn clock dial.  The
+        published exes are the dark 1024x768 build; 640x480 (original) has no theme to choose
       * for an HD resolution the script also WRITES the interface data the patched exe reads
         (INTRF_HD\, exp\intrf_hd\, ozi_ns\intrf_hd\: menu scripts, HUD script, briefing lists,
         letterboxed backgrounds, loading screens) from the stock 640x480 files of the game folder and
@@ -1318,10 +1446,14 @@ W(r'''<#
         on such a fix is marked the same way
 
     The originals, both in the "DC - Council wars" folder (since 15 Sep 2026 the one folder both games
-    run from): "dc16.exe" (the untouched Dark Colony exe of the January 1998 update, 6 sections, entry
-    point 0x4528DE; its patched build is written as "Dark Colony.exe") and "ENGEXP16.EXE"
-    (ENGEXP16.EXE from the Council Wars CD; patched build "Dark Colony Ultimate.exe" - Council Wars
-    plus the Dark Colony, OZI and Academy campaigns).  Both are committed untouched in the repository.
+    run from): "ENGEXP16.EXE" (ENGEXP16.EXE from the Council Wars CD; patched build "Dark Colony
+    Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns and the ONLINE WAR
+    room browser) and "dc16.exe" (the untouched Dark Colony exe of the January 1998 update, 6 sections,
+    entry point 0x4528DE; its patched build is written as "Dark Colony.exe" - DEPRECATED since
+    1 Oct 2026, because Dark Colony Ultimate plays the whole Dark Colony campaign: the window shows its
+    page only when its box on the options page is ticked, -All patches it only with -IncludeDeprecated,
+    and the repository no longer ships the patched file).  Both originals are committed untouched in
+    the repository.
     The third build is the map editor "Dark Colony - Map editor\maped.exe" (the original from the Dark
     Colony CD): its fixes clear the "disabled" flag on dialog controls the original greyed out - the
     functional part of the ozi_ns editor, without the Polish translation - and write
@@ -1341,9 +1473,10 @@ W(r'''<#
     patch in the fixed order below), and the sum of all patches is exactly the shipped exe.
 
 .PARAMETER Original
-    Path of the untouched original executable (dc16.exe, ENGEXP16.EXE or the map editor's maped.exe).
-    With -All and no -Original all three originals beside this script are patched, one after the
-    other, each into its own output name.
+    Path of the untouched original executable (ENGEXP16.EXE, the map editor's maped.exe or the
+    deprecated dc16.exe).  With -All and no -Original the originals beside this script are patched,
+    one after the other, each into its own output name - the deprecated Dark Colony only with
+    -IncludeDeprecated.
 
 .PARAMETER Output
     Where to write the patched copy (only together with -Original).  Default: "Dark Colony.exe" /
@@ -1351,12 +1484,13 @@ W(r'''<#
     An existing file is not overwritten unless -Overwrite is given.
 
 .PARAMETER Resolution
-    Screen resolution to patch for: 640x480 (the stock size: no display fixes), 1024x768 (default,
-    the published exes), 1280x1024, 1280x720, 1280x800, 1920x1080, 1920x1200 or 3840x1080 (32:9).  The 'resolution' and 'clock' fixes exist
-    once per size; all sizes share the one INTRF_HD data folder, which must hold the interface set
-    built for the chosen size.  The window offers the same choice in a drop-down, marks the sizes
-    with your monitor's aspect ratio as "recommended for your screen" and preselects the largest of
-    them; without -Resolution the command line uses 1024x768, the size of the published exes.
+    Screen resolution to patch for - REQUIRED for the two games, there is no default (1 Oct 2026):
+    640x480 (the original size: no display fix), 1024x768 (the published exes), 1280x1024, 1280x720,
+    1280x800, 1920x1080, 1920x1200 or 3840x1080 (32:9).  The 'resolution' fix (screen mode, INTRF_HD
+    paths, clock hand) exists once per HD size; all sizes share the one INTRF_HD data folder, which
+    the patcher fills with the set built for the chosen size.  The window asks the same question on
+    its first page (radio buttons, nothing preselected; the sizes with your monitor's aspect ratio
+    are marked "recommended for your screen").
 
 .PARAMETER Patches
     Patch ids to apply (see -List).  Order does not matter: they are always applied in the fixed
@@ -1371,6 +1505,18 @@ W(r'''<#
     failure would look like a bug of the patch.  Each fix's Requires / Data lists say what it
     needs; -List prints them.
 
+.PARAMETER Theme
+    The battlefield interface, REQUIRED for a game at an HD resolution (no default): light = the
+    original brushed-metal HUD, dialogs and clock dial (classic); dark = the console style of the
+    menus (grey pipework frame, red-ringed buttons, black dialogs, redrawn clock dial; fix
+    "console").  Not asked at 640x480 or for the map editor.  The window's options page asks the
+    same question with two radio buttons, none preselected.
+
+.PARAMETER IncludeDeprecated
+    With -All and no -Original: patch the deprecated Dark Colony build (dc16.exe -> Dark Colony.exe)
+    as well.  Without it that build is skipped with a note; -Original "DC - Council wars\dc16.exe"
+    always patches it.
+
 .PARAMETER DesktopShortcut
     After a successful write, put a shortcut to the patched exe on the desktop ("Dark Colony",
     "Dark Colony - Council Wars" or "Dark Colony Map Editor"; start folder = the game folder, which
@@ -1381,17 +1527,18 @@ W(r'''<#
     Instead of patching, inspect an existing exe: which build it is and which patches it carries.
 
 .EXAMPLE
-    .\Apply-DarkColonyPatches.ps1                               # the window
-    .\Apply-DarkColonyPatches.ps1 -All -DesktopShortcut           # all three executables, as the window does
+    .\Apply-DarkColonyPatches.ps1                               # the installer window
+    .\Apply-DarkColonyPatches.ps1 -All -Resolution 1024x768 -Theme dark -DesktopShortcut
+        (Dark Colony Ultimate and the map editor, as the window does; -IncludeDeprecated adds Dark Colony)
     .\Apply-DarkColonyPatches.ps1 -List
     .\Apply-DarkColonyPatches.ps1 -List -Detail                 # every single byte edit
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All
-        (run from the root of the Dark-Colony repository, where this file lives; writes "Dark Colony.exe")
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -Patches nocd,resolution,hdpaths,pool
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All -DesktopShortcut
-    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All -Resolution 1280x800
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -All -Resolution 1920x1200 -Theme light -DesktopShortcut
+        (run from the root of the Dark-Colony repository, where this file lives; writes "Dark Colony Ultimate.exe")
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\ENGEXP16.EXE" -Resolution 640x480 -Patches nocd
+        (the original 640x480 game that just does not ask for the CD)
+    .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All -Resolution 1024x768 -Theme dark     (the deprecated Classic build)
     .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> "Dark Colony Map Editor.exe")
-    .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\Dark Colony.exe"
+    .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\Dark Colony Ultimate.exe"
 
 .NOTES
     Double-click INSTALL.CMD beside this file: it starts this script with Windows
@@ -1412,11 +1559,13 @@ param(
     [Parameter(ParameterSetName = 'Apply')] [string] $Output,
     [Parameter(ParameterSetName = 'Apply')] [string[]] $Patches,
     [Parameter(ParameterSetName = 'Apply')] [string] $Resolution,
+    [Parameter(ParameterSetName = 'Apply')] [string] $Theme,
     [Parameter(ParameterSetName = 'Apply')] [switch] $All,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Overwrite,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Force,
     [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreMissingData,
     [Parameter(ParameterSetName = 'Apply')] [switch] $DesktopShortcut,
+    [Parameter(ParameterSetName = 'Apply')] [switch] $IncludeDeprecated,
     [Parameter(ParameterSetName = 'List')] [switch] $List,
     [Parameter(ParameterSetName = 'List')] [switch] $Detail,
     [Parameter(ParameterSetName = 'Verify')] [string] $Verify
@@ -1453,15 +1602,21 @@ for bd in build_data:
         # where a player gets the original when theirs is missing or not the original (the window's red box)
         RepoUrl        = {ps_str('https://github.com/endotermic/Dark-Colony/blob/main/' + B['orig_path'].replace(chr(92), '/').replace(' ', '%20'))}
         SourceNote     = {ps_str(B['source'])}
+        # $null, or why this build is deprecated (1 Oct 2026): the window skips it unless ticked, -All unless -IncludeDeprecated
+        Deprecated     = {ps_str(B['deprecated']) if B.get('deprecated') else '$null'}
+        # $false = the repository no longer ships this build's patched exe (the deprecated Dark Colony, 1 Oct 2026)
+        Shipped        = {'$true' if B.get('shipped', True) else '$false'}
         Size           = {bd['size']}
         OriginalSha256 = {ps_str(bd['orig_sha'])}   # untouched original
-        PatchedSha256  = {ps_str(bd['final_sha'])}   # every patch applied in the default resolution = the exe in the repository
-        # screen resolutions this build can be patched for: '640x480' = the stock size (no display fixes),
-        # the others select the per-resolution variants of the 'resolution' and 'clock' fixes below
+        PatchedSha256  = {ps_str(bd['final_sha'])}   # every patch applied at the published resolution (1024x768, dark interface) = the exe in the repository (if shipped)
+        # screen resolutions this build can be patched for: '640x480' = the original size (no display fix),
+        # the others select that size's variant of the 'resolution' fix below.  One of them must be chosen
+        # explicitly (window page 1 / -Resolution): there is no default (1 Oct 2026)
         Modes          = @({', '.join(ps_str(m) for m in bd['modes'])})
-        DefaultMode    = {ps_str(DEFAULT_MODE if bd['modes'] else '')}
-        # SHA-256 with every fix of that resolution applied (the default one is the published exe)
-        ReferenceSha256 = @{{ {'; '.join(f"{ps_str(m)} = {ps_str(bd['ref_sha'][m])}" for m in bd['modes']) if bd['modes'] else f"{ps_str('')} = {ps_str(bd['final_sha'])}"} }}
+        PublishedMode  = {ps_str(PUBLISHED_MODE if bd['modes'] else '')}
+        # SHA-256 with every fix of that resolution applied (the published one is the exe in the repository); 'WxH' = the
+        # dark battlefield interface (every fix), 'WxH/light' = the light one (without fix console)
+        ReferenceSha256 = @{{ {'; '.join(f"{ps_str(k)} = {ps_str(v)}" for k, v in bd['ref_sha'].items()) if bd['modes'] else f"{ps_str('')} = {ps_str(bd['final_sha'])}"} }}
         Patches        = @(''')
     for pd in bd['patches']:
         P = pd['P']
@@ -1487,12 +1642,14 @@ for bd in build_data:
             srcs = set_sources(g, mode)
             files = files + srcs
             datasize = ("\n                # applying this fix also GENERATES the INTRF_HD interface set for this size from the stock files"
-                        "\n                # (Write-InterfaceSet); these three pictures cannot be derived and ship with the game"
+                        "\n                # (Write-InterfaceSet); these five pictures cannot be derived and ship with the game (two HUD frames: dark / light)"
                         f"\n                SetSources = @({', '.join(ps_str(x) for x in srcs)})")
         W(f'''            @{{
                 Id = {ps_str(P['id'])}; Name = {ps_str(name)}; Date = {ps_str(P['date'])}
                 # $null = part of every resolution, 'hd' = every resolution but 640x480, 'WxH' = that one only
                 Mode = {ps_str(pd['mode']) if pd['mode'] else '$null'}{datasize}
+                # $null = part of both battlefield interface themes, 'dark' = only with the dark one (chosen with the resolution)
+                Theme = {ps_str(P['theme']) if P.get('theme') else '$null'}
                 Tool = {ps_str(P['tool'])}; Doc = {ps_str(P['doc'])}
                 Description = @'
 {desc}
@@ -1660,27 +1817,25 @@ function Test-ModeRecommended([string] $Mode, $MonitorSize) {
     $wh = Get-ModeSize $Mode
     return [bool] ($MonitorSize -and (Get-AspectLabel $MonitorSize[0] $MonitorSize[1]) -eq (Get-AspectLabel $wh[0] $wh[1]))
 }
+# "640x480 (original)" for the stock size (1 Oct 2026, maintainer: "mark 640x480 as (original)"), else
+# "1280x800 (16:10)" plus "recommended for your screen" when the aspect ratio is the monitor's.  Nothing
+# is preselected anywhere: the window's first step and the command line's -Resolution make the choice.
 function Format-ModeLabel([string] $Mode, $MonitorSize) {
+    if ($Mode -eq '640x480') { return '640x480 (original)' }
     $wh = Get-ModeSize $Mode
     $label = '{0} ({1})' -f $Mode, (Get-AspectLabel $wh[0] $wh[1])
     if (Test-ModeRecommended $Mode $MonitorSize) { $label += ' recommended for your screen' }
     return $label
 }
-# The window's initial choice: the largest resolution with the monitor's aspect ratio, else the build's
-# default (the published exe).  The command line keeps the build's default, so `-All` without
-# -Resolution reproduces the published exe on every PC.
-function Get-PreferredMode($Build, $MonitorSize) {
-    $pick = $Build.DefaultMode
-    foreach ($m in @($Build.Modes)) { if (Test-ModeRecommended $m $MonitorSize) { $pick = $m } }
-    return $pick
-}
 
 # The fixes of a build for one resolution.  Mode $null = part of every resolution, 'hd' = every
-# resolution but 640x480, 'WxH' = that resolution's variant of the fix (640x480 has its own variants of
-# movies and ozi).
-function Get-BuildPatches($Build, [string] $Mode) {
+# resolution but 640x480, 'WxH' = that resolution's variant of the fix (the display fix exists once per
+# HD size; 640x480 has its own variants of movies, ozi and music).  Mode '' (none chosen yet) = the fixes
+# every resolution shares.
+function Get-BuildPatches($Build, [string] $Mode, [string] $Theme = '') {
     $out = @()
     foreach ($p in $Build.Patches) {
+        if ($p.Theme -and $p.Theme -ne $Theme) { continue }                     # a fix of the other battlefield interface theme
         $m = $p.Mode
         if (-not $m) { $out += $p; continue }                                   # every resolution
         if ($Mode -and $m -eq $Mode) { $out += $p; continue }                  # this resolution's own variant (also 640x480)
@@ -1689,12 +1844,27 @@ function Get-BuildPatches($Build, [string] $Mode) {
     return $out      # callers wrap it in @(); an empty list comes back as an empty array
 }
 
-# The resolution to use for a build: validated -Resolution, else the build's default; '' for a build
-# without resolutions (the map editor).
+# The battlefield interface theme to use: '' for a build without resolutions and at 640x480 (the game keeps
+# its own interface), else the validated -Theme - required, there is no default (1 Oct 2026).
+function Resolve-Theme($Build, [string] $Mode, [string] $Theme) {
+    if (@($Build.Modes).Count -eq 0 -or -not $Mode -or $Mode -eq '640x480') { return '' }
+    if (-not $Theme) {
+        throw ("choose the battlefield interface for {0} with -Theme light (the original metal HUD, dialogs and clock dial) or -Theme dark (the console style of the menus, fix console). The executables published in the repository are the dark {1} build." -f $Build.ProductName, $Build.PublishedMode)
+    }
+    if (('light', 'dark') -notcontains $Theme) { throw ("unknown theme '{0}'; valid: light, dark" -f $Theme) }
+    return $Theme
+}
+
+# The resolution to use for a build: the validated -Resolution; '' for a build without resolutions (the map
+# editor).  There is no default (1 Oct 2026): a game build without -Resolution is refused with the list.
 function Resolve-Mode($Build, [string] $Mode) {
     $modes = @($Build.Modes)
     if ($modes.Count -eq 0) { return '' }
-    if (-not $Mode) { return $Build.DefaultMode }
+    if (-not $Mode) {
+        $mon = Get-MonitorSize
+        throw ("choose the screen resolution for {0} with -Resolution <WxH>: {1}. 640x480 is the original size (no display fix); the executables published in the repository are the {2} build." -f
+               $Build.ProductName, (($modes | ForEach-Object { Format-ModeLabel $_ $mon }) -join ', '), $Build.PublishedMode)
+    }
     if ($modes -notcontains $Mode) { throw ("unknown resolution '{0}' for {1}; valid: {2}" -f $Mode, $Build.Id, ($modes -join ', ')) }
     return $Mode
 }
@@ -1740,10 +1910,10 @@ function Get-VerifyReport([string] $Path) {
     $b = Find-BuildByContent $data
     if (-not $b) { $lines += 'Not a build this script knows (neither size nor code layout match).'; return $lines }
     $lines += ('build: {0}' -f $b.Title)
-    if ($sha -eq $b.PatchedSha256) { $lines += '= the fully patched executable published in the repository.' }
-    else { foreach ($k in @($b.ReferenceSha256.Keys)) { if ($k -and $b.ReferenceSha256[$k] -eq $sha) { $lines += ('= every fix applied for {0} (the reference build of the generator, not the published exe).' -f $k) } } }
+    if ($sha -eq $b.PatchedSha256 -and $b.Shipped) { $lines += '= the fully patched executable published in the repository (1024x768, dark battlefield interface).' }
+    else { foreach ($k in @($b.ReferenceSha256.Keys)) { if ($k -and $b.ReferenceSha256[$k] -eq $sha) { $lines += ('= every fix applied for {0} (the reference build of the generator{1}).' -f $k.Replace('/light', ', light battlefield interface'), $(if ($b.Shipped) { ', not the published exe' } else { '; this build is not shipped in the repository' })) } } }
     $lines += ''
-    # a fix with per-resolution variants (resolution, clock) is reported once, with the variant found
+    # a fix with per-resolution variants (resolution) is reported once, with the variant found
     $seen = @()
     foreach ($p in $b.Patches) {
         if ($seen -contains $p.Id) { continue }
@@ -2306,7 +2476,7 @@ function Edit-IntroScript([string] $Text, [int] $W, [int] $H, [int] $Lift = 0) {
 # chat lines in the band 420..453 follow the map view's bottom edge (down by dy minus the spare rows the
 # bar absorbs: 16 at 1280x720 and 1920x1200, 24 at 1920x1080; 28 Sep 2026), the one in-view widget
 # (PAUSED) by half the growth; size -> W H
-function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
+function Edit-HudScript([string] $Text, [int] $W, [int] $H, [bool] $Console = $true) {
     $dx = $W - 640; $dy = $H - 480; $sy = ($H - 32) % 32
     $move = { param($fields) if ($fields.Count -lt 5 -or $fields[3] -notmatch '^\d+$' -or $fields[4] -notmatch '^\d+$') { return $null }
               $x = [int]$fields[3]; $y = [int]$fields[4]
@@ -2317,6 +2487,11 @@ function Edit-HudScript([string] $Text, [int] $W, [int] $H) {
               if ($nx -eq $x -and $ny -eq $y) { return $null }
               return @($nx, $ny) }
     $t = Add-ChatLines (Edit-Widgets $Text $move $HUD_KINDS)
+    if (-not $Console) {         # the light theme keeps the stock strips and text positions
+        $m = $SIZE2.Match($t)
+        if ($m.Success) { $t = $t.Substring(0, $m.Index) + ('{0}size{1}{2} {3}{4}' -f $m.Groups[1].Value, $m.Groups[2].Value, $W, $H, $m.Groups[6].Value) + $t.Substring($m.Index + $m.Length) }
+        return $t
+    }
     # hud_console.edit_hud_script (28 Sep 2026, console-style HUD, doc 10.49): the three tab strips
     # `picture 3..6` (stock 110x12 at x 521) are the 124x16 BUTTON.SPR strips at the panel's left edge
     $tx = [string](516 + $dx)
@@ -2386,7 +2561,12 @@ function Edit-SceneList([string] $Text, [int] $dx, [int] $dy) {
 # split_hd_data: `background intrface/<gif>` -> `intrf_hd/<gif>` (every background of a generated script moved)
 # hud_console.apply: MAINE's `pictures intrface/mainbut` and the four battlefield dialogs' `pictures intrface/popp`
 # -> `intrf_hd/...`, the console-style banks that ship in INTRF_HD (the stock banks stay for the original exe)
-function Set-BackgroundHd([string] $Text) { return $PIC_RETARGET.Replace($BG_RETARGET.Replace($Text, '$1intrf_hd/$2'), '$1intrf_hd/$2') }
+# $Console $false (the light theme) keeps `pictures intrface/mainbut|popp` = the stock metal banks
+function Set-BackgroundHd([string] $Text, [bool] $Console = $true) {
+    $t = $BG_RETARGET.Replace($Text, '$1intrf_hd/$2')
+    if ($Console) { $t = $PIC_RETARGET.Replace($t, '$1intrf_hd/$2') }
+    return $t
+}
 
 # split_hd_data.rename_dat_list: the per-screen FIN lists name the re-baked logo banks
 function Edit-DatList([string] $Text) {
@@ -2596,14 +2776,19 @@ function Edit-OziMenu([string] $Text) {
 
 # The whole set for one resolution. $Movies: the Classic `movies` fix is applied, so the two campaign
 # lists name the DC*.AVI endings (patch_movies.py).  Returns text lines about what was written.
-function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
+# $Console: the dark battlefield interface (fix `console` applied): the console HUD frame INTRFACE.GIF, the
+# scripts pointed at the INTRF_HD banks, the tab strips and text positions of hud_console.edit_hud_script, the
+# console dialog layouts.  $false = the light (classic) theme: INTRFACE_LIGHT.GIF as the frame, the stock banks and
+# layouts (1 Oct 2026).
+function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [bool] $Console = $true) {
     $wh = Get-ModeSize $Mode; $W = $wh[0]; $H = $wh[1]
     $dx0 = [int][Math]::Floor(($W - 640) / 2); $dy0 = [int][Math]::Floor(($H - 480) / 2)
     $lines = @()
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $intrface = Join-Path $GameDir 'INTRFACE'; $hd = Join-Path $GameDir 'INTRF_HD'; $gamestat = Join-Path $GameDir 'GAMESTAT'
     $src = Join-Path $hd $Mode
-    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF') { if (-not (Find-CI $src $need)) { throw "INTRF_HD\$Mode\$need is missing: the painted backdrops and HUD frame for $Mode ship with the game and cannot be generated" } }
+    $frame = if ($Console) { 'INTRFACE.GIF' } else { 'INTRFACE_LIGHT.GIF' }
+    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', $frame) { if (-not (Find-CI $src $need)) { throw "INTRF_HD\$Mode\$need is missing: the painted backdrops and HUD frames for $Mode ship with the game and cannot be generated" } }
     Initialize-GifCodec
     $written = 0
     $introScreens = @('bintroe', 'introe', 'buttonse', 'dintroe')
@@ -2625,12 +2810,12 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
             if ($x -eq 0 -and $y -eq 0) { continue }
             # a sub-window dialog: rect and widgets +(dx,dy); `pictures intrface/popp` -> the console plates in INTRF_HD,
             # then the console layout (list window, scroll channel, framed text boxes; doc 10.53)
-            Write-Latin1 (Join-Path $hd $name) (Edit-DialogConsole (Set-BackgroundHd (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value)))); $written++
+            Write-Latin1 (Join-Path $hd $name) (Edit-DialogConsole (Set-BackgroundHd (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value)) $Console)); $written++
             continue
         }
         if ($m4.Success -or -not $m2.Success -or -not $bg.Success) { continue }
         if ($lname -eq 'maine') {
-            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-HudScript $text $W $H)); $written++
+            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-HudScript $text $W $H $Console) $Console); $written++
             continue
         }
         $gif = Find-CI $intrface ($bg.Groups[1].Value + '.GIF')
@@ -2645,10 +2830,13 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
     }
     # --- backgrounds: the painted / spliced ones ship per size, the rest are letterboxed here - laid
     # over BACKDROP.GIF (the main menu's planet without its bottom band) in a grey panel frame (doc 10.56)
-    foreach ($shipped in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF') {
+    foreach ($shipped in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF') {
         $gifsToPad.Remove($shipped)
         [System.IO.File]::Copy((Find-CI $src $shipped), (Join-Path $hd $shipped), $true); $written++
     }
+    # the HUD frame of the chosen theme becomes INTRF_HD\INTRFACE.GIF (the name the HUD script reads)
+    $gifsToPad.Remove('INTRFACE.GIF'); $gifsToPad.Remove('INTRFACE_LIGHT.GIF')
+    [System.IO.File]::Copy((Find-CI $src $frame), (Join-Path $hd 'INTRFACE.GIF'), $true); $written++
     $backdrop = [System.IO.File]::ReadAllBytes((Find-CI $src 'BACKDROP.GIF'))
     foreach ($k in @($gifsToPad.Keys | Sort-Object)) {
         $bytes = [DcGif]::Pad([System.IO.File]::ReadAllBytes($gifsToPad[$k]), $W, $H, $backdrop)
@@ -2717,9 +2905,9 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies) {
             if ($p) { Write-Latin1 (Join-Path $oziHd $ln) (Edit-SceneList (Read-Latin1 $p) $dx0 $dy0); $oziWritten++ }
         }
     }
-    $lines += ('interface set for {0} written: INTRF_HD\ {1} files{2}{3}{4} ({5:N1} s, GIFs re-encoded by the compiled DcGif codec)' -f $Mode, $written,
+    $lines += ('interface set for {0} ({6} battlefield interface) written: INTRF_HD\ {1} files{2}{3}{4} ({5:N1} s, GIFs re-encoded by the compiled DcGif codec)' -f $Mode, $written,
                $(if ($expWritten) { ", exp\intrf_hd\ $expWritten" } else { '' }), $(if ($dcWritten) { ", dc\intrf_hd\ $dcWritten" } else { '' }),
-               $(if ($oziWritten) { ", ozi_ns\intrf_hd\ $oziWritten" } else { '' }), $sw.Elapsed.TotalSeconds)
+               $(if ($oziWritten) { ", ozi_ns\intrf_hd\ $oziWritten" } else { '' }), $sw.Elapsed.TotalSeconds, $(if ($Console) { 'dark' } else { 'light' }))
     return $lines
 }
 
@@ -3186,9 +3374,9 @@ function New-GameShortcut([string] $ExePath, $Build) {
 # Returns a small result object; throws on any check failure.
 # $Progress (optional): a script block called with one line of text before each step - the window
 # shows it in its "patching in progress" box; the command line passes nothing.
-function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [string] $OutputPath, [string] $Mode, [scriptblock] $Progress) {
+function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [string] $OutputPath, [string] $Mode, [string] $Theme, [scriptblock] $Progress) {
     $data = [System.IO.File]::ReadAllBytes($OriginalPath)
-    $effective = @(Get-BuildPatches $Build $Mode)
+    $effective = @(Get-BuildPatches $Build $Mode $Theme)
     $ordered = @($effective | Where-Object { $p = $_; ($Chosen | Where-Object { $_.Id -eq $p.Id -and $_.Mode -eq $p.Mode }) })
     $result = $data
     $n = 0
@@ -3200,15 +3388,16 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     if ($Progress) { & $Progress ("Writing {0} ({1} bytes)..." -f (Split-Path -Leaf $OutputPath), $result.Length) }
     [System.IO.File]::WriteAllBytes($OutputPath, $result)
     $outSha = Get-Sha256Hex $result
-    $ref = if ($Mode) { $Build.ReferenceSha256[$Mode] } else { $Build.PatchedSha256 }
+    $ref = if ($Mode) { $Build.ReferenceSha256[$Mode + $(if ($Theme -eq 'light') { '/light' } else { '' })] } else { $Build.PatchedSha256 }
     # an HD display fix was applied: build the INTRF_HD interface set for the chosen size (scripts,
     # briefing lists, letterboxed backgrounds, loading screens; the Council Wars and OZI copies too)
     $generated = @()
     if ($Mode -and $Mode -ne '640x480' -and ($ordered | Where-Object { $_.ContainsKey('SetSources') })) {
         $movies = [bool] ($ordered | Where-Object { $_.Id -eq 'movies' })
-        if ($Progress) { & $Progress ("Writing the {0} interface set into INTRF_HD (scripts, backgrounds, loading screens) - this takes a few seconds..." -f $Mode) }
+        $console = [bool] ($ordered | Where-Object { $_.Id -eq 'console' })
+        if ($Progress) { & $Progress ("Writing the {0} interface set ({1} battlefield interface) into INTRF_HD (scripts, backgrounds, loading screens) - this takes a few seconds..." -f $Mode, $(if ($console) { 'dark' } else { 'light' })) }
         try {
-            $generated = @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies)
+            $generated = @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies $console)
         } catch {
             $generated = @('INTERFACE SET NOT WRITTEN: ' + $_.Exception.Message)
         }
@@ -3236,7 +3425,7 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
         Mode      = $Mode
         Complete  = ($ordered.Count -eq $effective.Count)
         Matches   = ($outSha -eq $ref)                      # = the reference build for this resolution
-        Published = ($outSha -eq $Build.PatchedSha256)      # = the exe in the repository
+        Published = ($outSha -eq $Build.PatchedSha256 -and $Build.Shipped)      # = the exe in the repository
     }
 }
 
@@ -3245,10 +3434,10 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
 # exe will run from = where it is written).  Returns text lines describing the problems; empty = ok.
 # Without this an exe patched for 1024x768 in a folder without INTRF_HD/ fails at start-up or draws
 # the menus into the top-left corner, and the player would blame the patch.
-function Get-DataProblems($Build, [object[]] $Chosen, [string] $GameDir, [string] $Mode) {
+function Get-DataProblems($Build, [object[]] $Chosen, [string] $GameDir, [string] $Mode, [string] $Theme = '') {
     $problems = @()
     $chosenIds = @($Chosen | ForEach-Object { $_.Id })
-    $effective = @(Get-BuildPatches $Build $Mode)
+    $effective = @(Get-BuildPatches $Build $Mode $Theme)
     foreach ($p in $Chosen) {
         foreach ($need in @($p.Requires)) {
             if ($chosenIds -notcontains $need) {
@@ -3273,10 +3462,10 @@ function Get-DataProblems($Build, [object[]] $Chosen, [string] $GameDir, [string
 # Which fixes of a build cannot be applied into $GameDir: their resources (Data files) are not there,
 # or a fix they require is itself unavailable.  Returns a hashtable id -> one-line reason (empty = all
 # available).  The window greys these out as "RESOURCES NOT FOUND", -All skips them.
-function Get-UnavailableFixes($Build, [string] $GameDir, [string] $Mode) {
+function Get-UnavailableFixes($Build, [string] $GameDir, [string] $Mode, [string] $Theme = '') {
     $out = @{}
     if (-not $GameDir) { return $out }
-    $effective = @(Get-BuildPatches $Build $Mode)
+    $effective = @(Get-BuildPatches $Build $Mode $Theme)
     foreach ($p in $effective) {
         $missing = @(); $total = 0
         foreach ($rel in @($p.Data)) { $total++; if (-not (Test-Path -LiteralPath (Join-Path $GameDir $rel))) { $missing += $rel } }
@@ -3287,7 +3476,7 @@ function Get-UnavailableFixes($Build, [string] $GameDir, [string] $Mode) {
             $out[$p.Id] = ('{0} of {1} resource files missing: {2}' -f $missing.Count, $total, $where)
         }
     }
-    # a fix that needs an unavailable fix is unavailable too (repeat until nothing changes: resolution <-> hdpaths are mutual)
+    # a fix that needs an unavailable fix is unavailable too (repeat until nothing changes: requirements chain)
     do {
         $changed = $false
         foreach ($p in $effective) {
@@ -3312,6 +3501,7 @@ function Get-RequirementLines($Build, $Patch) {
         $parts = @($tops.Keys | Sort-Object | ForEach-Object { '{0}\ ({1})' -f $_, $tops[$_] })
         $lines += ('needs {0} data files next to the exe: {1} - checked before writing' -f $n, ($parts -join ', '))
     }
+    if ($Patch.Theme) { $lines += ('only with the {0} battlefield interface (chosen together with the resolution)' -f $Patch.Theme) }
     if ($Patch.ContainsKey('SetSources')) {
         $lines += 'writes the INTRF_HD interface set for this resolution (scripts, briefing lists, letterboxed backgrounds on the shipped BACKDROP.GIF in a grey panel frame, loading screens; exp\intrf_hd and ozi_ns\intrf_hd too) from the stock files and the four shipped pictures - the GIF codec is C# source in this file, compiled by Add-Type (see the INTERFACE SET section)'
     }
@@ -3323,16 +3513,18 @@ function Write-PatchList([switch] $WithEdits) {
         Write-Host ''
         Write-Host ("=== {0}: {1}" -f $b.Id, $b.Title) -ForegroundColor Cyan
         Write-Host ("    original {0} ({1} bytes)  SHA-256 {2}" -f $b.OriginalName, $b.Size, $b.OriginalSha256)
-        Write-Host ("    all patches -> {0}         SHA-256 {1}" -f $b.OutputName, $b.PatchedSha256)
+        if ($b.Deprecated) { Write-Host ("    DEPRECATED: {0}" -f $b.Deprecated) -ForegroundColor DarkYellow }
+        Write-Host ("    all patches -> {0}         SHA-256 {1}{2}" -f $b.OutputName, $b.PatchedSha256, $(if ($b.Shipped) { '' } else { '  (not shipped in the repository)' }))
         if (@($b.Modes).Count -gt 0) {
-            Write-Host ("    resolutions: {0} (default {1}); reference SHA-256 with every fix of that resolution:" -f (($b.Modes | ForEach-Object { Format-ModeLabel $_ (Get-MonitorSize) }) -join ', '), $b.DefaultMode)
-            foreach ($m in $b.Modes) { Write-Host ("      {0,-10} {1}" -f $m, $b.ReferenceSha256[$m]) }
+            Write-Host ("    resolutions (choose one with -Resolution, no default): {0}; the published exe is the dark {1} build. Reference SHA-256 with every fix of that resolution (-Theme dark), and without fix console (-Theme light):" -f (($b.Modes | ForEach-Object { Format-ModeLabel $_ (Get-MonitorSize) }) -join ', '), $b.PublishedMode)
+            foreach ($k in @($b.ReferenceSha256.Keys | Sort-Object)) { Write-Host ("      {0,-16} {1}" -f $k, $b.ReferenceSha256[$k]) }
         }
         $n = 0
         foreach ($p in $b.Patches) {
             $n++
             Write-Host ''
             $modeTag = if ($p.Mode -and $p.Mode -ne 'hd') { ' @ ' + $p.Mode } elseif ($p.Mode -eq 'hd') { ' @ every resolution but 640x480' } else { '' }
+            if ($p.Theme) { $modeTag += ', ' + $p.Theme + ' battlefield interface only' }
             Write-Host ("  {0}. [{1}{2}] {3}  ({4}, {5} edits)" -f $n, $p.Id, $modeTag, $p.Name, $p.Date, (Get-EditCount $p)) -ForegroundColor Yellow
             foreach ($line in ($p.Description -split "`r?`n")) { Write-Host ("       " + $line) }
             foreach ($line in (Get-RequirementLines $b $p)) { Write-Host ("       * " + $line) -ForegroundColor Magenta }
@@ -3346,22 +3538,28 @@ function Write-PatchList([switch] $WithEdits) {
 }
 
 # =================================================================================================
-#  WINDOW - the checkbox front end (Windows Forms, part of every Windows PowerShell)
+#  WINDOW - the installer front end (Windows Forms, part of every Windows PowerShell)
 # =================================================================================================
-# The screen resolution the window applies to a build: the drop-down's choice for the two games, '' for
-# the map editor (it has none).  Script level, because the window's event handlers run outside
-# Show-PatcherWindow and cannot see functions defined inside it.
+# The screen resolution the window applies to a build: the choice made on the "Options" page for the
+# two games ('' until the player has chosen one - nothing is preselected), '' for the map editor (it
+# has none).  Script level, because the window's event handlers run outside Show-PatcherWindow and
+# cannot see functions defined inside it.
 function Get-GuiMode($Build) {
-    if (@($Build.Modes).Count -gt 0 -and $script:gui.Mode) { return $script:gui.Mode }
-    if (@($Build.Modes).Count -gt 0) { return $Build.DefaultMode }
+    if (@($Build.Modes).Count -gt 0) { return [string] $script:gui.Mode }
+    return ''
+}
+# The battlefield interface theme ('light' / 'dark', '' until chosen) - only for a game at an HD size;
+# at 640x480 (original) the game keeps its own interface and there is nothing to choose.
+function Get-GuiTheme($Build) {
+    if (@($Build.Modes).Count -gt 0 -and $script:gui.Mode -and $script:gui.Mode -ne '640x480') { return [string] $script:gui.Theme }
     return ''
 }
 
-# The fixes of one window item that will be applied: every fix of its resolution that is available in
-# the output folder and was not unticked.
+# The fixes of one window item that will be applied: every fix of its resolution and theme that is
+# available in the output folder and was not unticked.
 function Get-GuiChosen($Item) {
     $out = @()
-    foreach ($p in @(Get-BuildPatches $Item.Build (Get-GuiMode $Item.Build))) {
+    foreach ($p in @(Get-BuildPatches $Item.Build (Get-GuiMode $Item.Build) (Get-GuiTheme $Item.Build))) {
         if ($Item.Unavailable.ContainsKey($p.Id) -or $Item.Unticked.ContainsKey($p.Id)) { continue }
         $out += $p
     }
@@ -3375,18 +3573,30 @@ function Show-PatcherWindow([string] $PreloadPath) {
 
     # A classical installer (25 Sep 2026, maintainer: "let's do the classical installer way for patch region
     # instead of tabs. on opening there is a greeting message and button forward. second screen contains
-    # options for patching DC, third screen for patching CW and fourth for patching maped"): Welcome ->
-    # Dark Colony -> Dark Colony Ultimate -> map editor -> (Patch) -> Finished, with Back / Next / Cancel.
-    # One item per build; the three untouched originals beside this script are found and ticked, each
-    # page keeps its own fix choices (Unticked) and the fixes whose resources are missing.
+    # options for patching DC, third screen for patching CW and fourth for patching maped"; 1 Oct 2026:
+    # "use best approaches for installer building ... don't select any resolution by default. force the
+    # client to select resolution once at the beginning, mark 640x480 as (original). mark patching 'Dark
+    # Colony' executable as deprecated and disabled and skipped by default", then "dark mode must be
+    # optional but not preselected, customer must be forced to select light mode (classic) or dark mode of
+    # battlefield interface. resolution selection must be a dropdown, then under it dark/light theme
+    # selection and under it checkbox about patching deprecated executable (if not selected then options
+    # screen for dc16.exe must not appear at all)"):
+    #   Welcome -> Options (resolution drop-down, light / dark battlefield interface, the deprecated Dark
+    #   Colony checkbox; nothing preselected) -> one page per executable that will be patched (Dark Colony
+    #   Ultimate, the map editor, and Dark Colony only when its box is ticked) -> Ready to patch (the
+    #   summary) -> Patch -> Finished, with Back / Next / Cancel.
+    # One item per build; the untouched originals beside this script are found, each page keeps its own
+    # fix choices (Unticked) and the fixes whose resources are missing.
     $items = @()
     foreach ($b in $Builds) {
         $items += @{ Build = $b; Path = $null; Data = $null; IsOriginal = $false; Out = $null; Checked = $false; Patches = @()
                      Status = 'not found - press Browse to pick it'; Color = 'Firebrick'; Unticked = @{}; Unavailable = @{}; Error = $null }
     }
-    $script:gui = @{ Items = $items; Sel = -1; Step = 0; Syncing = $false; Mode = ''; ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize)
+    $script:gui = @{ Items = $items; Sel = -1; Step = 0; Syncing = $false; Mode = ''; Theme = ''; IncludeDeprecated = $false
+                     ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize); Visible = @(); Last = 0
                      Here = $PSScriptRoot; Results = $null }     # Here = the folder this script sits in = the repository root
     foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $script:gui.ModeList = @($b.Modes); break } }
+    $n = $items.Count
     $mono = New-Object System.Drawing.Font('Consolas', 9)
     $bold = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
@@ -3412,48 +3622,99 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $pWelcome = New-Object System.Windows.Forms.Panel
     $pWelcome.Location = '0,66'; $pWelcome.Size = '984,580'
     $lblHello = New-Object System.Windows.Forms.Label
-    $lblHello.Location = '24,16'; $lblHello.Size = '936,184'
+    $lblHello.Location = '24,16'; $lblHello.Size = '936,200'
     $lblHello.Text = @(
         'Welcome!  This installer builds the patched Dark Colony executables on your own PC, from the untouched',
         'original executables of this folder:',
         '',
-        '    Dark Colony                  dc16.exe      ->  Dark Colony.exe',
         '    Dark Colony Ultimate         ENGEXP16.EXE  ->  Dark Colony Ultimate.exe   (Council Wars plus the Dark Colony,',
-        '                                                                               OZI and Academy campaigns)',
+        '                                                                               OZI and Academy campaigns, ONLINE WAR)',
         '    Dark Colony Map Editor       maped.exe     ->  Dark Colony Map Editor.exe',
+        '    Dark Colony                  dc16.exe      ->  Dark Colony.exe            (DEPRECATED: Dark Colony Ultimate plays',
+        '                                                                               its campaign; only if you ask for it)',
         '',
-        'The next three pages show the fixes of each executable - all of them are selected; you only have to',
-        'press Next three times and then Patch.  Nothing is downloaded, the originals are never changed, and every',
-        'byte this script writes is listed, with its reason, in Apply-DarkColonyPatches.ps1 (open it in Notepad).'
+        'The next page asks for the screen resolution, the battlefield interface (light = classic, dark = the',
+        'console style of the menus) and whether to patch the deprecated Dark Colony too - chosen once, for both',
+        'games.  Then one page per executable shows its fixes (all selected), and a summary page before anything',
+        'is written.  Nothing is downloaded, the originals are never changed, and every byte this script writes is',
+        'listed, with its reason, in Apply-DarkColonyPatches.ps1 (open it in Notepad).'
     ) -join "`r`n"
     $lblHello.Font = New-Object System.Drawing.Font('Consolas', 9.5)
     $lblFound = New-Object System.Windows.Forms.Label
-    $lblFound.Location = '24,214'; $lblFound.Size = '936,76'; $lblFound.Font = $mono
+    $lblFound.Location = '24,226'; $lblFound.Size = '936,76'; $lblFound.Font = $mono
     $chkLnk = New-Object System.Windows.Forms.CheckBox
-    $chkLnk.Text = 'Put a shortcut to each patched executable on the desktop'; $chkLnk.Location = '24,306'; $chkLnk.AutoSize = $true
+    $chkLnk.Text = 'Put a shortcut to each patched executable on the desktop'; $chkLnk.Location = '24,310'; $chkLnk.AutoSize = $true
     $chkLnk.Checked = $true; $chkLnk.Font = $bold
     $lblLnk = New-Object System.Windows.Forms.Label
-    $lblLnk.Location = '44,330'; $lblLnk.Size = '900,36'
-    $lblLnk.Text = 'Named "Dark Colony", "Dark Colony Ultimate" and "Dark Colony Map Editor"; each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
+    $lblLnk.Location = '44,334'; $lblLnk.Size = '900,36'
+    $lblLnk.Text = 'Named "Dark Colony Ultimate", "Dark Colony Map Editor" (and "Dark Colony" if you patch it); each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
     $lblNext = New-Object System.Windows.Forms.Label
     $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = 'Press Next to continue.'
     # a missing or wrong original: a big red banner here, the details and the remedies on its page
     $lblProblem = New-Object System.Windows.Forms.Label
-    $lblProblem.Location = '24,374'; $lblProblem.Size = '936,160'; $lblProblem.Visible = $false
+    $lblProblem.Location = '24,378'; $lblProblem.Size = '936,156'; $lblProblem.Visible = $false
     $lblProblem.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $lblProblem.ForeColor = [System.Drawing.Color]::White
     $lblProblem.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold); $lblProblem.Padding = '12,8,12,8'
     $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $lblNext, $lblProblem))
 
-    # --- pages 1..3: one per executable (the page's controls carry the executable's index in .Tag,
-    # because the handlers run outside this function)
+    # --- page 1: options - the resolution drop-down, the battlefield interface theme, the deprecated build.
+    # NOTHING is preselected (maintainer, 1 Oct 2026): Next stays disabled until the resolution and - at an
+    # HD size - the theme are chosen.
+    $pRes = New-Object System.Windows.Forms.Panel
+    $pRes.Location = '0,66'; $pRes.Size = '984,580'; $pRes.Visible = $false
+    $lblResIntro = New-Object System.Windows.Forms.Label
+    $lblResIntro.Location = '24,14'; $lblResIntro.Size = '936,36'
+    $lblResIntro.Text = ('These three choices are made once, here, for both games (they share the INTRF_HD interface folder); you can come back ' +
+                         'to this page with "< Back".  The executables published in the repository are the 1024x768 build with the dark interface.')
+    $lblResL = New-Object System.Windows.Forms.Label
+    $lblResL.Text = 'Screen resolution:'; $lblResL.Location = '40,62'; $lblResL.AutoSize = $true; $lblResL.Font = $bold
+    $cmbRes = New-Object System.Windows.Forms.ComboBox
+    $cmbRes.Location = '40,84'; $cmbRes.Size = '440,23'; $cmbRes.DropDownStyle = 'DropDownList'
+    [void] $cmbRes.Items.Add('(choose a screen resolution)')
+    foreach ($m in $script:gui.ModeList) { [void] $cmbRes.Items.Add((Format-ModeLabel $m $script:gui.Monitor)) }
+    $cmbRes.SelectedIndex = 0
+    $lblResNote = New-Object System.Windows.Forms.Label
+    $lblResNote.Location = '40,112'; $lblResNote.Size = '920,54'; $lblResNote.ForeColor = [System.Drawing.Color]::DimGray
+    $lblResNote.Text = ('640x480 (original) is the game as it shipped: no display fix, the stock menus and HUD, every other fix applied.  The sizes with ' +
+                        'the aspect ratio of your monitor are marked "recommended for your screen".  Any other size selects that size''s display fix ' +
+                        '(screen mode, map view, menus, HUD, movie frame, INTRF_HD data, clock hand - one fix per size) and makes the patcher WRITE the ' +
+                        'INTRF_HD interface set for it into the game folder (a few seconds).')
+    $lblThemeL = New-Object System.Windows.Forms.Label
+    $lblThemeL.Text = 'Battlefield interface:'; $lblThemeL.Location = '40,180'; $lblThemeL.AutoSize = $true; $lblThemeL.Font = $bold
+    $rbLight = New-Object System.Windows.Forms.RadioButton
+    $rbLight.Location = '60,204'; $rbLight.AutoSize = $true; $rbLight.Tag = 'light'; $rbLight.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $rbLight.Text = 'Light (classic)   -   the original brushed-metal battlefield interface: frame, buttons, dialogs and clock dial as the game shipped them'
+    $rbDark = New-Object System.Windows.Forms.RadioButton
+    $rbDark.Location = '60,232'; $rbDark.AutoSize = $true; $rbDark.Tag = 'dark'; $rbDark.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $rbDark.Text = 'Dark   -   the console style of the menus: grey pipework frame, red-ringed buttons, black dialogs, redrawn clock dial'
+    $lblThemeNote = New-Object System.Windows.Forms.Label
+    $lblThemeNote.Location = '60,260'; $lblThemeNote.Size = '900,36'; $lblThemeNote.ForeColor = [System.Drawing.Color]::DimGray
+    $lblThemeNote.Text = ('Data only, plus one 14-byte fix for the dark clock dial (fix "console").  At 640x480 (original) there is nothing to choose: ' +
+                          'the game keeps its own interface.')
+    $chkDep = New-Object System.Windows.Forms.CheckBox
+    $chkDep.Text = 'Also patch the deprecated Dark Colony  (dc16.exe -> Dark Colony.exe)'; $chkDep.Location = '40,310'; $chkDep.AutoSize = $true
+    $chkDep.Font = $bold; $chkDep.Checked = $false
+    $lblDepNote = New-Object System.Windows.Forms.Label
+    $lblDepNote.Location = '60,334'; $lblDepNote.Size = '900,54'; $lblDepNote.ForeColor = [System.Drawing.Color]::DimGray
+    $depBuild = $null; foreach ($b in $Builds) { if ($b.Deprecated) { $depBuild = $b } }
+    $lblDepNote.Text = $(if ($depBuild) { $depBuild.Deprecated + '  Unticked, its page is not shown and nothing is written for it; the repository no longer ships that file.' } else { '' })
+    $lblResPick = New-Object System.Windows.Forms.Label
+    $lblResPick.Location = '24,540'; $lblResPick.Size = '936,20'; $lblResPick.Font = $bold
+    $lblResPick.Text = 'Choose a screen resolution and a battlefield interface to continue.'
+    $pRes.Controls.AddRange(@($lblResIntro, $lblResL, $cmbRes, $lblResNote, $lblThemeL, $rbLight, $rbDark, $lblThemeNote, $chkDep, $lblDepNote, $lblResPick))
+
+    # --- pages 2..: one per executable (the page's controls carry the executable's index in .Tag,
+    # because the handlers run outside this function); a deprecated build's page exists but is shown only
+    # when its box on the options page is ticked
     $tip = New-Object System.Windows.Forms.ToolTip
     $pages = @()
-    for ($i = 0; $i -lt $items.Count; $i++) {
+    for ($i = 0; $i -lt $n; $i++) {
         $b = $items[$i].Build
         $pnl = New-Object System.Windows.Forms.Panel
         $pnl.Location = '0,66'; $pnl.Size = '984,580'; $pnl.Visible = $false
         $inc = New-Object System.Windows.Forms.CheckBox
         $inc.Text = "Patch $($b.ProductName)  (writes $($b.OutputName))"; $inc.Location = '20,12'; $inc.AutoSize = $true; $inc.Font = $bold; $inc.Tag = $i
+        if ($b.Deprecated) { $inc.Text += '   -   DEPRECATED'; $inc.ForeColor = [System.Drawing.Color]::FromArgb(176, 80, 0) }
         $lo = New-Object System.Windows.Forms.Label
         $lo.Text = 'Original:'; $lo.Location = '20,43'; $lo.AutoSize = $true
         $path = New-Object System.Windows.Forms.TextBox
@@ -3463,33 +3724,25 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $tip.SetToolTip($brw, "Pick the untouched original $($b.OriginalName) (another copy than the one found beside this script).")
         $det = New-Object System.Windows.Forms.Label
         $det.Location = '100,68'; $det.Size = '864,34'
-        $res = $null
-        if (@($b.Modes).Count -gt 0) {
-            $lr = New-Object System.Windows.Forms.Label
-            $lr.Text = 'Screen resolution:'; $lr.Location = '20,112'; $lr.AutoSize = $true
-            $res = New-Object System.Windows.Forms.ComboBox
-            $res.Location = '140,108'; $res.Size = '300,23'; $res.DropDownStyle = 'DropDownList'; $res.Tag = $i
-            $ln = New-Object System.Windows.Forms.Label
-            $ln.Text = 'the same for both games - they share the INTRF_HD interface folder'; $ln.Location = '450,112'; $ln.AutoSize = $true
-            $ln.ForeColor = [System.Drawing.Color]::DimGray
-            $pnl.Controls.AddRange(@($lr, $res, $ln))
-        } else {
-            $lr = $null
-            $ln = New-Object System.Windows.Forms.Label
-            $ln.Text = 'The map editor has no screen resolution to choose.'; $ln.Location = '20,112'; $ln.AutoSize = $true
-            $ln.ForeColor = [System.Drawing.Color]::DimGray
-            $pnl.Controls.Add($ln)
-        }
+        # the screen resolution and theme chosen on the options page (the games) - shown, not chosen here
+        $res = New-Object System.Windows.Forms.Label
+        $res.Location = '20,108'; $res.Size = '944,18'; $res.ForeColor = [System.Drawing.Color]::DimGray
+        $res.Text = if (@($b.Modes).Count -gt 0) { 'Screen resolution: (chosen on the options page)' } else { 'The map editor has no screen resolution or interface theme to choose.' }
+        # the deprecation notice (the Classic build since 1 Oct 2026)
+        $dep = New-Object System.Windows.Forms.Label
+        $dep.Location = '20,128'; $dep.Size = '944,34'; $dep.ForeColor = [System.Drawing.Color]::FromArgb(176, 80, 0); $dep.Font = $bold
+        $dep.Text = if ($b.Deprecated) { 'DEPRECATED: ' + $b.Deprecated } else { '' }
+        $dep.Visible = [bool] $b.Deprecated
         $all = New-Object System.Windows.Forms.CheckBox
-        $all.Text = 'Select all fixes  (result = the reference build)'; $all.Location = '20,142'; $all.AutoSize = $true
+        $all.Text = 'Select all fixes  (result = the reference build)'; $all.Location = '20,164'; $all.AutoSize = $true
         $all.Font = $bold; $all.Enabled = $false; $all.Tag = $i
         $lst = New-Object System.Windows.Forms.CheckedListBox
-        $lst.Location = '20,168'; $lst.Size = '452,368'; $lst.CheckOnClick = $true; $lst.IntegralHeight = $false; $lst.Enabled = $false; $lst.Tag = $i
+        $lst.Location = '20,188'; $lst.Size = '452,348'; $lst.CheckOnClick = $true; $lst.IntegralHeight = $false; $lst.Enabled = $false; $lst.Tag = $i
         $lst.Font = New-Object System.Drawing.Font('Segoe UI', 10)
         $li = New-Object System.Windows.Forms.Label
-        $li.Text = 'What the highlighted fix changes (always applied in the order of the list):'; $li.Location = '484,144'; $li.AutoSize = $true
+        $li.Text = 'What the highlighted fix changes (always applied in the order of the list):'; $li.Location = '484,166'; $li.AutoSize = $true
         $inf = New-Object System.Windows.Forms.TextBox
-        $inf.Location = '484,168'; $inf.Size = '480,368'; $inf.Multiline = $true; $inf.ReadOnly = $true; $inf.ScrollBars = 'Vertical'
+        $inf.Location = '484,188'; $inf.Size = '480,348'; $inf.Multiline = $true; $inf.ReadOnly = $true; $inf.ScrollBars = 'Vertical'
         $inf.WordWrap = $true; $inf.Font = $mono; $inf.BackColor = [System.Drawing.SystemColors]::Window
         $lw = New-Object System.Windows.Forms.Label
         $lw.Text = 'Written to:'; $lw.Location = '20,549'; $lw.AutoSize = $true
@@ -3515,16 +3768,27 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $errGet.BackColor = [System.Drawing.Color]::White; $errGet.Font = $bold
         $tip.SetToolTip($errGet, "Opens $($b.RepoUrl) in your browser; this script itself downloads nothing.")
         $err.Controls.AddRange(@($errTitle, $errBody, $errPick, $errGet))
-        $pnl.Controls.AddRange(@($inc, $lo, $path, $brw, $det, $all, $lst, $li, $inf, $lw, $out, $err))
+        $pnl.Controls.AddRange(@($inc, $lo, $path, $brw, $det, $res, $dep, $all, $lst, $li, $inf, $lw, $out, $err))
         $err.BringToFront()
-        $items[$i].UI = @{ Page = $pnl; Check = $inc; Path = $path; Browse = $brw; Status = $det; Res = $res; All = $all; List = $lst; Info = $inf; Out = $out
+        $items[$i].UI = @{ Page = $pnl; Check = $inc; Path = $path; Browse = $brw; Status = $det; Res = $res; Dep = $dep; All = $all; List = $lst; Info = $inf; Out = $out
                            Error = $err; ErrorTitle = $errTitle; ErrorBody = $errBody; ErrorPick = $errPick; ErrorGet = $errGet
                            # hidden while the red box is shown, so it is in front whatever the drawing order
-                           Behind = @(@($lr, $res, $ln, $all, $lst, $li, $inf) | Where-Object { $_ }) }
+                           Behind = @($res, $dep, $all, $lst, $li, $inf) }
         $pages += $pnl
     }
 
-    # --- page 4: finished
+    # --- ready to patch - the summary of everything that will be written
+    $pReady = New-Object System.Windows.Forms.Panel
+    $pReady.Location = '0,66'; $pReady.Size = '984,580'; $pReady.Visible = $false
+    $txtReady = New-Object System.Windows.Forms.TextBox
+    $txtReady.Location = '20,16'; $txtReady.Size = '944,520'; $txtReady.Multiline = $true; $txtReady.ReadOnly = $true
+    $txtReady.ScrollBars = 'Vertical'; $txtReady.Font = $mono; $txtReady.BackColor = [System.Drawing.SystemColors]::Window
+    $lblReady = New-Object System.Windows.Forms.Label
+    $lblReady.Location = '20,546'; $lblReady.Size = '944,24'; $lblReady.Font = $bold
+    $lblReady.Text = 'Press Patch to write the files listed above, or < Back to change something.'
+    $pReady.Controls.AddRange(@($txtReady, $lblReady))
+
+    # --- finished
     $pDone = New-Object System.Windows.Forms.Panel
     $pDone.Location = '0,66'; $pDone.Size = '984,580'; $pDone.Visible = $false
     $txtDone = New-Object System.Windows.Forms.TextBox
@@ -3550,29 +3814,36 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $btnCancel.Text = 'Cancel'; $btnCancel.Location = '864,658'; $btnCancel.Size = '104,30'
     $form.AcceptButton = $btnNext; $form.CancelButton = $btnCancel
 
-    $form.Controls.AddRange(@($header, $sepTop, $pWelcome) + $pages + @($pDone, $sepBot, $btnVerify, $lblLog, $btnBack, $btnNext, $btnCancel))
+    $form.Controls.AddRange(@($header, $sepTop, $pWelcome, $pRes) + $pages + @($pReady, $pDone, $sepBot, $btnVerify, $lblLog, $btnBack, $btnNext, $btnCancel))
     # All / List / Info / Out are re-pointed to the current page's controls by Select
-    $script:gui.Controls = @{ Form = $form; Title = $lblTitle; Sub = $lblSub; Welcome = $pWelcome; Found = $lblFound; Problem = $lblProblem; Done = $pDone; DoneText = $txtDone
-                              DoneNote = $lblDone; Shortcut = $chkLnk; Back = $btnBack; Next = $btnNext; Cancel = $btnCancel; Apply = $btnNext
+    $script:gui.Controls = @{ Form = $form; Title = $lblTitle; Sub = $lblSub; Welcome = $pWelcome; Found = $lblFound; Problem = $lblProblem
+                              Options = $pRes; ModeBox = $cmbRes; ThemeLight = $rbLight; ThemeDark = $rbDark; DepBox = $chkDep; ModePick = $lblResPick
+                              Ready = $pReady; ReadyText = $txtReady
+                              Done = $pDone; DoneText = $txtDone; DoneNote = $lblDone; Shortcut = $chkLnk
+                              Back = $btnBack; Next = $btnNext; Cancel = $btnCancel; Apply = $btnNext
                               Verify = $btnVerify; Log = $lblLog; All = $items[0].UI.All; List = $items[0].UI.List; Info = $items[0].UI.Info
                               Out = $items[0].UI.Out; Status = $items[0].UI.Status; Res = $items[0].UI.Res }
     $c = $script:gui.Controls   # event handlers run outside this function's scope, so they reach the controls through this table
 
-    # the resolution drop-downs of the two game pages, the largest size with your monitor's aspect preselected
-    $script:gui.Syncing = $true
-    if ($script:gui.ModeList.Count -gt 0) {
-        $first = $null; foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $first = $b; break } }
-        $sel = [Math]::Max(0, [Array]::IndexOf($script:gui.ModeList, (Get-PreferredMode $first $script:gui.Monitor)))
-        $script:gui.Mode = $script:gui.ModeList[$sel]
-        foreach ($it in $items) {
-            if (-not $it.UI.Res) { continue }
-            foreach ($m in $script:gui.ModeList) { [void] $it.UI.Res.Items.Add((Format-ModeLabel $m $script:gui.Monitor)) }
-            $it.UI.Res.SelectedIndex = $sel
-        }
-    }
-    $script:gui.Syncing = $false
-
     # --- behaviour
+    # The executables with a page in the wizard: every build that is not deprecated, plus a deprecated one
+    # while its box on the options page is ticked.  Visible = their indices, Last = the "Ready" step number.
+    $script:gui.Layout = {
+        $g = $script:gui
+        $vis = @()
+        for ($i = 0; $i -lt $g.Items.Count; $i++) { if (-not $g.Items[$i].Build.Deprecated -or $g.IncludeDeprecated) { $vis += $i } }
+        $g.Visible = $vis
+        $g.Last = $vis.Count + 2
+    }
+    # the wizard step of executable $index, or -1 when its page is not shown
+    $script:gui.StepOf = {
+        param([int] $index)
+        $k = [Array]::IndexOf(@($script:gui.Visible), $index)
+        if ($k -lt 0) { return -1 }
+        return $k + 2
+    }
+    & $script:gui.Layout
+
     # Repaints an executable's page header lines and the welcome page's list of originals.
     $script:gui.ShowRow = {
         param($it)
@@ -3585,11 +3856,20 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $u.Check.Checked = [bool] $it.Checked
         $u.Check.Enabled = -not $it.Error
         $u.Out.Text = if ($it.Out) { $it.Out } else { '' }
+        if (@($it.Build.Modes).Count -gt 0) {
+            if (-not $g.Mode) { $u.Res.Text = 'Screen resolution: not chosen yet - go back to the options page' }
+            else {
+                $theme = Get-GuiTheme $it.Build
+                $themeText = if ($g.Mode -eq '640x480') { 'the original interface' } elseif ($theme -eq 'light') { 'light (classic)' } elseif ($theme -eq 'dark') { 'dark (console style)' } else { 'NOT CHOSEN' }
+                $u.Res.Text = 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + ';  battlefield interface: ' + $themeText + '   (chosen on the options page - press < Back to change)'
+            }
+        }
         $u.Error.Visible = [bool] $it.Error
         foreach ($x in $u.Behind) { $x.Visible = -not $it.Error }
+        $u.Dep.Visible = (-not $it.Error) -and [bool] $it.Build.Deprecated
         if ($it.Error) { $u.ErrorTitle.Text = $it.Error.Title; $u.ErrorBody.Text = $it.Error.Body; $u.Error.BringToFront() }
         $g.Syncing = $false
-        $bad = @($g.Items | Where-Object { $_.Error })
+        $bad = @($g.Items | Where-Object { $_.Error -and (-not $_.Build.Deprecated -or $g.IncludeDeprecated) })
         $g.Controls.Problem.Visible = ($bad.Count -gt 0)
         if ($bad.Count -gt 0) {
             $g.Controls.Problem.Text = (@('PROBLEM - these originals cannot be used as they are:', '') +
@@ -3605,7 +3885,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
             $root = if ($g.Here) { $g.Here.TrimEnd($sep) + $sep } else { $null }
             if ($shown -and $root -and $shown.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $shown = $shown.Substring($root.Length) }
             elseif ($shown -and $shown.Length -gt 48) { $parts = $shown.Split($sep); if ($parts.Count -gt 2) { $shown = '...' + $sep + $parts[-2] + $sep + $parts[-1] } }
-            $lines += ('  {0} {1,-28} {2}' -f $mark, $x.Build.ProductName, $(if ($shown) { "$shown  ($($x.Status))" } else { "not found ($($x.Build.OriginalPath)) - you can pick it on its page" }))
+            $tail = if ($x.Build.Deprecated) { '  DEPRECATED - only if ticked on the options page' } else { '' }
+            $lines += ('  {0} {1,-28} {2}{3}' -f $mark, $x.Build.ProductName, $(if ($shown) { "$shown  ($($x.Status))" } else { "not found ($($x.Build.OriginalPath)) - you can pick it on its page" }), $tail)
         }
         $g.Controls.Found.Text = $lines -join "`r`n"
     }
@@ -3615,7 +3896,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $script:gui.Recheck = {
         param($it)
         $it.Unavailable = @{}
-        if ($it.Out) { $it.Unavailable = Get-UnavailableFixes $it.Build (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build) }
+        if ($it.Out) { $it.Unavailable = Get-UnavailableFixes $it.Build (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build) (Get-GuiTheme $it.Build) }
     }
 
     # Puts an item into the error state: nothing to patch, the include box locked, the big red panel on
@@ -3657,6 +3938,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
 
     # Loads an exe into the item of its build (the build is recognised from the file, not from the page).
     # $target = the page it was picked on: a file that is no known build puts THAT page into the error state.
+    # A deprecated build is ticked only while its box on the options page is.
     $loadOriginal = {
         param([string] $path, [bool] $select = $true, [int] $target = -1)
         $c = $script:gui.Controls
@@ -3679,17 +3961,20 @@ function Show-PatcherWindow([string] $PreloadPath) {
             if ($target -ge 0) {
                 $t = $g.Items[$target]; & $g.SetError $t $path $data 'unknown'
                 & $g.Recheck $t; & $g.ShowRow $t; & $g.FillItem $t
-                if ($select -and $g.Step -eq $target + 1) { & $g.Select $target }
+                if ($select -and $g.Step -eq (& $g.StepOf $target)) { & $g.Select $target }
             } else {
                 $c.Log.ForeColor = 'Firebrick'
                 $c.Log.Text = "$([System.IO.Path]::GetFileName($path)): not a build this script knows ($($data.Length) bytes)."
             }
             return
         }
-        $it = $null; foreach ($x in $g.Items) { if ($x.Build.Id -eq $build.Id) { $it = $x } }
+        $it = $null; $index = -1
+        for ($i = 0; $i -lt $g.Items.Count; $i++) { if ($g.Items[$i].Build.Id -eq $build.Id) { $it = $g.Items[$i]; $index = $i } }
         $it.Error = $null
         $it.Path = $path; $it.Data = $data; $it.IsOriginal = $isOriginal; $it.Out = Join-Path (Split-Path $path) $build.OutputName
-        $it.Checked = $true; $it.Color = 'DarkGreen'; $it.Status = 'untouched original'
+        # ticked, unless the build is deprecated (then only while its options-page box is ticked)
+        $it.Checked = if ($build.Deprecated) { [bool] $g.IncludeDeprecated } else { $true }
+        $it.Color = 'DarkGreen'; $it.Status = 'untouched original'
         $it.Detail = "$($build.Title)`r`nSHA-256 $sha = the untouched original."
         if (-not $isOriginal) {
             # a known build, but not the untouched original: an already patched build (players pick the
@@ -3721,12 +4006,13 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.Recheck $it
         & $g.ShowRow $it
         & $g.FillItem $it
-        if ($select -and $g.Step -ge 1 -and $g.Items[$g.Step - 1] -eq $it) { & $g.Select ($g.Step - 1) }
+        if ($select -and $g.Step -ge 2 -and $g.Step -eq (& $g.StepOf $index)) { & $g.Select $index }
     }
     $script:gui.Load = $loadOriginal
 
-    # (Re)fills one executable's page for the chosen resolution: its fixes, ticked unless unticked by the
-    # player or unavailable (resources not found).
+    # (Re)fills one executable's page for the chosen resolution and theme: its fixes, ticked unless unticked
+    # by the player or unavailable (resources not found).  The checklist is live only while the executable
+    # is ticked (a deprecated one starts unticked = disabled).
     $script:gui.FillItem = {
         param($it)
         $g = $script:gui
@@ -3734,8 +4020,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $g.Syncing = $true
         $t.List.Items.Clear(); $t.All.Checked = $false
         $it.Patches = @()
-        if ($it.Data) {
-            $it.Patches = @(Get-BuildPatches $it.Build (Get-GuiMode $it.Build))
+        $hasMode = (@($it.Build.Modes).Count -eq 0) -or ([bool] $g.Mode -and ($g.Mode -eq '640x480' -or [bool] $g.Theme))
+        if ($it.Data -and $hasMode) {
+            $it.Patches = @(Get-BuildPatches $it.Build (Get-GuiMode $it.Build) (Get-GuiTheme $it.Build))
             $all = $true
             foreach ($p in $it.Patches) {
                 $text = '{0}   ({1})' -f $p.Name, $p.Date
@@ -3747,7 +4034,10 @@ function Show-PatcherWindow([string] $PreloadPath) {
             $t.All.Checked = $all
         }
         $g.Syncing = $false
-        $t.List.Enabled = [bool] $it.Data; $t.All.Enabled = [bool] $it.Data
+        $live = [bool] $it.Data -and $hasMode -and [bool] $it.Checked
+        $t.List.Enabled = $live; $t.All.Enabled = $live
+        if ($it.Data -and -not $hasMode) { $t.Info.Text = 'Choose the screen resolution and the battlefield interface on the options page first (press < Back).' }
+        elseif ($it.Data -and -not $it.Checked) { $t.Info.Text = if ($it.Build.Deprecated) { "$($it.Build.ProductName) is deprecated: " + $it.Build.Deprecated + "`r`n`r`nTick ""Patch $($it.Build.ProductName)"" above to write the separate executable anyway; its fixes then become selectable." } else { "$($it.Build.ProductName) is unticked and will be skipped.  Tick ""Patch $($it.Build.ProductName)"" above to patch it." } }
         if ($g.Sel -ge 0 -and $g.Items[$g.Sel] -eq $it) { $g.Patches = $it.Patches }
     }
 
@@ -3763,6 +4053,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
         } else {
             $it.Checked = $sender.Checked
             & $g.ShowRow $it
+            & $g.FillItem $it
+            if ($g.Sel -ge 0 -and $g.Items[$g.Sel] -eq $it) { & $g.Select $g.Sel }
         }
     }
     $rowBrowse = {
@@ -3871,19 +4163,75 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.ShowFix $g.Items[[int] $sender.Tag]
     }
 
-    # the controls of every executable page
-    $resChange = {
+    # The options page.  Refresh: every executable page is refilled for the choices (its unticked fixes
+    # survive), the theme radios are live only at an HD size, Next follows the state, the status line says
+    # what is still missing.  SetMode / SetTheme / SetDeprecated are the handlers' work and the test hooks.
+    $script:gui.Refresh = {
+        $g = $script:gui
+        $c = $g.Controls
+        $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
+        $c.ThemeLight.Enabled = $hd; $c.ThemeDark.Enabled = $hd
+        & $g.Layout
+        foreach ($x in $g.Items) { & $g.Recheck $x; & $g.ShowRow $x; & $g.FillItem $x }
+        if ($g.Sel -ge 0) { & $g.Select $g.Sel }
+        $ready = [bool] $g.Mode -and (-not $hd -or [bool] $g.Theme)
+        $c.ModePick.Text = if (-not $g.Mode) { 'Choose a screen resolution and a battlefield interface to continue.' }
+                           elseif (-not $ready) { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + '.  Now choose the battlefield interface (light or dark) to continue.' }
+                           elseif (-not $hd) { 'Screen resolution: 640x480 (original) - the game keeps its own interface.  Press Next to continue.' }
+                           else { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + ', ' + $g.Theme + ' battlefield interface.  Press Next to continue.' }
+        if ($g.Step -eq 1) { $c.Next.Enabled = $ready }
+    }
+    $script:gui.SetMode = {
+        param([string] $mode)
+        $g = $script:gui
+        $c = $g.Controls
+        if ($mode -and $g.ModeList -notcontains $mode) { throw "unknown resolution '$mode'" }
+        $g.Mode = $mode
+        $g.Syncing = $true
+        $c.ModeBox.SelectedIndex = if ($mode) { [Array]::IndexOf($g.ModeList, $mode) + 1 } else { 0 }
+        $g.Syncing = $false
+        & $g.Refresh
+    }
+    $script:gui.SetTheme = {
+        param([string] $theme)
+        $g = $script:gui
+        $c = $g.Controls
+        if ($theme -and ('light', 'dark') -notcontains $theme) { throw "unknown theme '$theme'" }
+        $g.Theme = $theme
+        $g.Syncing = $true
+        $c.ThemeLight.Checked = ($theme -eq 'light'); $c.ThemeDark.Checked = ($theme -eq 'dark')
+        $g.Syncing = $false
+        & $g.Refresh
+    }
+    $script:gui.SetDeprecated = {
+        param([bool] $on)
+        $g = $script:gui
+        $c = $g.Controls
+        $g.IncludeDeprecated = $on
+        $g.Syncing = $true; $c.DepBox.Checked = $on; $g.Syncing = $false
+        foreach ($x in $g.Items) { if ($x.Build.Deprecated) { $x.Checked = $on -and [bool] $x.Data } }
+        & $g.Refresh
+    }
+    $c.ModeBox.Add_SelectedIndexChanged({
         param($sender, $e)
         $g = $script:gui
-        if ($g.Syncing -or $sender.SelectedIndex -lt 0) { return }
-        $g.Mode = $g.ModeList[$sender.SelectedIndex]
-        # both games share the INTRF_HD folder: one resolution, shown on both pages
-        $g.Syncing = $true
-        foreach ($x in $g.Items) { if ($x.UI.Res -and $x.UI.Res -ne $sender) { $x.UI.Res.SelectedIndex = $sender.SelectedIndex } }
-        $g.Syncing = $false
-        foreach ($x in $g.Items) { & $g.Recheck $x; & $g.FillItem $x }
-        if ($g.Sel -ge 0) { & $g.Select $g.Sel }
+        if ($g.Syncing) { return }
+        & $g.SetMode $(if ($sender.SelectedIndex -le 0) { '' } else { [string] $g.ModeList[$sender.SelectedIndex - 1] })
+    })
+    $themeCheck = {
+        param($sender, $e)
+        $g = $script:gui
+        if ($g.Syncing -or -not $sender.Checked) { return }
+        & $g.SetTheme ([string] $sender.Tag)
     }
+    $c.ThemeLight.Add_CheckedChanged($themeCheck)
+    $c.ThemeDark.Add_CheckedChanged($themeCheck)
+    $c.DepBox.Add_CheckedChanged({
+        param($sender, $e)
+        $g = $script:gui
+        if ($g.Syncing) { return }
+        & $g.SetDeprecated ([bool] $sender.Checked)
+    })
     foreach ($it in $script:gui.Items) {
         $u = $it.UI
         $u.Check.Add_CheckedChanged($rowCheck)
@@ -3893,7 +4241,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $u.All.Add_CheckedChanged($tabAll)
         $u.List.Add_ItemCheck($tabCheck)
         $u.List.Add_SelectedIndexChanged($tabSelect)
-        if ($u.Res) { $u.Res.Add_SelectedIndexChanged($resChange) }
     }
 
     # Popups (22 Sep 2026, maintainer request "show a popup when patching is in progress and when it
@@ -3922,6 +4269,67 @@ function Show-PatcherWindow([string] $PreloadPath) {
         }
     }
 
+    # one line per executable that is not patched, with the reason (the summary and the finished page)
+    $script:gui.SkippedLines = {
+        $g = $script:gui
+        $out = @()
+        foreach ($it in $g.Items) {
+            if ($it.Checked -and $it.Data) { continue }
+            $b = $it.Build
+            if ($b.Deprecated -and -not $g.IncludeDeprecated) { $out += $b.ProductName + ' (deprecated - not selected on the options page)' }
+            elseif (-not $it.Data) { $out += $b.ProductName + ' (no usable original)' }
+            else { $out += $b.ProductName + ' (unticked on its page)' }
+        }
+        return $out
+    }
+
+    # The summary shown on the "Ready to patch" page: resolution and theme, every executable (written with
+    # which fixes, or skipped and why), the interface set, the shortcuts.  Returns text lines.
+    $script:gui.Summary = {
+        $g = $script:gui
+        $c = $g.Controls
+        $lines = @()
+        $lines += 'Screen resolution:       ' + $(if ($g.Mode) { Format-ModeLabel $g.Mode $g.Monitor } else { 'NOT CHOSEN - go back to the options page' })
+        $lines += 'Battlefield interface:   ' + $(if ($g.Mode -eq '640x480') { 'the original (640x480 keeps the stock interface)' } elseif ($g.Theme -eq 'light') { 'light (classic) - the original metal interface' } elseif ($g.Theme -eq 'dark') { 'dark - the console style of the menus' } else { 'NOT CHOSEN - go back to the options page' })
+        $lines += ''
+        # paths under the script's folder (the normal case) are shown relative to it, so a line fits
+        $sep = [System.IO.Path]::DirectorySeparatorChar
+        $root = if ($g.Here) { $g.Here.TrimEnd($sep) + $sep } else { $null }
+        $short = { param([string] $p) if ($p -and $root -and $p.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $p.Substring($root.Length) } else { $p } }
+        foreach ($it in $g.Items) {
+            $b = $it.Build
+            if ($b.Deprecated -and -not $g.IncludeDeprecated) {
+                $lines += ('{0,-24} NOT PATCHED - deprecated; tick "Also patch the deprecated Dark Colony" on the options page to write it' -f $b.ProductName)
+            } elseif (-not $it.Data) {
+                $lines += ('{0,-24} SKIPPED - no usable original ({1})' -f $b.ProductName, $it.Status)
+            } elseif (-not $it.Checked) {
+                $lines += ('{0,-24} SKIPPED - unticked on its page' -f $b.ProductName)
+            } else {
+                $chosen = @(Get-GuiChosen $it)
+                $effective = @(Get-BuildPatches $b (Get-GuiMode $b) (Get-GuiTheme $b))
+                $mode = Get-GuiMode $b
+                $lines += ('{0,-24} {1}  ->  {2}' -f $b.ProductName, (& $short $it.Path), (& $short $it.Out))
+                $what = if ($chosen.Count -eq $effective.Count) { 'all {0} fixes{1} (= the reference build)' -f $chosen.Count, $(if ($mode) { " for $mode" } else { '' }) }
+                        else { '{0} of {1} fixes{2}' -f $chosen.Count, $effective.Count, $(if ($mode) { " for $mode" } else { '' }) }
+                $lines += ('{0,-24} {1}' -f '', $what)
+                $left = @($effective | Where-Object { $p = $_; -not ($chosen | Where-Object { $_.Id -eq $p.Id }) })
+                foreach ($p in $left) {
+                    $why = if ($it.Unavailable.ContainsKey($p.Id)) { 'resources not found' } else { 'unticked' }
+                    $lines += ('{0,-24}   left out: {1} ({2})' -f '', $p.Name, $why)
+                }
+                if ($mode -and $mode -ne '640x480' -and ($chosen | Where-Object { $_.ContainsKey('SetSources') })) {
+                    $lines += ('{0,-24} writes the {1} interface set ({2} battlefield interface) into INTRF_HD\ (and exp\intrf_hd\, ozi_ns\intrf_hd\ for Dark Colony Ultimate)' -f '', $mode, (Get-GuiTheme $b))
+                }
+                if (Test-Path -LiteralPath $it.Out) { $lines += ('{0,-24} REPLACES the existing {1}' -f '', (Split-Path -Leaf $it.Out)) }
+            }
+            $lines += ''
+        }
+        $lines += 'Desktop shortcuts:       ' + $(if ($c.Shortcut.Checked) { 'one per patched executable, starting in its game folder' } else { 'none' })
+        $lines += ''
+        $lines += 'The originals are never changed.  Every byte written is listed in Apply-DarkColonyPatches.ps1.'
+        return $lines
+    }
+
     # Patches every ticked executable.  Returns one result per executable:
     # @{ Item; R (Invoke-PatchRun's result or $null); Error; Shortcut; Kind = ok|warning|error; Line }.
     $script:gui.Apply = {
@@ -3933,7 +4341,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
         if ($todo.Count -eq 0) { $refused = 'No executable ticked - tick at least one (its original must be found).' }
         foreach ($it in $todo) {
             if ($refused) { break }
-            if (@(Get-GuiChosen $it).Count -eq 0) { $refused = "$($it.Build.ProductName): no fix selected - tick at least one fix, or untick the executable." }
+            if (@($it.Build.Modes).Count -gt 0 -and -not $g.Mode) { $refused = "$($it.Build.ProductName): no screen resolution chosen - go back to the options page and choose one." }
+            elseif (@($it.Build.Modes).Count -gt 0 -and $g.Mode -ne '640x480' -and -not $g.Theme) { $refused = "$($it.Build.ProductName): no battlefield interface chosen - go back to the options page and choose light or dark." }
+            elseif (@(Get-GuiChosen $it).Count -eq 0) { $refused = "$($it.Build.ProductName): no fix selected - tick at least one fix, or untick the executable." }
             elseif ([System.IO.Path]::GetFullPath($it.Out) -eq [System.IO.Path]::GetFullPath($it.Path)) { $refused = "$($it.Build.ProductName): the output must not be the original file - the original is never written over." }
         }
         if ($refused) {
@@ -3943,7 +4353,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         }
         $problems = @()
         foreach ($it in $todo) {
-            foreach ($pr in @(Get-DataProblems $it.Build @(Get-GuiChosen $it) (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build))) {
+            foreach ($pr in @(Get-DataProblems $it.Build @(Get-GuiChosen $it) (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) (Get-GuiMode $it.Build) (Get-GuiTheme $it.Build))) {
                 $problems += ('* {0}: {1}' -f $it.Build.ProductName, $pr)
             }
         }
@@ -3986,15 +4396,16 @@ function Show-PatcherWindow([string] $PreloadPath) {
                 $k++
                 $g.StepPrefix = "[$k/$($todo.Count)] $($it.Build.ProductName): "
                 $mode = Get-GuiMode $it.Build
+                $theme = Get-GuiTheme $it.Build
                 $res = @{ Item = $it; R = $null; Error = $null; Shortcut = $null; Kind = 'ok'; Line = '' }
                 try {
-                    $res.R = Invoke-PatchRun $it.Path $it.Build @(Get-GuiChosen $it) $it.Out $mode $g.Progress
+                    $res.R = Invoke-PatchRun $it.Path $it.Build @(Get-GuiChosen $it) $it.Out $mode $theme $g.Progress
                 } catch {
                     $res.Error = $_.Exception.Message
                 }
                 $r = $res.R
                 $name = $it.Build.ProductName
-                $modeText = if ($mode) { " for $mode" } else { '' }
+                $modeText = if ($mode) { " for $mode" + $(if ($theme) { " ($theme interface)" } else { '' }) } else { '' }
                 if ($res.Error) {
                     $res.Kind = 'error'; $res.Line = "$name - FAILED, nothing written:`r`n    $($res.Error)"
                 } else {
@@ -4005,12 +4416,12 @@ function Show-PatcherWindow([string] $PreloadPath) {
                     } elseif ($r.Complete -and $r.Published) {
                         $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, byte-identical to the exe published in the repository"
                     } elseif ($r.Complete -and $r.Matches) {
-                        $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, byte-identical to the reference build for $mode"
+                        $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, byte-identical to the reference build"
                     } elseif ($r.Complete) {
                         $res.Kind = 'warning'
                         $res.Line = "$name - all $($r.Applied.Count) fixes$modeText, but the SHA-256 differs from the reference build (please report it)"
                     } else {
-                        $res.Line = "$name - $($r.Applied.Count) of $(@(Get-BuildPatches $it.Build $mode).Count) fixes$modeText (" + (($r.Applied | ForEach-Object { $_.Id }) -join ', ') + ')'
+                        $res.Line = "$name - $($r.Applied.Count) of $(@(Get-BuildPatches $it.Build $mode $theme).Count) fixes$modeText (" + (($r.Applied | ForEach-Object { $_.Id }) -join ', ') + ')'
                     }
                     $res.Line += "`r`n    $($it.Out)`r`n    $($r.Size) bytes, SHA-256 $($r.Sha256)"
                     if ($r.Generated.Count -gt 0 -and $res.Kind -ne 'error') { $res.Line += "`r`n    " + ($r.Generated -join '; ') }
@@ -4043,6 +4454,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $ok = $results.Count - $errors
         $c.Log.Text = "$ok of $($results.Count) executable(s) patched" + $(if ($errors) { ", $errors failed" } else { '' }) + ' - see the message for details.'
         $text = ($results | ForEach-Object { $_.Line }) -join "`r`n`r`n"
+        $skipped = @(& $g.SkippedLines)
+        if ($skipped.Count -gt 0) { $text += "`r`n`r`nNot patched: " + ($skipped -join ', ') }
         if ($ok -gt 0) { $text += "`r`n`r`nStart the games with the desktop shortcuts or the files above." }
         if ($interactive) { & $g.Notify $text $title $icon }
         return $results
@@ -4062,50 +4475,79 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $g.Patches = $it.Patches
         $n = 0; foreach ($k in $it.Unavailable.Keys) { $n++ }
         if ($n -gt 0) { $c.Log.ForeColor = 'DarkOrange'; $c.Log.Text = "$($it.Build.ProductName): $n fix(es) cannot be applied into its folder - resources not found." }
-        elseif ((Get-GuiMode $it.Build) -eq '640x480' -and @($it.Build.Modes).Count -gt 0) { $c.Log.ForeColor = 'Black'; $c.Log.Text = '640x480 = the stock screen size: the display fixes (resolution, INTRF_HD paths, clock) are not offered.' }
+        elseif ($it.Build.Deprecated -and -not $it.Checked) { $c.Log.ForeColor = 'DarkOrange'; $c.Log.Text = "$($it.Build.ProductName) is deprecated and will be skipped (tick the box at the top to patch it anyway)." }
+        elseif ((Get-GuiMode $it.Build) -eq '640x480' -and @($it.Build.Modes).Count -gt 0) { $c.Log.ForeColor = 'Black'; $c.Log.Text = '640x480 (original) = the stock screen size: the display fix and the interface theme are not offered.' }
         else { $c.Log.Text = '' }
+        if ($it.Patches.Count -eq 0 -or -not $it.Checked) { return }       # the info box already explains why (no choice yet, unticked, deprecated)
         if ($u.List.SelectedIndex -lt 0 -and $u.List.Items.Count -gt 0) { $u.List.SelectedIndex = 0 }
         else { & $g.ShowFix $it }
     }
 
-    # Shows wizard step $step: 0 welcome, 1..n the executables, n+1 finished.
+    # Shows wizard step $step: 0 welcome, 1 options, 2.. the executables with a page (Visible), Last = ready,
+    # Last + 1 = finished.
     $script:gui.GoTo = {
         param([int] $step)
         $c = $script:gui.Controls
         $g = $script:gui
-        $n = $g.Items.Count
+        & $g.Layout
+        $vis = @($g.Visible)
+        $last = $g.Last
+        if ($step -gt $last + 1) { $step = $last + 1 }
         $g.Step = $step
         $c.Welcome.Visible = ($step -eq 0)
-        for ($i = 0; $i -lt $n; $i++) { $g.Items[$i].UI.Page.Visible = ($step -eq $i + 1) }
-        $c.Done.Visible = ($step -eq $n + 1)
+        $c.Options.Visible = ($step -eq 1)
+        for ($i = 0; $i -lt $g.Items.Count; $i++) { $g.Items[$i].UI.Page.Visible = ($step -eq (& $g.StepOf $i)) }
+        $c.Ready.Visible = ($step -eq $last)
+        $c.Done.Visible = ($step -eq $last + 1)
+        $c.Next.Enabled = $true
         if ($step -eq 0) {
             $c.Title.Text = 'Welcome to the Dark Colony patcher'
-            $c.Sub.Text = 'Builds Dark Colony, Dark Colony Ultimate and the Map Editor from the untouched originals in this folder.'
-        } elseif ($step -le $n) {
-            $b = $g.Items[$step - 1].Build
-            $c.Title.Text = "Step $step of ${n}: $($b.ProductName)"
-            $c.Sub.Text = "$($b.OriginalName) -> $($b.OutputName).  All fixes are selected; untick what you do not want, or untick the executable to leave it alone."
-            & $g.Select ($step - 1)
+            $c.Sub.Text = 'Builds Dark Colony Ultimate, the Map Editor (and, if you ask for it, the deprecated Dark Colony) from the untouched originals in this folder.'
+        } elseif ($step -eq 1) {
+            $c.Title.Text = "Step 1 of ${last}: Options"
+            $c.Sub.Text = 'The screen resolution, the battlefield interface (light = classic, dark = console style) and the deprecated executable.  Nothing is preselected.'
+            $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
+            $c.Next.Enabled = [bool] $g.Mode -and (-not $hd -or [bool] $g.Theme)
+            $c.Log.Text = ''
+        } elseif ($step -lt $last) {
+            $index = $vis[$step - 2]
+            $it = $g.Items[$index]
+            $b = $it.Build
+            $c.Title.Text = "Step $step of ${last}: $($b.ProductName)" + $(if ($b.Deprecated) { '  (deprecated)' } else { '' })
+            $c.Sub.Text = if ($b.Deprecated) { "$($b.OriginalName) -> $($b.OutputName).  Deprecated, written because you asked for it on the options page; untick ""Patch $($b.ProductName)"" to leave it out after all." }
+                          else { "$($b.OriginalName) -> $($b.OutputName).  All fixes are selected; untick what you do not want, or untick the executable to leave it alone." }
+            & $g.Select $index
+        } elseif ($step -eq $last) {
+            $c.Title.Text = "Step $last of ${last}: Ready to patch"
+            $c.Sub.Text = 'Check the summary; nothing has been written yet.  Press Patch to write the files.'
+            $c.ReadyText.Text = (& $g.Summary) -join "`r`n"
+            $c.ReadyText.SelectionStart = 0; $c.ReadyText.SelectionLength = 0; $c.ReadyText.ScrollToCaret()
+            $c.Log.Text = ''
         } else {
             $r = @($g.Results)
             $errors = @($r | Where-Object { $_.Kind -eq 'error' }).Count
             $c.Title.Text = if ($errors -eq 0) { 'Finished' } elseif ($errors -lt $r.Count) { 'Finished, with errors' } else { 'Patching failed' }
             $c.Sub.Text = '{0} of {1} executable(s) patched.' -f ($r.Count - $errors), $r.Count
-            $c.DoneText.Text = ($r | ForEach-Object { $_.Line }) -join "`r`n`r`n"
+            $skipped = @(& $g.SkippedLines)
+            $c.DoneText.Text = (($r | ForEach-Object { $_.Line }) -join "`r`n`r`n") + $(if ($skipped.Count -gt 0) { "`r`n`r`nNot patched: " + ($skipped -join ', ') } else { '' })
             $c.DoneNote.Text = if ($errors -lt $r.Count) { 'Start the games with the desktop shortcuts or the files above.  Press Close to leave.' } else { 'Nothing usable was written - see above.  Press Close to leave.' }
             $c.Log.Text = ''
         }
-        $c.Back.Enabled = ($step -gt 0 -and $step -le $n)
-        $c.Next.Text = if ($step -eq $n) { 'Patch' } elseif ($step -eq $n + 1) { 'Close' } else { 'Next >' }
-        $c.Cancel.Enabled = ($step -le $n)
+        $c.Back.Enabled = ($step -gt 0 -and $step -le $last)
+        $c.Next.Text = if ($step -eq $last) { 'Patch' } elseif ($step -eq $last + 1) { 'Close' } else { 'Next >' }
+        $c.Cancel.Enabled = ($step -le $last)
     }
     $c.Next.Add_Click({
         $g = $script:gui
-        $n = $g.Items.Count
-        if ($g.Step -lt $n) { & $g.GoTo ($g.Step + 1); return }
-        if ($g.Step -eq $n) {
+        $last = $g.Last
+        if ($g.Step -eq 1) {
+            $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
+            if (-not $g.Mode -or ($hd -and -not $g.Theme)) { $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'Choose a screen resolution and a battlefield interface first.'; return }
+        }
+        if ($g.Step -lt $last) { & $g.GoTo ($g.Step + 1); return }
+        if ($g.Step -eq $last) {
             $r = & $g.Apply $true
-            if ($r) { $g.Results = $r; & $g.GoTo ($n + 1) }
+            if ($r) { $g.Results = $r; & $g.GoTo ($last + 1) }
             return
         }
         $g.Controls.Form.Close()
@@ -4121,18 +4563,19 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $dlg.Filter = 'Dark Colony executables (*.exe)|*.exe|All files (*.*)|*.*'
         if ($dlg.ShowDialog($c.Form) -eq 'OK') {
             $report = (Get-VerifyReport $dlg.FileName) -join "`r`n"
-            if ($g.Step -ge 1 -and $g.Step -le $g.Items.Count) { $c.Info.Text = $report; $c.List.ClearSelected() }
+            if ($g.Step -ge 2 -and $g.Step -lt $g.Last) { $c.Info.Text = $report; $c.List.ClearSelected() }
             else { & $g.Notify $report 'Inspect an exe' 'Information' }
         }
     })
 
-    # the three originals beside this script, all ticked; then the exe given with -Original, if any
+    # the originals beside this script, ticked (the deprecated one not); then the exe given with -Original, if any
     foreach ($it in $script:gui.Items) {
         $p = if ($script:gui.Here) { Join-Path $script:gui.Here $it.Build.OriginalPath } else { $null }
         if ($p -and (Test-Path -LiteralPath $p)) { & $loadOriginal $p $false ([Array]::IndexOf($script:gui.Items, $it)) }
         else { & $script:gui.SetError $it $p $null 'missing'; & $script:gui.ShowRow $it; & $script:gui.FillItem $it }
     }
     if ($PreloadPath) { & $loadOriginal ((Resolve-Path $PreloadPath).Path) $false }
+    & $script:gui.Refresh
     & $script:gui.GoTo 0
     return $form
 }
@@ -4151,8 +4594,9 @@ if (-not $All -and -not $Patches) {
     return
 }
 
-# --- command-line apply: one original (-Original), or - with -All and no -Original - all three originals
-# beside this script, each written under its own name (25 Sep 2026: "installer patches all in one shot")
+# --- command-line apply: one original (-Original), or - with -All and no -Original - the originals beside
+# this script, each written under its own name (25 Sep 2026: "installer patches all in one shot"; since
+# 1 Oct 2026 without the deprecated Dark Colony build unless -IncludeDeprecated is given)
 function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
     $origPath = (Resolve-Path $OriginalFile).Path
     $data = [System.IO.File]::ReadAllBytes($origPath)
@@ -4171,14 +4615,17 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
         Write-Warning "SHA-256 does not match the untouched original; continuing because -Force was given (every edit is still byte-checked)."
     }
     Write-Host ("build : {0}" -f $build.Title)
+    if ($build.Deprecated) { Write-Warning ("{0} is DEPRECATED: {1}" -f $build.ProductName, $build.Deprecated) }
     $mode = Resolve-Mode $build $Resolution
+    $theme = Resolve-Theme $build $mode $Theme
     if ($mode) { Write-Host ("screen: {0}" -f (Format-ModeLabel $mode (Get-MonitorSize))) }
+    if ($theme) { Write-Host ("theme : {0} battlefield interface" -f $theme) }
 
-    $available = @(Get-BuildPatches $build $mode)
+    $available = @(Get-BuildPatches $build $mode $theme)
     if (-not $OutputFile) { $OutputFile = Join-Path (Split-Path $origPath) $build.OutputName }
     $OutputFile = Get-AbsolutePath $OutputFile
     $gameDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputFile))
-    $unavailable = Get-UnavailableFixes $build $gameDir $mode
+    $unavailable = Get-UnavailableFixes $build $gameDir $mode $theme
     if ($All) {
         # every fix whose resources are in the target folder; the others are skipped and reported
         $chosen = @()
@@ -4195,14 +4642,14 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
         $chosen = @()
         foreach ($id in @($Patches | ForEach-Object { $_ -split '[\s,]+' } | Where-Object { $_ })) {
             $p = $available | Where-Object { $_.Id -eq $id }
-            if (-not $p) { throw "unknown patch id '$id' for $($build.Id); valid: $(($available | ForEach-Object { $_.Id }) -join ', ')" }
+            if (-not $p) { throw "unknown patch id '$id' for $($build.Id) at this resolution and theme; valid: $(($available | ForEach-Object { $_.Id }) -join ', ')" }
             $chosen += $p
         }
     }
     if ((Test-Path $OutputFile) -and -not $Overwrite) { throw "output '$OutputFile' exists; pass -Overwrite to replace it" }
     if ((Test-Path $OutputFile) -and ((Resolve-Path $OutputFile).Path -eq $origPath)) { throw 'refusing to overwrite the original' }
 
-    $problems = @(Get-DataProblems $build $chosen $gameDir $mode)
+    $problems = @(Get-DataProblems $build $chosen $gameDir $mode $theme)
     if ($problems.Count -gt 0) {
         foreach ($pr in $problems) { Write-Warning $pr }
         if (-not $IgnoreMissingData) {
@@ -4216,14 +4663,14 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
     foreach ($p in @($available | Where-Object { $p = $_; ($chosen | Where-Object { $_.Id -eq $p.Id }) })) {
         Write-Host ("applying [{0,-10}] {1,-52} {2,3} edits" -f $p.Id, $p.Name, (Get-EditCount $p))
     }
-    $r = Invoke-PatchRun $origPath $build $chosen $OutputFile $mode
+    $r = Invoke-PatchRun $origPath $build $chosen $OutputFile $mode $theme
     Write-Host ''
     Write-Host ("output: {0}" -f $OutputFile)
     Write-Host ("        {0} bytes, SHA-256 {1}" -f $r.Size, $r.Sha256)
     foreach ($gl in @($r.Generated)) { Write-Host ("        " + $gl) }
     if ($r.Complete) {
         if ($r.Published) { Write-Host '        byte-identical to the executable published in the repository.' -ForegroundColor Green }
-        elseif ($r.Matches) { Write-Host ("        byte-identical to the reference build for {0} (every fix of that resolution)." -f $mode) -ForegroundColor Green }
+        elseif ($r.Matches) { Write-Host ("        byte-identical to the reference build for {0}{1} (every fix of that resolution{2})." -f $mode, $(if ($theme) { ", $theme interface" } else { '' }), $(if (-not $build.Shipped) { '; this executable is not shipped in the repository' } else { '' })) -ForegroundColor Green }
         else { Write-Warning 'all patches applied but the SHA-256 differs from the reference build - report this.' }
     } else {
         Write-Host ("        {0} of {1} patches applied ({2}); a partial build has no published reference hash." -f $r.Applied.Count, $available.Count, (($r.Applied | ForEach-Object { $_.Id }) -join ', '))
@@ -4242,11 +4689,20 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
 if ($Original) { Invoke-CliBuild $Original $Output; return }
 if ($Patches) { throw 'give -Original <exe> together with -Patches (the fix ids differ per executable)' }
 if ($Output) { throw '-Output needs -Original (with -All alone each executable is written under its own name beside its original)' }
+# the screen resolution and the battlefield interface are chosen explicitly (1 Oct 2026): checked once here,
+# before anything is written
+$games = @($Builds | Where-Object { @($_.Modes).Count -gt 0 -and (-not $_.Deprecated -or $IncludeDeprecated) })
+if ($games.Count -gt 0) { $m0 = Resolve-Mode $games[0] $Resolution; [void] (Resolve-Theme $games[0] $m0 $Theme) }
 $failed = 0; $done = 0
 foreach ($b in $Builds) {
     $p = Join-Path $PSScriptRoot $b.OriginalPath
     Write-Host ''
     Write-Host ('=== {0}  ({1} -> {2})' -f $b.ProductName, $b.OriginalPath, $b.OutputName) -ForegroundColor Cyan
+    if ($b.Deprecated -and -not $IncludeDeprecated) {
+        Write-Host ('DEPRECATED - skipped: {0}' -f $b.Deprecated) -ForegroundColor DarkYellow
+        Write-Host ('(patch it anyway with -IncludeDeprecated, or explicitly: -Original "{0}" -All -Resolution <WxH> [-Theme light|dark])' -f $b.OriginalPath) -ForegroundColor DarkYellow
+        continue
+    }
     if (-not (Test-Path -LiteralPath $p)) { Write-Warning ('{0} not found at {1} - skipped' -f $b.OriginalName, $p); continue }
     try { Invoke-CliBuild $p $null; $done++ } catch { Write-Warning ('{0}: {1}' -f $b.ProductName, $_.Exception.Message); $failed++ }
 }

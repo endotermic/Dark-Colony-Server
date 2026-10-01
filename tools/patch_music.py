@@ -535,15 +535,17 @@ def find_ci(folder, name):
     return None
 
 
-def write_dialogs(game, stock_mode):
+def write_dialogs(game, stock_mode, console=True):
     """Write the Council Wars copies of the options dialog with the MUSIC row (laid out on the console
-    plates when the source names intrf_hd/popp); returns the paths written."""
+    plates when the source names intrf_hd/popp and `console` is set - the dark battlefield theme,
+    1 Oct 2026; the light theme keeps the stock plates); returns the paths written."""
     src = find_ci(os.path.join(game, 'INTRFACE' if stock_mode else 'INTRF_HD'), 'lopte')
     if not src:
         return []
     new = music_row(open(src, 'rb').read())
-    import hud_console                            # the console plates' layout (doc 10.53); a no-op for the stock 640x480 script
-    new = hud_console.console_dialog(new)
+    if console:
+        import hud_console                        # the console plates' layout (doc 10.53); a no-op for the stock 640x480 script
+        new = hud_console.console_dialog(new)
     out = []
     for rel in DIALOG_COPIES_640 if stock_mode else DIALOG_COPIES_HD:
         if rel.startswith('ozi_ns/') and not os.path.isdir(os.path.join(game, 'ozi_ns')):
@@ -562,6 +564,8 @@ def main(argv=None):
     ap.add_argument('exe')
     ap.add_argument('--width', type=int, default=1024, help='screen size the exe is patched for (Council Wars: 640x480 adds the dialog name site and writes the 640x480 dialog copies)')
     ap.add_argument('--height', type=int, default=768)
+    ap.add_argument('--theme', choices=('dark', 'light'), default='dark',
+                    help='battlefield interface theme of the dialog copies written on apply in a game folder: dark = the console plates (hud_console), light = the stock plates (1 Oct 2026)')
     a = ap.parse_args(argv)
     data = bytearray(open(a.exe, 'rb').read())
     if len(data) not in SIZE_OF:
@@ -605,7 +609,7 @@ def main(argv=None):
     else:
         print('exe already patched')
     if copies:
-        written = write_dialogs(game, stock_mode)
+        written = write_dialogs(game, stock_mode, a.theme == 'dark')
         print('dialog copies: %s' % (', '.join(os.path.relpath(w, game) for w in written) or 'source LOPTE not found, none written'))
     return 0
 
