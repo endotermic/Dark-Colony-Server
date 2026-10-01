@@ -1209,7 +1209,9 @@ def tab_strip(font, active):
     strip = 520..633 stock, rows 96..109), so neither the screen's rings nor the panel's border tube
     are touched (the 124-px form ran to 637, over the border; the first 120-px form's plate 1 sat
     against the screen's ring - maintainer, 30 Sep 2026: "tab buttons are breaking interface frame")."""
-    cv = Canvas(TAB_STRIP_W, 16, 0)                    # transparent outside the plates: the strip must not cover the view's wall at x 900..901
+    cv = Canvas(TAB_STRIP_W, 16, 0)                    # transparent outside the plates
+    cv.vline(0, 0, 15, BAND)                           # ... except the view's wall at x 900..901 (strip columns 0..1): the engine
+    cv.vline(1, 0, 15, LT)                             # erases the strip's rect before a repaint (a tab click), so the strip carries it
     spans = ((4, 39), (43, 78), (82, 117))            # 36-px plates, 2 px of black to the screen's rings (x 902 / 1019) and between them
     for k, (x0, x1) in enumerate(spans):
         w = x1 - x0 + 1
@@ -1422,6 +1424,8 @@ OPTION_TEXT_DY, OPTION_ARROW_DY = 1, 0
 OK_ID, CANCEL_ID, OK_X, CANCEL_X = 56, 55, 158, 56   # CANCEL left, OK right (LOADGE: BACK left, LOAD right)
 OK_MSG, CANCEL_MSG = 7, 8
 LARGE_BUTTON_CELL, LARGE_X = 26, 62                 # KNOBE 0 (180x26) copied into POPP: the quit dialog's two buttons, centred at row + 62
+QUIT_GAP = 22                                       # ... and the pair centred vertically in the panel, 22 px between the plates (doc 10.55)
+SIZE_LINE = re.compile(rb'^([ \t]*size[ \t]+\d+[ \t]+)(\d+)([ \t]+\d+[ \t]+)(\d+)(?=\s|$)')   # size X Y W H: groups 2 = Y, 4 = H
 QUIT_NO_ID, QUIT_YES_MSG, QUIT_NO_MSG = 57, 2, 3   # pushb 57 = NO, CONTINUE; the texts are the quit dialog's textmsg 2 / 3
 OK_CENTRE_X = 107                                   # a lone OK button (objectives) centred on the row
 BOX_CELLS = {VALUE_BOX_CELL: (VALUE_BOX_W, BOX_H), NAME_BOX_CELL: (NAME_BOX_W, BOX_H), HEADER_CELL: (HEADER_W, HEADER_H),
@@ -1775,7 +1779,11 @@ def console_dialog(data):
         _list_form(rec, rows, ordered, row_x, quit_form, changes, rebuilt, drop, boxes)
     # apply the changes, drop the old box pictures, insert the new ones after the last picture line
     out, last_picture, used = [], None, set()
+    bottom = ordered[-1][1] + ROW_H                  # the `size` rect must reach the last row: the engine draws nothing below it
     for i, raw in enumerate(lines):
+        m = SIZE_LINE.match(raw)
+        if m and int(m.group(4)) < bottom - int(m.group(2)):   # (the stock objectives dialog says 272 for its 18 rows)
+            raw = m.group(1) + m.group(2) + m.group(3) + b'%d' % (bottom - int(m.group(2))) + raw[m.end():]
         if i in rec:
             k, n, t = rec[i]
             if i in drop or (k == b'picture' and len(t) >= 8 and t[7].isdigit() and int(t[7]) in BOX_CELLS):
@@ -1865,11 +1873,18 @@ def _list_form(rec, rows, ordered, row_x, quit_form, changes, rebuilt, drop, box
         elif k == b'pushb' and n in (OK_ID, CANCEL_ID, QUIT_NO_ID) and b'list' not in t[8:]:
             by = int(t[4])
             if quit_form:
+                # the pair centred in the panel's interior (row 3 + 4 .. last row + 3), YES above NO, 22 px apart
+                inner_y0, inner_h = ordered[3][1] + 4, ordered[-1][1] - ordered[3][1]
+                by = inner_y0 + (inner_h - (2 * 26 + QUIT_GAP)) // 2 + (0 if n == OK_ID else 26 + QUIT_GAP)
                 rebuilt[i] = _text_button(n, row_x + LARGE_X, by, 180, LARGE_BUTTON_CELL, QUIT_YES_MSG if n == OK_ID else QUIT_NO_MSG)
-            elif n == OK_ID:
-                rebuilt[i] = _text_button(n, row_x + (OK_X if has_cancel else OK_CENTRE_X), by, 90, BUTTON_CELL, OK_MSG)
             else:
-                rebuilt[i] = _text_button(n, row_x + CANCEL_X, by, 90, BUTTON_CELL, CANCEL_MSG)
+                if l_bottom is not None:
+                    # centred between the list block's bottom divider (bottom row + 16) and the panel's bottom tube (last row + 4)
+                    by = l_bottom + ROW_H + (ordered[-1][1] + 4 - (l_bottom + ROW_H) - 26) // 2
+                if n == OK_ID:
+                    rebuilt[i] = _text_button(n, row_x + (OK_X if has_cancel else OK_CENTRE_X), by, 90, BUTTON_CELL, OK_MSG)
+                else:
+                    rebuilt[i] = _text_button(n, row_x + CANCEL_X, by, 90, BUTTON_CELL, CANCEL_MSG)
         elif quit_form and k == b'label' and b'centre' not in t:
             drop.add(i)                          # the YES, QUIT / NO, CONTINUE labels: the buttons carry the texts now
 

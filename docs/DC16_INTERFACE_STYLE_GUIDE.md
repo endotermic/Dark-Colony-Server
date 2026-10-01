@@ -220,7 +220,8 @@ so a dialog letterboxed to any resolution comes out right.
 (cell 19, 292x44 at x 6, y0 + 4) with the title as a font-1 (`MFONTO2`) label inside it, the red
 title and label plates are gone, and the buttons are text buttons with their captions in font 2
 (`MFONTO5`): OK (id 56) at x 158 and CANCEL (id 55) at x 56 as 90x26 plates (a lone OK centred at
-x 107), the quit dialog's YES, QUIT / NO, CONTINUE as 180x26 plates (cell 26) at x 62. Rows 3..last
+x 107), centred vertically between the list block's bottom divider and the panel's bottom tube, the quit dialog's YES, QUIT / NO, CONTINUE as 180x26 plates (cell 26) at x 62, the pair
+centred vertically in the panel with 22 px between the plates. Rows 3..last
 are the black panel in every dialog (§10.55): the list block is a compartment of it (cells 3 / 27 /
 4 / 5, dividers full width), the save name sits in a 280x24 box (cell 15) inside the panel at
 (x 12, top row + 6), the buttons stand on the panel's black. Which rows are the list's is decided by
@@ -346,5 +347,10 @@ over a frame or a text line are removed from the script, the art under them stay
 * No index 0 for visible black in a sprite cell; no cyan ramp in art that must keep its colour in a
   `pushb` cell.
 * No hand-typed screen coordinates for widgets that belong to a row or a frame - derive them.
+* No frame pixel under a picture widget's rect that the picture itself does not carry: the engine
+  erases the rect before every repaint, transparency only survives the first paint (the tab strip's
+  two wall columns, §10.55).
+* No dialog `size` rect shorter than its rows - the engine draws nothing below it (the stock
+  objectives dialog's missing bottom border).
 * No resampling of the original art.
 * No one-size measurements applied to another size without re-measuring (§10.36's lesson).

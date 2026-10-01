@@ -5789,4 +5789,41 @@ empty. Not run: Ultimate, other sizes, 640x480 (stock).
 the stock scripts in the harness. (2) A list-type cell is not a list row; the `list` widget's range
 says which rows are the list's. (3) Every dialog body is the black panel; a frame inside it either
 shares the panel's tubes (a compartment with dividers) or keeps 2 px of black to them (a box).
-Uncommitted at the time of writing.
+Committed and pushed 30 Sep 2026: Dark-Colony `5d35735`, Server `410ecb2`.
+
+**Quit buttons centred (1 Oct 2026, maintainer: "'really quit?' dialog buttons must be better centered in frame").**
+The two 180x26 plates had kept the stock script's y (8 px under the panel's top tube, 30 px above
+its bottom one). `_list_form` / `Edit-DialogConsole` now centre the pair in the panel's interior
+(row 3 + 4 .. last row + 3, 112 rows): YES, QUIT at row 3 + 23, NO, CONTINUE 48 px lower
+(`QUIT_GAP` 22 between the plates), 19 px of black above and below the pair (1024x768: y 375 / 423;
+1920x1200: 591 / 639). Only `LQCE` changes (game folder, six fixtures, patcher); harness 18 inputs
+pwsh 7 = 5.1 = Python; measured in game at 1920x1200 (red rings at rows 592..615 and 640..663 in the
+572..683 interior), NO, CONTINUE closes, `error.log` empty. **Same for save / objectives (maintainer:
+"do the same for save and objectives dialogs"):** OK / CANCEL are centred between the list block's
+bottom divider (bottom row + 16) and the panel's bottom tube (last row + 4) - 52 rows in both
+dialogs, so the 26-px plates get 13 px of black above and below: y = bottom row + 29 (1024x768 LSGE
+525, LOBJE 477; 1920x1200 741 / 693; before: LSGE 2 px above the tube, LOBJE 8 / 19). A dialog
+without a list keeps the script's y. Both ports; `LSGE` / `LOBJE` regenerated (game folder, six
+fixtures, patcher); harness 18 inputs pwsh 7 = 5.1 = Python; measured in game at 1920x1200 (rings
+at 742..765 in 728..779 and 694..717 in 680..731), CANCEL and OK close, `error.log` empty.
+
+**Objectives' missing bottom border and the tab strip erasing the view's wall (1 Oct 2026, maintainer:
+"'objectives' is missing bottom part frame of form. '1' tab when clicking tab '2' or '3' is deleting
+left part of interface frame").** (1) The stock `LOBJE` says `size ... 304 272` for 18 rows of 16 =
+288: the engine draws nothing below the `size` rect, so the last row (the panel's bottom tube + the
+dialog border, cell 18; cell 2 in the stock) was never painted - a stock bug, visible since the panel
+made the dialog's bottom a tube (capture: border column ends at row 727 = 456 + 272 - 1). `console_dialog`
+/ `Edit-DialogConsole` now grow the `size` height to reach the last row + 16 (`SIZE_LINE`; only
+LOBJE changes, 272 -> 288; LSGE 386, LQCE 176, LOPTE 240 already cover their rows). (2) The 120x16
+tab-strip pictures (`MAINE` `picture 3..6` at x 516 + dx, MAINBUT cells 77..79) start ON the view's
+wall (x 900..901 stock = strip columns 0..1, `BAND | LT`); §10.49's seventh round made the strip
+transparent there, which is right for the first paint over the frame, but a tab click repaints the
+strip and the engine erases the picture's rect first - the two wall columns went black. The strip
+cells now carry the wall (`tab_strip`: column 0 BAND, column 1 LT, all 16 rows; the right end, x 1019
+stock, is black in the frame and the ring sits at 1020, outside the strip). Regenerated: the game
+folder's `MAINBUT.SPR` + `LOBJE`, the six fixtures' `LOBJE`, the patcher. In game at 1920x1200: the
+wall pixels at x 1796 / 1797 read (33,32,33) / (107,105,107) before and after clicking tabs 2, 3 and
+1; the objectives border column runs to row 743 and the bottom tube is drawn; `error.log` empty.
+**Rule: a picture widget's rect is erased before every repaint - whatever the frame shows inside
+that rect must be in the picture, transparency only saves the first paint.** And: a dialog's `size`
+rect must cover every row (check `size` against the last row when adding rows).
