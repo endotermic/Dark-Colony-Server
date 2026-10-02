@@ -455,6 +455,21 @@ SITES += [
      'scroll clamp: half_viewport_x'),
     (3, 0x1E26F, 'bb00070000', 1, lambda g: g.half_y,
      'scroll clamp: half_viewport_y'),
+    # Camera tile snap (doc 10.63). After the per-frame clamp the camera's low bytes are zeroed
+    # (`mov byte ptr [ui+108h],0` / `[ui+110h],0`), so the view origin camera - half lands on a
+    # half tile whenever the view is an odd number of tiles across that axis (1024x768: 23 rows,
+    # half = 11.5 tiles). The tile renderer floors that origin to whole tiles and draws terrain
+    # AND sprites 16 px lower than the pixel-exact frame the selection marker and the mouse pick
+    # use - the marker floated 16 px higher above every unit and a ground click landed half a
+    # tile north of the spot. Snapping the camera to .80 instead of .00 on such an axis puts the
+    # origin on a tile boundary and every consumer in one frame; even axes keep the stock byte
+    # (the site then writes nothing). The clamp bounds [half, map - half] already end in .80.
+    (3, 0x40AF1E - AUTO_VA_TO_FILE, 'c6800801000000', None,
+     lambda g: bytes.fromhex('c68008010000') + bytes((0x80 if g.tiles_x % 2 else 0,)),
+     'camera snap x: low byte -> 0x80 when the view has an odd tile count'),
+    (3, 0x40AF2B - AUTO_VA_TO_FILE, 'c6801001000000', None,
+     lambda g: bytes.fromhex('c68010010000') + bytes((0x80 if g.tiles_y % 2 else 0,)),
+     'camera snap y: low byte -> 0x80 when the view has an odd tile count'),
     (3, 0x35388, 'ba00700000', 1, lambda g: g.mask_bytes, 'occlusion mask size'),
     (3, 0x3539F, 'b880020000', 1, lambda g: g.w, 'render destination stride'),
     (3, 0x1E123, 'bb00020000', 1, lambda g: g.view_w, 'proto.c map view rect width'),
