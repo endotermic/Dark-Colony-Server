@@ -103,10 +103,12 @@ def find_site(data):
 
 
 def list_state(folder):
-    """{name: 'stock'|'patched'|'missing'|'other'} for the two INTRF_HD campaign lists."""
+    """{name: 'stock'|'patched'|'missing'|'other'} for the two campaign lists of the interface set (HD_<height>P, or the legacy INTRF_HD)."""
+    import hdfolder
+    hd = hdfolder.find_hd_folder(folder) or os.path.join(folder, 'INTRF_HD')
     out = {}
     for name, (old, new) in LISTS.items():
-        p = os.path.join(folder, 'INTRF_HD', name)
+        p = os.path.join(hd, name)
         if not os.path.exists(p):
             out[name] = 'missing'
             continue
@@ -177,8 +179,10 @@ def main(argv=None):
             open(os.path.join(gs, new.upper() + '.TXT'), 'wb').write(open(src, 'rb').read().replace(o, nw))
             print('written GAMESTAT/%s.TXT (%s with %s -> %s)' % (new.upper(), STOCK_LIST_OF[old], o.decode(), nw.decode()))
         return 0
+    import hdfolder
+    hd = hdfolder.find_hd_folder(folder) or os.path.join(folder, 'INTRF_HD')
     for name, (old, new) in sorted(LISTS.items()):
-        p = os.path.join(folder, 'INTRF_HD', name)
+        p = os.path.join(hd, name)
         st = lists[name]
         if st == 'stock':
             d = open(p, 'rb').read()

@@ -113,7 +113,12 @@ SETTEXT_CALL = 'BA 2E 00 00 00 8B 00 E8'       # in the refresh body: set in_tex
 LAYER_START_PATTERN = '83 3D ?? ?? ?? ?? 00 75 14 31 C0 BA 02 00 00 00 66 A1'   # ddex4.c music start: the "no CD audio" flag
 DIALOG_NAME = b'intrf_hd/lopt\0'               # DGROUP string of the options dialog script (HD form, after `hdpaths`)
 DIALOG_NAME_640 = (b'intrface/lopt\0', b'intrface/lopm\0')   # 640x480: the exe reads exp/intrface/lopme instead
-DIALOG_COPIES_HD = ('exp/intrf_hd/lopte', 'dc/intrf_hd/lopte', 'ozi_ns/intrf_hd/lopte')
+import hdfolder
+
+
+def dialog_copies_hd(folder):
+    """exp/<folder>/lopte, dc/..., ozi_ns/... - the set folder is the resolution's own since 2 Oct 2026."""
+    return tuple('%s/%s/lopte' % (root, folder) for root in ('exp', 'dc', 'ozi_ns'))
 DIALOG_COPIES_640 = ('exp/intrface/lopme', 'dc/intrface/lopme', 'ozi_ns/intrface/lopme')
 L_TEMPLATE, L_MPEGVIDEO, L_SETVOL = 0x1DC, 0x1D0, 0x200
 STOCK_SHA = {                                         # SHA-256 of the stock module block and the stock aux block
@@ -539,7 +544,8 @@ def write_dialogs(game, stock_mode, console=True):
     """Write the Council Wars copies of the options dialog with the MUSIC row (laid out on the console
     plates when the source names intrf_hd/popp and `console` is set - the dark battlefield theme,
     1 Oct 2026; the light theme keeps the stock plates); returns the paths written."""
-    src = find_ci(os.path.join(game, 'INTRFACE' if stock_mode else 'INTRF_HD'), 'lopte')
+    hd = None if stock_mode else hdfolder.find_hd_folder(game)
+    src = find_ci(os.path.join(game, 'INTRFACE') if stock_mode else (hd or os.path.join(game, 'INTRF_HD')), 'lopte')
     if not src:
         return []
     new = music_row(open(src, 'rb').read())
@@ -547,7 +553,7 @@ def write_dialogs(game, stock_mode, console=True):
         import hud_console                        # the console plates' layout (doc 10.53); a no-op for the stock 640x480 script
         new = hud_console.console_dialog(new)
     out = []
-    for rel in DIALOG_COPIES_640 if stock_mode else DIALOG_COPIES_HD:
+    for rel in DIALOG_COPIES_640 if stock_mode else dialog_copies_hd(os.path.basename(hd)):
         if rel.startswith('ozi_ns/') and not os.path.isdir(os.path.join(game, 'ozi_ns')):
             continue                                  # no OZI data: no copy (dc/ is created, it holds only this and the menu)
         dst = os.path.join(game, *rel.split('/'))
@@ -590,9 +596,9 @@ def main(argv=None):
     for off, old, new in relocs:
         print('  .reloc @ file %#x: %04X -> %04X' % (off, old, new))
     game = os.path.dirname(os.path.abspath(a.exe))
-    copies = (DIALOG_COPIES_640 if stock_mode else DIALOG_COPIES_HD) if g == 'cw' else ()
+    copies = (DIALOG_COPIES_640 if stock_mode else dialog_copies_hd('HD_<height>P')) if g == 'cw' else ()
     if copies:
-        print('  dialog copies with the MUSIC row (from %s/LOPTE): %s' % ('INTRFACE' if stock_mode else 'INTRF_HD', ', '.join(copies)))
+        print('  dialog copies with the MUSIC row (from %s/LOPTE): %s' % ('INTRFACE' if stock_mode else 'HD_<height>P', ', '.join(copies)))
     if a.command == 'plan':
         return 0
     if summary != 'patched':

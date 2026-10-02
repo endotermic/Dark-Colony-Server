@@ -28,6 +28,8 @@ and patch_resolution.py accepts the resulting exe by size (its MD5 table only kn
 import re, struct, hashlib, sys, os, shutil, subprocess, tempfile, base64
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, TOOLS)
+from hdfolder import hd_folder, hd_token, SRC_DIR     # one interface folder per resolution (2 Oct 2026, doc 10.61)
 GAME = sys.argv[1]
 OUT = sys.argv[2]
 WORK = tempfile.mkdtemp(prefix='dcpatch_')
@@ -44,17 +46,18 @@ GAME_DIR = {'classic': os.path.join(GAME, 'DC - Council wars'), 'cw': os.path.jo
 # Screen resolutions (21 Sep 2026, maintainer request: a drop-down in the patcher).  '640x480' is the
 # stock mode = the build without its HD fixes; every HD mode is a separate replay of the two tools
 # that take --width/--height (`resolution`, `clock`), emitted as per-mode variants of those fixes
-# (same Id, `Mode` field).  All HD modes share the one INTRF_HD folder (maintainer decision), so
-# the INTRF_HD path strings are the same in every HD mode (part of the one `resolution` fix since
+# (same Id, `Mode` field).  Since 2 Oct 2026 every HD mode has its OWN interface folder (HD_<height>P), so
+# the path strings differ per mode too (part of the one `resolution` fix since
 # 1 Oct 2026).  Doc 10.25, 10.58.
 STOCK_MODE = '640x480'
 HD_MODES = ['1024x768', '1280x1024', '1280x720', '1280x800', '1920x1080', '1920x1200', '3840x1080']  # several sizes per aspect ratio since 27 Sep 2026 (maintainer: 1920x1080, 1920x1200; until then one per ratio, 22 Sep 2026). The window preselects the LAST recommended mode of this list, so within one ratio the larger size must come after the smaller
-PUBLISHED_MODE = '1024x768'         # the mode of the exes published in the repository (NOT a default: since 1 Oct 2026 the
+PUBLISHED_MODE = '1024x768'
+PUBLISHED_FOLDER = hd_folder(1024, 768)          # HD_0768P: the interface set the repository ships (2 Oct 2026)         # the mode of the exes published in the repository (NOT a default: since 1 Oct 2026 the
                                     # resolution is always chosen explicitly - window page 1, CLI -Resolution)
 # tools replayed per mode (--width/--height): the display fixes differ per size; `movies` and `ozi` have
 # a 640x480 variant (the exe is pointed at copies of the lists / the menu script that the original exe
 # never reads, since the stock files must stay untouched) and one shared HD variant
-MODE_STEPS = {'resolution', 'clock', 'movies', 'ozi', 'music'}
+MODE_STEPS = {'resolution', 'hdpaths', 'clock', 'movies', 'ozi', 'music'}   # hdpaths since 2 Oct 2026: the folder is the size's own
 HD_STEPS = {'resolution', 'hdpaths', 'clock', 'console'}   # replay steps that do not exist in the stock mode
 # The battlefield interface theme (1 Oct 2026, maintainer: "dark mode must be optional but not preselected, customer
 # must be forced to select light mode (classic) or dark mode of battlefield interface"): the console-style HUD of
@@ -121,7 +124,7 @@ def hd_data(g, mode=None):
     # derived from (named after the repository's INTRF_HD: every output has a same-named input,
     # except the four shipped pictures, see set_sources), the four GAMESTAT briefing lists, the
     # shared re-baked logo banks, and for Council Wars the exp\ overrides and the OZI lists.
-    hd = [f.rsplit('\\', 1)[-1] for f in _tree(g, 'INTRF_HD') if '\\' not in f[len('INTRF_HD\\'):]]
+    hd = [f.rsplit('\\', 1)[-1] for f in _tree(g, PUBLISHED_FOLDER) if '\\' not in f[len(PUBLISHED_FOLDER) + 1:]]
     files = []
     for name in hd:
         if name.upper() in SHIPPED_PICTURES:
@@ -153,8 +156,8 @@ SHIPPED_PICTURES = ('INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF', 'I
 def set_sources(g, mode):
     """The four pictures of a resolution that cannot be derived: the painted main-menu backdrops
     (INTRG / INTRO with their bottom bands, BACKDROP without one - the pre-battle screens' ground,
-    doc 10.56) and the spliced HUD frame, shipped as INTRF_HD\<WxH>\*.GIF."""
-    out = ['INTRF_HD\\%s\\%s' % (mode, x) for x in SHIPPED_PICTURES]
+    doc 10.56) and the spliced HUD frame, shipped as HD_SRC\\<WxH>\\*.GIF (until 1 Oct 2026 INTRF_HD\\<WxH>)."""
+    out = ['%s\\%s\\%s' % (SRC_DIR, mode, x) for x in SHIPPED_PICTURES]
     for f in out:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
@@ -163,7 +166,7 @@ def set_sources(g, mode):
 def console_data(g, mode=None):
     """The dark theme's banks (fix `console`): the console-style HUD cells and dialog plates, and the
     redrawn clock dial the exe reads as sprites/clock (hud_console.py, doc 10.49)."""
-    out = ['INTRF_HD\\MAINBUT.SPR', 'INTRF_HD\\POPP.SPR', 'SPRITES\\CLOCK.SPR']
+    out = [SRC_DIR + '\\MAINBUT.SPR', SRC_DIR + '\\POPP.SPR', 'SPRITES\\CLOCK.SPR']
     for f in out:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
@@ -172,7 +175,9 @@ def console_data(g, mode=None):
 def ozi_data(g, mode=None):
     """Data files the OZI MISSIONS mode needs: the whole ozi_ns/ overlay, the pack's base-set
     additions in exp/ (animozi.dat, the new units, the tranozi transport) and the ozisave marker."""
-    files = _tree(g, 'ozi_ns') + _tree(g, 'ozisave')
+    # not the pack's interface set copies ozi_ns\HD_0768P\ (the patcher writes them per resolution and deletes the other
+    # sizes' folders - 2 Oct 2026): a Data file that a run deletes would make the fix "unavailable" at every other size
+    files = [f for f in _tree(g, 'ozi_ns') if not re.match(r'(?i)ozi_ns\\((?:HD|UW)_\d{4}P|intrf_hd)\\', f)] + _tree(g, 'ozisave')
     files += _tree(g, 'exp', pattern=r'^animozi\.dat$')
     files += _tree(g, 'exp', 'animate', pattern=r'^(dalg|spyo|reae|tranozi)\.fin$')
     files += _tree(g, 'exp', 'sprites', pattern=r'^(dalg|spyo|reae|tranozi)\.spr$')
@@ -180,7 +185,7 @@ def ozi_data(g, mode=None):
     # `*.o16` is gitignored in Dark-Colony; the game recreates them on first load).
     assert len(files) >= 370, (g, len(files))
     files += ['ozi_ns\\gamestat\\hxscene.txt', 'ozi_ns\\gamestat\\gxscene.txt']   # unshifted lists, untracked at generation time
-    files += ['dc\\intrf_hd\\bintroe', 'dc\\intrface\\credits.txt']   # the DARK COLONY mode's overlay: the patched menu and the Council Wars credits (the `music` fix adds its dialog)
+    files += ['dc\\intrface\\credits.txt']   # the DARK COLONY mode's overlay: the Council Wars credits (its menu and dialog copies are written per resolution)
     if mode == STOCK_MODE:
         files += ['exp\\intrface\\bintroe']                              # source of the bintoze copies
     return files
@@ -580,16 +585,16 @@ CD in a drive.  This one fix removes the whole CD business from the exe:
      <name>" in error.log, the desktop mode restored, a box "FILE NOT FOUND / <name>", exit.  The
      four absolute operands of the new code take over the relocation entries of the old ones.
      (Seen with a copy of the game that lacked ozi_ns\\intrf_hd\\: OZI MISSIONS -> NEXT showed the
-     prompt for intrf_hd/hxscene.txt.)
+     prompt for hd_<height>p/hxscene.txt.)
 
 Every edit sits inside an existing instruction or string; nothing moves.  The patched exe no
 longer needs HBNFUFL.A01 / .A02 (the untouched originals still read the drive letter from them).'''),
- dict(id='resolution', name=lambda mode: '%s display: screen mode, interface data from INTRF_HD, clock hand' % mode,
+ dict(id='resolution', name=lambda mode: '%s display: screen mode, interface data from %s, clock hand' % (mode, hd_folder(*mode_wh(mode))),
       date='9 / 13 / 14 Sep 2026 (one fix since 1 Oct 2026)', tool='tools/patch_resolution.py + patch_hd_paths.py + patch_clock.py (Dark-Colony-Server)',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 8-10, 10.15, 10.17, 10.24, 10.25, 10.58', blocks=blocks_display,
       data=hd_data, datasize=True,
       desc=lambda mode: (lambda g: """Everything the screen size changes, in ONE fix (until 1 Oct 2026 the three fixes "display",
-"interface data from INTRF_HD" and "clock hand", which only worked together and were always
+"interface data from its own folder" and "clock hand", which only worked together and were always
 selected together; the maintainer asked for one).  Three tools are replayed one after the other:
 
 A. THE DISPLAY (patch_resolution.py).  The engine is hard-wired for 640x480: the DirectDraw
@@ -611,20 +616,22 @@ Every edit swaps one immediate constant or one arithmetic opcode inside an exist
 instruction; no code is added and no instruction moves.  Council Wars is the same code at
 +0x60 (AUTO) / +0x28 (DGROUP) with three site fixups, hence the slightly different offsets.
 
-B. INTERFACE DATA FROM INTRF_HD (patch_hd_paths.py, 30 edits).  The rebuilt menus, HUD frame,
+B. INTERFACE DATA FROM HD_<height>P (patch_hd_paths.py, 30 edits).  The rebuilt menus, HUD frame,
 loading screens, briefing-marker lists and re-baked logo sprites used to replace the stock files
 under their stock names, so the untouched original exe could no longer run from the same folder.
-They live under their stock names in INTRF_HD/ (Council Wars also exp/intrf_hd/ and
-ozi_ns/intrf_hd/), the stock 640x480 files are back in INTRFACE/ and GAMESTAT/, and the re-baked
+They live under their stock names in the resolution's OWN folder %(folder)s/ (Council Wars also
+exp/%(folder)s/ and ozi_ns/%(folder)s/; since 2 Oct 2026 - until then every size shared one
+HD_<height>P/, which is how a player got a HUD script of one size under the frame of another), the
+stock 640x480 files are back in INTRFACE/ and GAMESTAT/, and the re-baked
 logo animations are SPRITES/DCSS_HD.SPR, DCUK_HD.SPR, DCUT_HD.SPR with matching ANIMATE/*_HD.FIN.
 The game opens each of those files through a literal path in the data section ("intrface/bintro"
 plus the language letter, "gamestat/hscene" plus ".txt", ...), so the 8-byte directory part of
 exactly the 30 strings whose files were rebuilt is rewritten: "intrface" / "gamestat" ->
-"intrf_hd", same length, in place.  Fonts, text files, per-screen sprite lists without logo
+"%(token)s", same length, in place.  Fonts, text files, per-screen sprite lists without logo
 banks and every other file keep their stock path and single copy; the two lists that do name
-logo banks (INTRG.DAT, INTRO.DAT) are redirected to INTRF_HD copies that say dcuk_hd.fin etc.
+logo banks (INTRG.DAT, INTRO.DAT) are redirected to copies in %(folder)s/ that say dcuk_hd.fin etc.
 No code changes.  With this the untouched dc16.exe / ENGEXP16.EXE (stock data) and the patched
-exe (INTRF_HD data) run side by side from one folder.
+exe (%(folder)s data) run side by side from one folder.
 
 C. THE DAY/NIGHT CLOCK HAND (patch_clock.py --part anchors, 2 edits).  The HUD's dial is a sprite
 cell that clock.c blits by code with its top-left corner at (608,450) - two plain immediates that
@@ -633,19 +640,22 @@ the enlarged map view and the terrain paints over the dial every frame.  The anc
 (%(cx)d,%(cy)d), where the rebuilt HUD frame has the clock face.  (The dark battlefield interface
 also renames the dial's bank - that is the separate fix "console" below.)
 
-REQUIRES the interface data built for %(mode)s next to the exe in the INTRF_HD/ folder.  One
-INTRF_HD folder serves every resolution, so it must hold the set built for THIS size: applying
-this fix makes the patcher WRITE that set (Write-InterfaceSet) from the stock 640x480 files and
-the five pictures per size that ship with the game (INTRF_HD\\%(mode)s\\INTRG.GIF, INTRO.GIF,
-BACKDROP.GIF, and the HUD frame INTRFACE.GIF for the dark battlefield interface or
+REQUIRES the interface data built for %(mode)s next to the exe in the folder %(folder)s/ - one
+folder per resolution (2 Oct 2026), so a set of another size can never be read by mistake.
+Applying this fix makes the patcher WRITE that set (Write-InterfaceSet) from the stock 640x480
+files and the five pictures per size that ship with the game (HD_SRC\\%(mode)s\\INTRG.GIF,
+INTRO.GIF, BACKDROP.GIF, and the HUD frame INTRFACE.GIF for the dark battlefield interface or
 INTRFACE_LIGHT.GIF for the light one - the theme is chosen with the resolution): menu scripts,
-HUD script, briefing lists, letterboxed backgrounds,
-the two loading screens INTRF_HD\\LOAD.BMP / LOAD2.BMP (the 640x480 picture centred on a black
-%(mode)s canvas), Council Wars' exp\\intrf_hd and ozi_ns\\intrf_hd copies.  With a set of another
-size the game would draw the menus and the HUD frame at the wrong size.""" % dict(
+HUD script, briefing lists, letterboxed backgrounds, the two loading screens
+%(folder)s\\LOAD.BMP / LOAD2.BMP (the 640x480 picture centred on a black %(mode)s canvas),
+Council Wars' exp\\%(folder)s and ozi_ns\\%(folder)s copies - and first DELETES every other
+resolution's folder (HD_*P / UW_*P, the pre-October HD_<height>P set, the 640x480 copies), so that no
+file of another size is left anywhere (maintainer's rule).  The folder is also what the ONLINE
+WAR screen is read from.""" % dict(
           mode=mode, dx=g.menu_dx, dy=g.menu_dy, vw=g.view_w, vh=g.view_h, tx=g.tiles_x, ty=g.tiles_y,
           mx=g.minimap_x, m0=g.movie_rect[0], m1=g.movie_rect[1], m2=g.movie_rect[2], m3=g.movie_rect[3],
           cx=mode_wh(mode)[0] - 32, cy=mode_wh(mode)[1] - 30,
+          folder=hd_folder(*mode_wh(mode)), token=hd_token(*mode_wh(mode)),
           stride='a shift, %d is a power of two' % g.w if g.pow2 else 'imul: %d is not a power of two' % g.w,
           slack=' plus %d spare rows given to the taller HUD bottom bar' % g.slack_y if g.slack_y else '',
           lm='the six lightmap row idioms x144 -> x%d (more than 34 tiles across),' % g.lm_stride if g.lm_stride_patch else ''))(geometry(mode))),
@@ -655,10 +665,10 @@ size the game would draw the menus and the HUD frame at the wrong size.""" % dic
       desc="""The DARK battlefield interface (the maintainer's choice of 1 Oct 2026: "dark mode must be optional
 but not preselected, customer must be forced to select light mode (classic) or dark mode").  From
 28 to 30 Sep 2026 the brushed-metal battlefield HUD was redrawn in the visual language of the
-game's menus: a grey pipework frame (INTRF_HD\\INTRFACE.GIF), buttons on the lobby's red-ringed
-black plates with the original unit and building portraits (INTRF_HD\\MAINBUT.SPR), the dialogs
+game's menus: a grey pipework frame (the resolution folder's INTRFACE.GIF), buttons on the lobby's red-ringed
+black plates with the original unit and building portraits (HD_SRC\\MAINBUT.SPR), the dialogs
 (save, options, objectives, quit) as black forms with grey tube frames and the lobby's text
-buttons (INTRF_HD\\POPP.SPR, laid out by the console dialog pass of the set writer), and the
+buttons (HD_SRC\\POPP.SPR, laid out by the console dialog pass of the set writer), and the
 day/night dial redrawn in the same style (SPRITES\\CLOCK.SPR: light right half with a sun, dark
 left half with a moon, a red hand).  Almost all of that is data the patcher writes with the
 interface set when this fix is selected; this fix's ONE byte edit is the exe's name of the dial
@@ -666,7 +676,7 @@ bank, "sprites/cloc" -> "sprites/clock" (14 bytes in DGROUP, same length, in pla
 draws SPRITES\\CLOCK.SPR instead of the stock metal dial SPRITES\\CLOC.SPR.
 
 The LIGHT (classic) interface = this fix not selected: the set writer takes the shipped
-INTRF_HD\\<WxH>\\INTRFACE_LIGHT.GIF (the metal frame spliced to the size by hud_layout.py), the
+HD_SRC\\<WxH>\\INTRFACE_LIGHT.GIF (the metal frame spliced to the size by hud_layout.py), the
 scripts keep the stock banks INTRFACE\\MAINBUT.SPR / POPP.SPR and the stock dialog layouts (plus
 the MUSIC row for Dark Colony Ultimate), and the exe keeps "sprites/cloc".  Only at the HD sizes:
 at 640x480 (original) the game keeps its own interface and the theme is not asked.  The exes
@@ -861,7 +871,7 @@ COLONY play DC, COUNCIL WARS plays CW, OZI MISSIONS and MULTI PLAYER WAR play AL
 dialog changes it at any time, with the music switching at once.  Two small in-place edits route
 the dialog's new buttons and value text into the rewritten routines; the dialog script with the
 new row is written beside the exe for the three campaign modes (exp\\, dc\\ and ozi_ns\\ copies
-of intrf_hd\\lopte - at 640x480 intrface\\lopme, because the exe would otherwise read the
+of HD_<height>P\\lopte - at 640x480 intrface\\lopme, because the exe would otherwise read the
 original's own exp\\intrface\\lopte).
 
 REQUIRES the eight tracks from the repository (encoded from the CD images at 192 kbit/s, 32 MB):
@@ -903,7 +913,7 @@ line" instruction becomes a call to a 17-byte stub that also leaves a "new line"
 34-byte helper plays the sound when the display finds that mark.  Stub and helper live in the 75
 bytes the "fast screen loads" fix (palette) frees inside the palette conversion, which is
 therefore required.  No absolute addresses are written, so the .reloc table is unchanged.  The six
-lines themselves are data: the HUD script INTRF_HD\\MAINE written with the display fix gets
+lines themselves are data: the HUD script HD_<height>P\\MAINE written with the display fix gets
 in_text 207..210 above the two stock chat lines (15 rows apart); the stock 640x480 MAINE keeps two.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
@@ -916,10 +926,10 @@ at start-up and by the PLAY INTRO button; the linker aligned the next string to 
 "intro.avi" plus its two padding zeros is exactly the 12 bytes of "dcintro.avi" - rewritten in
 place, same address, no code and no relocation entry changes.  The two campaign endings are not in
 the exe at all: line 154 of the campaign lists HSCENE.TXT / GSCENE.TXT names them, and the patched exe
-reads those lists from INTRF_HD/ (fix "Interface data from INTRF_HD"), where they say
+reads those lists from HD_<height>P/ (fix "Interface data from INTRF_HD"), where they say
 "avi/dchending.avi" / "avi/dcaending.avi" in the repository.  The stock GAMESTAT/ lists that the
 untouched exe reads keep the stock names.  REQUIRES the three AVI files DCINTRO.AVI, DCAENDING.AVI,
-DCHENDING.AVI in the AVI folder next to the exe (the two INTRF_HD lists come with the "Interface
+DCHENDING.AVI in the AVI folder next to the exe (the two HD_<height>P lists come with the "Interface
 data from INTRF_HD" fix).  Dark Colony only: the Council Wars exe's intro.avi is its own intro.'''),
  dict(id='sounds', name='WAV files read from the game root, not exp/: the Classic briefings and water ambience (Dark Colony only)', date='19 Sep 2026',
       tool='tools/patch_wavprefix.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.21', blocks=blocks_sounds, classic_only=True,
@@ -964,7 +974,7 @@ the training missions and the encyclopedia are all compiled in - and the Council
 the complete Classic data set, so a fourth mode with a prefix that matches nothing ("dc/", which
 holds only the patched menu script) makes every file a Classic campaign opens fall through to the
 Classic data in the game root: the 106-type GAMESTAT/GAMESTAT.TXT, the briefings in MISSION/,
-SCENARIO/HUMAN and ALIEN, INTRF_HD/HSCENE.TXT and GSCENE.TXT and the SAVE/ folder the Classic exe
+SCENARIO/HUMAN and ALIEN, HD_<height>P/HSCENE.TXT and GSCENE.TXT and the SAVE/ folder the Classic exe
 itself uses.  Two buttons are added for it:
   * the menu's accepted-id filter (`cmp edx,5`) becomes `cmp edx,7`, which admits the button ids
     6 and 7 - the first free ids; the main-menu script moves the two LARGEBUTTON plates that used
@@ -994,8 +1004,8 @@ itself uses.  Two buttons are added for it:
     cluster - logo, title, box, buttons - sits 15 rows higher than the letterbox rule at the HD
     sizes (same day; 0 at 1280x720, where the DC logo already touches the planet's crescent).
 REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/animate/tranozi.fin,
-exp/sprites/tranozi.spr, dc/intrf_hd/bintroe and the rewritten main-menu script
-(exp/intrf_hd/bintroe) from the repository.  Because the .reloc insert shifts every later
+exp/sprites/tranozi.spr, dc/HD_<height>P/bintroe and the rewritten main-menu script
+(exp/HD_<height>P/bintroe) from the repository.  Because the .reloc insert shifts every later
 relocation entry, this patch is always applied last.'''),
  # ---- map editor (maped.exe): the functional part of the ozi_ns editor, without its Polish resources
  dict(id='blocksets', name='New Map: Atlantis, Training and Special block sets selectable', date='15 Sep 2026', tool='tools/patch_maped.py --fix blocksets',
@@ -1174,7 +1184,7 @@ What is changed in the exe:
     seven NOP bytes at the end of the menu's id chain become a jump into the section (ids other than
     8 return to the menu loop as before).  Nothing else in the code changes.
 
-Data: the screen script INTRF_HD\ONLINE (INTRFACE\ONLINE at 640x480) is derived from LOADGE by
+Data: the screen script HD_<height>P\\ONLINE (INTRFACE\ONLINE at 640x480) is derived from LOADGE by
 this script (list widened to 56 columns, header and status lines, ENTER / BACK), and
 DEFAULT_SERVER.TXT is written beside the exe when it is missing - an existing file is never
 overwritten, so your own relay address stays.  The appended bytes are written below in Base64 with
@@ -1782,6 +1792,52 @@ function Get-EditCount($Patch) { $n = 0; foreach ($e in $Patch.Edits) { $n++ }; 
 
 # --- screen resolutions (21 Sep 2026) -------------------------------------------------------------
 function Get-ModeSize([string] $Mode) { $p = $Mode -split 'x'; return @([int]$p[0], [int]$p[1]) }
+# The folder a resolution's interface set lives in (2 Oct 2026, maintainer: "absolutely isolate files for different
+# resolutions to their own folders, so resources are never mixed"): HD_<height>P, UW_ for the ultra-wide sizes - 8
+# characters, the length of the `intrface` the exe's path strings are rewritten in place with (hd_1080p/bintro).  The
+# patcher's inputs (the shipped pictures per size, the console banks) live in HD_SRC.  Every other size's folder is
+# deleted when a set is written (Remove-OtherInterfaceSets).
+function Get-HdFolder([string] $Mode) { $wh = Get-ModeSize $Mode; return ('{0}_{1:D4}P' -f $(if ($wh[0] * 2 -gt $wh[1] * 5) { 'UW' } else { 'HD' }), $wh[1]) }
+function Get-HdToken([string] $Mode) { return (Get-HdFolder $Mode).ToLower() }
+$HD_SRC = 'HD_SRC'
+$HD_FOLDER_RE = [regex] '^(?i)(HD|UW)_\d{4}P$'
+# the copies the 640x480 build reads (fixes movies / ozi / music / online at the original size)
+$STOCK_COPIES = @('exp\intrface\bintoze', 'dc\intrface\bintoze', 'ozi_ns\intrface\bintoze', 'exp\intrface\lopme', 'dc\intrface\lopme', 'ozi_ns\intrface\lopme',
+                  'GAMESTAT\HSCNDC.TXT', 'GAMESTAT\GSCNDC.TXT', 'INTRFACE\ONLINE', 'INTRFACE\ONLINEBG.GIF')
+
+# What a run for $Keep (a folder name, or '' for a 640x480 build) deletes: every other resolution's folder under the
+# game folder and under exp\, dc\, ozi_ns\ (HD_*P / UW_*P and the pre-October INTRF_HD / intrf_hd), plus - for an
+# HD build - the 640x480 copies.  Returns the paths relative to $GameDir.
+function Get-OtherInterfaceSets([string] $GameDir, [string] $Keep) {
+    $out = @()
+    if (-not $GameDir -or -not (Test-Path -LiteralPath $GameDir)) { return $out }
+    foreach ($sub in '', 'exp', 'dc', 'ozi_ns') {
+        $d = if ($sub) { Join-Path $GameDir $sub } else { $GameDir }
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        foreach ($f in [System.IO.Directory]::GetDirectories($d)) {
+            $name = [System.IO.Path]::GetFileName($f)
+            if ($name -ieq $Keep -and $Keep) { continue }
+            if ($HD_FOLDER_RE.IsMatch($name) -or $name -ieq 'INTRF_HD') { $out += $(if ($sub) { "$sub\$name" } else { $name }) }
+        }
+    }
+    if ($Keep) { foreach ($rel in $STOCK_COPIES) { if (Test-Path -LiteralPath (Join-Path $GameDir $rel)) { $out += $rel } } }
+    return $out
+}
+function Remove-OtherInterfaceSets([string] $GameDir, [string] $Keep) {
+    $lines = @()
+    foreach ($rel in @(Get-OtherInterfaceSets $GameDir $Keep)) {
+        $p = Join-Path $GameDir $rel
+        if ([System.IO.Directory]::Exists($p)) {
+            $n = @([System.IO.Directory]::GetFiles($p, '*', 'AllDirectories')).Count
+            [System.IO.Directory]::Delete($p, $true)
+            $lines += ('deleted {0}\ ({1} files - another resolution''s interface set; nothing of another size is left)' -f $rel, $n)
+        } elseif ([System.IO.File]::Exists($p)) {
+            [System.IO.File]::Delete($p)
+            $lines += ('deleted {0} (a 640x480 copy)' -f $rel)
+        }
+    }
+    return $lines
+}
 function Get-Gcd([int] $a, [int] $b) { while ($b) { $t = $a % $b; $a = $b; $b = $t }; return $a }
 
 # "4:3", "5:4", "16:9", "16:10" - 8:5 is what everyone calls 16:10, and 1366x768 counts as 16:9
@@ -1958,12 +2014,12 @@ function Write-LoadingScreens([string] $GameDir, [string] $Mode) {
     $wh = Get-ModeSize $Mode; $W = $wh[0]; $H = $wh[1]
     foreach ($name in 'LOAD.BMP', 'LOAD2.BMP') {
         $src = Join-Path $GameDir ('INTRFACE\' + $name)
-        $dst = Join-Path $GameDir ('INTRF_HD\' + $name)
+        $dst = Join-Path $GameDir ((Get-HdFolder $Mode) + '\' + $name)
         $have = if (Test-Path -LiteralPath $dst) { Get-BmpSize $dst } else { $null }
         if ($have -and $have[0] -eq $W -and $have[1] -eq $H) { continue }
         if (-not (Test-Path -LiteralPath $src)) {
             # only reachable with -IgnoreMissingData (the stock pair is in the fix's Data list)
-            $lines += ('INTRF_HD\{0} NOT written: the stock INTRFACE\{0} is not in this folder' -f $name)
+            $lines += ('{1}\{0} NOT written: the stock INTRFACE\{0} is not in this folder' -f $name, (Get-HdFolder $Mode))
             continue
         }
         $s = [System.IO.File]::ReadAllBytes($src)
@@ -2358,7 +2414,7 @@ function Find-CI([string] $Folder, [string] $Name) {     # case-insensitive file
 
 $SIZE2 = [regex] '(?m)^([ \t]*)size([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$'
 $SIZE4 = [regex] '(?m)^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)([ \t]*\r?)$'
-$BACKGROUND = [regex] '(?im)^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)'
+$BACKGROUND = [regex] '(?im)^[ \t]*background[ \t]+(?:intrface/|intrf_hd/|(?:hd|uw)_\d{4}p/)?(\S+)'
 $BG_RETARGET = [regex] '(?im)^([ \t]*background[ \t]+)intrface/(\S+)'
 $PIC_RETARGET = [regex] '(?im)^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b'          # the console-style banks INTRF_HD\MAINBUT.SPR / POPP.SPR (doc 10.49)
 $TAB_STRIP = [regex] '(?m)^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)(?:110|124|120)([ \t]+)(?:12|16)(?=\s)'
@@ -2562,9 +2618,9 @@ function Edit-SceneList([string] $Text, [int] $dx, [int] $dy) {
 # hud_console.apply: MAINE's `pictures intrface/mainbut` and the four battlefield dialogs' `pictures intrface/popp`
 # -> `intrf_hd/...`, the console-style banks that ship in INTRF_HD (the stock banks stay for the original exe)
 # $Console $false (the light theme) keeps `pictures intrface/mainbut|popp` = the stock metal banks
-function Set-BackgroundHd([string] $Text, [bool] $Console = $true) {
-    $t = $BG_RETARGET.Replace($Text, '$1intrf_hd/$2')
-    if ($Console) { $t = $PIC_RETARGET.Replace($t, '$1intrf_hd/$2') }
+function Set-BackgroundHd([string] $Text, [bool] $Console = $true, [string] $Token = 'intrf_hd') {
+    $t = $BG_RETARGET.Replace($Text, ('$1' + $Token + '/$2'))                 # the GIFs sit in the resolution's folder
+    if ($Console) { $t = $PIC_RETARGET.Replace($t, ('$1' + $HD_SRC.ToLower() + '/$2')) }   # the console banks ship once, in HD_SRC
     return $t
 }
 
@@ -2785,10 +2841,16 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
     $dx0 = [int][Math]::Floor(($W - 640) / 2); $dy0 = [int][Math]::Floor(($H - 480) / 2)
     $lines = @()
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $intrface = Join-Path $GameDir 'INTRFACE'; $hd = Join-Path $GameDir 'INTRF_HD'; $gamestat = Join-Path $GameDir 'GAMESTAT'
-    $src = Join-Path $hd $Mode
+    $folder = Get-HdFolder $Mode; $token = Get-HdToken $Mode
+    $intrface = Join-Path $GameDir 'INTRFACE'; $hd = Join-Path $GameDir $folder; $gamestat = Join-Path $GameDir 'GAMESTAT'
+    $src = Join-Path (Join-Path $GameDir $HD_SRC) $Mode
     $frame = if ($Console) { 'INTRFACE.GIF' } else { 'INTRFACE_LIGHT.GIF' }
-    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', $frame) { if (-not (Find-CI $src $need)) { throw "INTRF_HD\$Mode\$need is missing: the painted backdrops and HUD frames for $Mode ship with the game and cannot be generated" } }
+    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', $frame) { if (-not (Find-CI $src $need)) { throw "$HD_SRC\$Mode\$need is missing: the painted backdrops and HUD frames for $Mode ship with the game and cannot be generated" } }
+    # the maintainer's rule (2 Oct 2026): no file of another resolution stays anywhere - every other size's folder, the
+    # pre-October INTRF_HD set and the 640x480 copies go, and this size's folder is rebuilt from scratch
+    $lines += Remove-OtherInterfaceSets $GameDir $folder
+    if (Test-Path -LiteralPath $hd) { [System.IO.Directory]::Delete($hd, $true) }
+    [void] [System.IO.Directory]::CreateDirectory($hd)
     Initialize-GifCodec
     $written = 0
     $introScreens = @('bintroe', 'introe', 'buttonse', 'dintroe')
@@ -2810,21 +2872,21 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
             if ($x -eq 0 -and $y -eq 0) { continue }
             # a sub-window dialog: rect and widgets +(dx,dy); `pictures intrface/popp` -> the console plates in INTRF_HD,
             # then the console layout (list window, scroll channel, framed text boxes; doc 10.53)
-            Write-Latin1 (Join-Path $hd $name) (Edit-DialogConsole (Set-BackgroundHd (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value)) $Console)); $written++
+            Write-Latin1 (Join-Path $hd $name) (Edit-DialogConsole (Set-BackgroundHd (Edit-PaddedScript $text $dx0 $dy0 @(($x + $dx0), ($y + $dy0), [int]$m4.Groups[5].Value, [int]$m4.Groups[6].Value)) $Console $token)); $written++
             continue
         }
         if ($m4.Success -or -not $m2.Success -or -not $bg.Success) { continue }
         if ($lname -eq 'maine') {
-            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-HudScript $text $W $H $Console) $Console); $written++
+            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-HudScript $text $W $H $Console) $Console $token); $written++
             continue
         }
         $gif = Find-CI $intrface ($bg.Groups[1].Value + '.GIF')
         if (-not $gif) { continue }
         if ($introScreens -contains $lname) {
-            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-IntroScript $text $W $H)); $written++
+            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-IntroScript $text $W $H) $true $token); $written++
         } else {
             $gs = [DcGif]::Size([System.IO.File]::ReadAllBytes($gif))
-            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-PaddedScript $text ([int][Math]::Floor(($W - $gs[0]) / 2)) ([int][Math]::Floor(($H - $gs[1]) / 2)) @(0, 0, $W, $H))); $written++
+            Write-Latin1 (Join-Path $hd $name) (Set-BackgroundHd (Edit-PaddedScript $text ([int][Math]::Floor(($W - $gs[0]) / 2)) ([int][Math]::Floor(($H - $gs[1]) / 2)) @(0, 0, $W, $H)) $true $token); $written++
         }
         $gifsToPad[[System.IO.Path]::GetFileName($gif).ToUpper()] = $gif
     }
@@ -2834,7 +2896,7 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
         $gifsToPad.Remove($shipped)
         [System.IO.File]::Copy((Find-CI $src $shipped), (Join-Path $hd $shipped), $true); $written++
     }
-    # the HUD frame of the chosen theme becomes INTRF_HD\INTRFACE.GIF (the name the HUD script reads)
+    # the HUD frame of the chosen theme becomes <folder>\INTRFACE.GIF (the name the HUD script reads)
     $gifsToPad.Remove('INTRFACE.GIF'); $gifsToPad.Remove('INTRFACE_LIGHT.GIF')
     [System.IO.File]::Copy((Find-CI $src $frame), (Join-Path $hd 'INTRFACE.GIF'), $true); $written++
     $backdrop = [System.IO.File]::ReadAllBytes((Find-CI $src 'BACKDROP.GIF'))
@@ -2860,8 +2922,9 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
     }
     # --- loading screens
     $lines += Write-LoadingScreens $GameDir $Mode
-    # --- Council Wars: exp\intrface overrides -> exp\intrf_hd, and the OZI overlay's copies
-    $expI = Join-Path $GameDir 'exp\intrface'; $expG = Join-Path $GameDir 'exp\gamestat'; $expHd = Join-Path $GameDir 'exp\intrf_hd'
+    # --- Council Wars: exp\intrface overrides -> exp\<folder>, and the OZI overlay's copies
+    $expI = Join-Path $GameDir 'exp\intrface'; $expG = Join-Path $GameDir 'exp\gamestat'; $expHd = Join-Path $GameDir ('exp\' + $folder)
+    if ((Test-Path -LiteralPath $expI) -and -not (Test-Path -LiteralPath $expHd)) { [void] [System.IO.Directory]::CreateDirectory($expHd) }
     $expWritten = 0
     if (Test-Path -LiteralPath $expI) {
         foreach ($nm in 'bintroe', 'introe', 'shumane') {
@@ -2872,9 +2935,9 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
                 $bg = $BACKGROUND.Match($text)
                 $gif = if ($bg.Success) { Find-CI $intrface ($bg.Groups[1].Value + '.GIF') } else { $null }
                 $gs = if ($gif) { [DcGif]::Size([System.IO.File]::ReadAllBytes($gif)) } else { @(640, 480) }
-                $t = Set-BackgroundHd (Edit-PaddedScript $text ([int][Math]::Floor(($W - $gs[0]) / 2)) ([int][Math]::Floor(($H - $gs[1]) / 2)) @(0, 0, $W, $H))
+                $t = Set-BackgroundHd (Edit-PaddedScript $text ([int][Math]::Floor(($W - $gs[0]) / 2)) ([int][Math]::Floor(($H - $gs[1]) / 2)) @(0, 0, $W, $H)) $true $token
             } else {
-                $t = Set-BackgroundHd (Edit-IntroScript $text $W $H (Get-MenuLift $H))   # the Council Wars cluster sits higher
+                $t = Set-BackgroundHd (Edit-IntroScript $text $W $H (Get-MenuLift $H)) $true $token   # the Council Wars cluster sits higher
                 if ($nm -eq 'bintroe') { $t = Edit-OziMenu $t }
             }
             Write-Latin1 (Join-Path $expHd ([System.IO.Path]::GetFileName($p))) $t; $expWritten++
@@ -2889,12 +2952,12 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
     $dcWritten = 0
     $dcSrc = Find-CI $expHd 'bintroe'
     if ($dcSrc -and $expWritten -gt 0) {
-        $dcHd = Join-Path $GameDir 'dc\intrf_hd'
+        $dcHd = Join-Path $GameDir ('dc\' + $folder)
         if (-not (Test-Path -LiteralPath $dcHd)) { New-Item -ItemType Directory -Path $dcHd -Force | Out-Null }
         [System.IO.File]::Copy($dcSrc, (Join-Path $dcHd 'bintroe'), $true); $dcWritten++
     }
     $oziWritten = 0
-    $ozi = Join-Path $GameDir 'ozi_ns'; $oziHd = Join-Path $ozi 'intrf_hd'; $oziG = Join-Path $ozi 'gamestat'
+    $ozi = Join-Path $GameDir 'ozi_ns'; $oziHd = Join-Path $ozi $folder; $oziG = Join-Path $ozi 'gamestat'
     if ((Test-Path -LiteralPath $ozi) -and $expWritten -gt 0) {
         foreach ($nm in 'bintroe', 'introe', 'shumane') {
             $p = Find-CI $expHd $nm
@@ -2905,9 +2968,9 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Movies, [
             if ($p) { Write-Latin1 (Join-Path $oziHd $ln) (Edit-SceneList (Read-Latin1 $p) $dx0 $dy0); $oziWritten++ }
         }
     }
-    $lines += ('interface set for {0} ({6} battlefield interface) written: INTRF_HD\ {1} files{2}{3}{4} ({5:N1} s, GIFs re-encoded by the compiled DcGif codec)' -f $Mode, $written,
-               $(if ($expWritten) { ", exp\intrf_hd\ $expWritten" } else { '' }), $(if ($dcWritten) { ", dc\intrf_hd\ $dcWritten" } else { '' }),
-               $(if ($oziWritten) { ", ozi_ns\intrf_hd\ $oziWritten" } else { '' }), $sw.Elapsed.TotalSeconds, $(if ($Console) { 'dark' } else { 'light' }))
+    $lines += ('interface set for {0} ({6} battlefield interface) written into its own folder: {7}\ {1} files{2}{3}{4} ({5:N1} s, GIFs re-encoded by the compiled DcGif codec)' -f $Mode, $written,
+               $(if ($expWritten) { ", exp\$folder\ $expWritten" } else { '' }), $(if ($dcWritten) { ", dc\$folder\ $dcWritten" } else { '' }),
+               $(if ($oziWritten) { ", ozi_ns\$folder\ $oziWritten" } else { '' }), $sw.Elapsed.TotalSeconds, $(if ($Console) { 'dark' } else { 'light' }), $folder)
     return $lines
 }
 
@@ -3011,7 +3074,7 @@ function Get-TextButton([int] $n, [int] $x, [int] $y, [int] $w, [int] $cell, [in
     return ('pushb    {0}  0  {1}  {2}   {3}  26  -11 {4}  label centre {5} 2  -  remap 0' -f $n, $x, $y, $w, $cell, $msg)
 }
 function Edit-DialogConsole([string] $Text) {
-    if (-not [regex]::IsMatch($Text, '(?im)^[ \t]*pictures[ \t]+intrf_hd/popp\b')) { return $Text }
+    if (-not [regex]::IsMatch($Text, '(?im)^[ \t]*pictures[ \t]+(?:intrf_hd|hd_src)/popp\b')) { return $Text }
     $lines = $Text.Split("`n")
     $rec = @{}
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -3225,11 +3288,11 @@ function Edit-DialogConsole([string] $Text) {
 # DARK COLONY mode's overlay and is created if needed; ozi_ns\ only when the OZI data is there.
 function Write-MusicDialogs([string] $GameDir, [string] $Mode) {
     $stock = ($Mode -eq '640x480')
-    $src = if ($stock) { Find-CI (Join-Path $GameDir 'INTRFACE') 'LOPTE' } else { Find-CI (Join-Path $GameDir 'INTRF_HD') 'LOPTE' }
+    $src = if ($stock) { Find-CI (Join-Path $GameDir 'INTRFACE') 'LOPTE' } else { Find-CI (Join-Path $GameDir (Get-HdFolder $Mode)) 'LOPTE' }
     if (-not $src) { return @('options dialog copies NOT written: LOPTE is missing') }
     $t = Edit-DialogConsole (Edit-MusicDialog (Read-Latin1 $src))
     $name = if ($stock) { 'lopme' } else { 'lopte' }
-    $sub = if ($stock) { 'intrface' } else { 'intrf_hd' }
+    $sub = if ($stock) { 'intrface' } else { Get-HdFolder $Mode }
     $lines = @()
     foreach ($root in 'exp', 'dc', 'ozi_ns') {
         if ($root -eq 'ozi_ns' -and -not (Test-Path -LiteralPath (Join-Path $GameDir $root))) { continue }
@@ -3292,7 +3355,7 @@ $DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server that ONL
 
 function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     $stock = ($Mode -eq '640x480')
-    $sub = if ($stock) { 'INTRFACE' } else { 'INTRF_HD' }
+    $sub = if ($stock) { 'INTRFACE' } else { Get-HdFolder $Mode }
     $src = Find-CI (Join-Path $GameDir $sub) 'LOADGE'
     if (-not $src) { return @('ONLINE screen NOT written: LOADGE is missing') }
     $t = Edit-OnlineScript (Read-Latin1 $src)
@@ -3395,7 +3458,7 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     if ($Mode -and $Mode -ne '640x480' -and ($ordered | Where-Object { $_.ContainsKey('SetSources') })) {
         $movies = [bool] ($ordered | Where-Object { $_.Id -eq 'movies' })
         $console = [bool] ($ordered | Where-Object { $_.Id -eq 'console' })
-        if ($Progress) { & $Progress ("Writing the {0} interface set ({1} battlefield interface) into INTRF_HD (scripts, backgrounds, loading screens) - this takes a few seconds..." -f $Mode, $(if ($console) { 'dark' } else { 'light' })) }
+        if ($Progress) { & $Progress ("Writing the {0} interface set ({1} battlefield interface) into {2} (scripts, backgrounds, loading screens; other resolutions' folders are deleted) - this takes a few seconds..." -f $Mode, $(if ($console) { 'dark' } else { 'light' }), (Get-HdFolder $Mode)) }
         try {
             $generated = @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies $console)
         } catch {
@@ -3404,6 +3467,8 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     }
     if ($Mode -eq '640x480') {
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
+        # the original size reads the stock files: every HD folder (and the pre-October INTRF_HD) goes (maintainer's rule, 2 Oct 2026)
+        try { $generated += Remove-OtherInterfaceSets $dir '' } catch { $generated += ('interface folders NOT deleted: ' + $_.Exception.Message) }
         if ($ordered | Where-Object { $_.Id -eq 'movies' }) { try { $generated += Write-StockEndingLists $dir } catch { $generated += 'GAMESTAT lists NOT written: ' + $_.Exception.Message } }
         if ($ordered | Where-Object { $_.Id -eq 'ozi' })    { try { $generated += Write-StockOziMenu $dir } catch { $generated += 'bintoze NOT written: ' + $_.Exception.Message } }
     }
@@ -3503,7 +3568,7 @@ function Get-RequirementLines($Build, $Patch) {
     }
     if ($Patch.Theme) { $lines += ('only with the {0} battlefield interface (chosen together with the resolution)' -f $Patch.Theme) }
     if ($Patch.ContainsKey('SetSources')) {
-        $lines += 'writes the INTRF_HD interface set for this resolution (scripts, briefing lists, letterboxed backgrounds on the shipped BACKDROP.GIF in a grey panel frame, loading screens; exp\intrf_hd and ozi_ns\intrf_hd too) from the stock files and the four shipped pictures - the GIF codec is C# source in this file, compiled by Add-Type (see the INTERFACE SET section)'
+        $lines += 'writes the interface set for this resolution into its own folder HD_<height>P (scripts, briefing lists, letterboxed backgrounds on the shipped BACKDROP.GIF in a grey panel frame, loading screens; exp\, dc\ and ozi_ns\ copies too) from the stock files and the shipped pictures in HD_SRC\<WxH>, and DELETES every other resolution''s folder first - the GIF codec is C# source in this file, compiled by Add-Type (see the INTERFACE SET section)'
     }
     return $lines
 }
@@ -3664,7 +3729,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $pRes.Location = '0,66'; $pRes.Size = '984,580'; $pRes.Visible = $false
     $lblResIntro = New-Object System.Windows.Forms.Label
     $lblResIntro.Location = '24,14'; $lblResIntro.Size = '936,36'
-    $lblResIntro.Text = ('These three choices are made once, here, for both games (they share the INTRF_HD interface folder); you can come back ' +
+    $lblResIntro.Text = ('These three choices are made once, here, for both games (they share the interface folder of the chosen size); you can come back ' +
                          'to this page with "< Back".  The executables published in the repository are the 1024x768 build with the dark interface.')
     $lblResL = New-Object System.Windows.Forms.Label
     $lblResL.Text = 'Screen resolution:'; $lblResL.Location = '40,62'; $lblResL.AutoSize = $true; $lblResL.Font = $bold
@@ -3677,8 +3742,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $lblResNote.Location = '40,112'; $lblResNote.Size = '920,54'; $lblResNote.ForeColor = [System.Drawing.Color]::DimGray
     $lblResNote.Text = ('640x480 (original) is the game as it shipped: no display fix, the stock menus and HUD, every other fix applied.  The sizes with ' +
                         'the aspect ratio of your monitor are marked "recommended for your screen".  Any other size selects that size''s display fix ' +
-                        '(screen mode, map view, menus, HUD, movie frame, INTRF_HD data, clock hand - one fix per size) and makes the patcher WRITE the ' +
-                        'INTRF_HD interface set for it into the game folder (a few seconds).')
+                        '(screen mode, map view, menus, HUD, movie frame, interface data, clock hand - one fix per size) and makes the patcher WRITE the ' +
+                        'interface set for it into its own folder in the game folder (HD_0768P for 1024x768, HD_1080P for 1920x1080 ...; a few seconds) - ' +
+                        'and DELETE the folders of every other resolution, so that no file of another size is left anywhere.')
     $lblThemeL = New-Object System.Windows.Forms.Label
     $lblThemeL.Text = 'Battlefield interface:'; $lblThemeL.Location = '40,180'; $lblThemeL.AutoSize = $true; $lblThemeL.Font = $bold
     $rbLight = New-Object System.Windows.Forms.RadioButton
@@ -4318,7 +4384,13 @@ function Show-PatcherWindow([string] $PreloadPath) {
                     $lines += ('{0,-24}   left out: {1} ({2})' -f '', $p.Name, $why)
                 }
                 if ($mode -and $mode -ne '640x480' -and ($chosen | Where-Object { $_.ContainsKey('SetSources') })) {
-                    $lines += ('{0,-24} writes the {1} interface set ({2} battlefield interface) into INTRF_HD\ (and exp\intrf_hd\, ozi_ns\intrf_hd\ for Dark Colony Ultimate)' -f '', $mode, (Get-GuiTheme $b))
+                    $folder = Get-HdFolder $mode
+                    $lines += ('{0,-24} writes the {1} interface set ({2} battlefield interface) into {3}\ (and exp\{3}\, ozi_ns\{3}\ for Dark Colony Ultimate)' -f '', $mode, (Get-GuiTheme $b), $folder)
+                    $gone = @(Get-OtherInterfaceSets (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) $folder)
+                    if ($gone.Count -gt 0) { $lines += ('{0,-24} DELETES the interface files of other resolutions: {1}' -f '', ($gone -join ', ')) }
+                } elseif ($mode -eq '640x480') {
+                    $gone = @(Get-OtherInterfaceSets (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) '')
+                    if ($gone.Count -gt 0) { $lines += ('{0,-24} DELETES the interface folders of the HD resolutions: {1}' -f '', ($gone -join ', ')) }
                 }
                 if (Test-Path -LiteralPath $it.Out) { $lines += ('{0,-24} REPLACES the existing {1}' -f '', (Split-Path -Leaf $it.Out)) }
             }
@@ -4366,8 +4438,19 @@ function Show-PatcherWindow([string] $PreloadPath) {
             return $null
         }
         $existing = @($todo | Where-Object { Test-Path -LiteralPath $_.Out } | ForEach-Object { $_.Out })
-        if ($existing.Count -gt 0 -and $interactive) {
-            $answer = [System.Windows.Forms.MessageBox]::Show($c.Form, ("These files exist and will be replaced:`r`n`r`n" + ($existing -join "`r`n") + "`r`n`r`nReplace them?"), 'Replace files?', 'YesNo', 'Question')
+        # the interface files of other resolutions that this run deletes (maintainer's rule, 2 Oct 2026)
+        $gone = @()
+        foreach ($it in $todo) {
+            if (@($it.Build.Modes).Count -eq 0) { continue }
+            $m = Get-GuiMode $it.Build
+            $keep = if ($m -and $m -ne '640x480') { Get-HdFolder $m } else { '' }
+            foreach ($x in @(Get-OtherInterfaceSets (Split-Path -Parent ([System.IO.Path]::GetFullPath($it.Out))) $keep)) { if ($gone -notcontains $x) { $gone += $x } }
+        }
+        if (($existing.Count -gt 0 -or $gone.Count -gt 0) -and $interactive) {
+            $q = ''
+            if ($existing.Count -gt 0) { $q += "These files exist and will be replaced:`r`n`r`n" + ($existing -join "`r`n") + "`r`n`r`n" }
+            if ($gone.Count -gt 0) { $q += "These interface files of OTHER resolutions will be deleted from the game folder (nothing of another size may stay):`r`n`r`n" + ($gone -join "`r`n") + "`r`n`r`n" }
+            $answer = [System.Windows.Forms.MessageBox]::Show($c.Form, ($q + 'Continue?'), 'Replace and delete files?', 'YesNo', 'Question')
             if ($answer -ne 'Yes') { return $null }
         }
         # the "in progress" box: an owned, unclosable form with the current step and a marquee bar

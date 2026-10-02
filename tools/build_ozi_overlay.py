@@ -81,7 +81,8 @@ SKIP_FILES = {'anim.dat', 'telp.fin', 'sound/sound2.dat', 'intrface/maine', 'int
 CREDITS = 'intrface/credits.txt'
 SKIP_SUFFIXES = ('.bak', '.med')
 UI_FROM_EXP = ('bintroe', 'shumane', 'introe')
-HD_DIR = 'intrf_hd'                 # 1024x768 screens and briefing lists (split_hd_data.py / patch_hd_paths.py)
+HD_DIR = 'intrf_hd'                 # the legacy name; main() replaces it with the folder found under exp\ (HD_<height>P, 2 Oct 2026) or --hd-folder
+import hdfolder
 OVERLAY = 'ozi_ns'
 SAVEDIR = 'ozisave'
 LABEL_OLD, LABEL_NEW = b'PLAY INTRO', b'OZI MISSIONS'
@@ -574,8 +575,12 @@ def main(argv=None):
     ap.add_argument('game', help='the "DC - Council wars" folder')
     ap.add_argument('--pack', help='the pack folder (default: <game>/../../OZI_NS/M1PACK, i.e. beside the game repo)')
     ap.add_argument('--apply', action='store_true', help='write; default is a dry run')
+    ap.add_argument('--hd-folder', help='the per-resolution interface folder (default: the one found under exp\\)')
     a = ap.parse_args(argv)
     game = os.path.abspath(a.game)
+    global HD_DIR
+    found = hdfolder.find_hd_folder(os.path.join(game, 'exp'))
+    HD_DIR = a.hd_folder or (os.path.basename(found) if found else HD_DIR)
     pack = os.path.abspath(a.pack or os.path.join(game, os.pardir, os.pardir, 'OZI_NS', 'M1PACK'))
     for p in (game, pack, os.path.join(game, 'exp', 'anim.dat')):
         if not os.path.exists(p):

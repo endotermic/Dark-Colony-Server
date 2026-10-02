@@ -24,12 +24,15 @@ CLI
     python patch_hd_paths.py apply  EXE          (writes EXE.hdpaths.bak first)
 """
 
-import argparse
+import argparse, re
+import hdfolder
 import shutil
 import struct
 import sys
 
-NEW_DIR = b'intrf_hd'
+NEW_DIR = b'intrf_hd'      # the legacy shared folder (14 Sep - 1 Oct 2026); since 2 Oct 2026 the resolution's own folder,
+                           # hdfolder.hd_token(width, height) = hd_0768p, hd_1080p, uw_1080p ... (set by main from --width/--height or --folder)
+DIR_PATTERN = rb'(intrface|gamestat|intrf_hd|(?:hd|uw)_[0-9]{4}p)'
 # exe string (without the trailing NUL) -> what the game opens with it
 REDIRECT = [
     ('intrface/bintro', 'main menu script BINTROE (+ language letter e)'),
@@ -87,18 +90,15 @@ def find_sites(data):
     out = []
     for s, what in REDIRECT:
         stock = s.encode() + b'\0'
-        patched = NEW_DIR + stock[8:]
-        hits = [(dgroup.find(stock), 'stock'), (dgroup.find(patched), 'patched')]
-        hits = [(o, st) for o, st in hits if o >= 0]
-        for needle in (stock, patched):
-            if dgroup.count(needle) > 1:
-                raise SystemExit('%r occurs %d times in DGROUP' % (needle, dgroup.count(needle)))
+        rest = stock[8:]                       # "/bintro\0": the part after the 8-byte directory
+        pat = re.compile(DIR_PATTERN + re.escape(rest))
+        # a whole string (the byte before is a NUL or the section start), in the stock form or pointing at any
+        # interface folder a patcher ever wrote (intrf_hd, hd_0768p, ...)
+        hits = [(m.start(), m.group(1)) for m in pat.finditer(dgroup) if m.start() == 0 or dgroup[m.start() - 1] == 0]
         if len(hits) != 1:
-            raise SystemExit('expected exactly one of %r / %r in DGROUP, found %d' % (stock, patched, len(hits)))
-        off, state = hits[0]
-        # the byte before must be a NUL or the start of the section: a whole string, not a suffix
-        if off > 0 and dgroup[off - 1] != 0:
-            raise SystemExit('%r is not at a string start' % stock)
+            raise SystemExit('expected exactly one string "<dir>%s" in DGROUP, found %d' % (rest[:-1].decode(), len(hits)))
+        off, d = hits[0]
+        state = 'stock' if d in (b'intrface', b'gamestat') else 'patched' if d == NEW_DIR else 'other:' + d.decode()
         out.append((rptr + off, s, what, state))
     out.sort()
     return out, va - rptr
@@ -108,30 +108,42 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('command', choices=('verify', 'plan', 'apply'))
     ap.add_argument('exe')
+    ap.add_argument('--width', type=int, help='screen width: the folder is hdfolder.hd_token(width, height), e.g. hd_1080p')
+    ap.add_argument('--height', type=int, help='screen height')
+    ap.add_argument('--folder', help='the 8-character folder name explicitly (default without --width/--height: the legacy intrf_hd)')
     a = ap.parse_args(argv)
+    global NEW_DIR
+    if a.folder:
+        NEW_DIR = a.folder.lower().encode()
+    elif a.width and a.height:
+        NEW_DIR = hdfolder.hd_token(a.width, a.height).encode()
+    if len(NEW_DIR) != 8:
+        raise SystemExit('the interface folder name must have exactly 8 characters (in-place rewrite of the path strings): %r' % NEW_DIR)
     data = bytearray(open(a.exe, 'rb').read())
     sites, delta = find_sites(data)
     states = {st for _, _, _, st in sites}
+    others = sorted({st[6:] for st in states if st.startswith('other:')})
     state = 'stock (reads INTRFACE/, GAMESTAT/)' if states == {'stock'} else \
-        'patched (reads INTRF_HD/)' if states == {'patched'} else 'MIXED - %d of %d strings patched' % (
-            sum(1 for s in sites if s[3] == 'patched'), len(sites))
+        'patched (reads %s/)' % NEW_DIR.decode().upper() if states == {'patched'} else \
+        'pointing at another interface folder (%s/) - apply re-points them at %s/' % ('/, '.join(o.upper() for o in others), NEW_DIR.decode().upper()) if states == {'other:' + o for o in others} else \
+        'MIXED - %d of %d strings read %s/' % (sum(1 for s in sites if s[3] == 'patched'), len(sites), NEW_DIR.decode().upper())
     print('%s: interface paths %s' % (a.exe, state))
     if a.command == 'verify':
         return 0
     for off, s, what, st in sites:
         new = NEW_DIR.decode() + s[8:]
         print('  "%s" -> "%s"  file 0x%x VA 0x%x 8 bytes: %s%s'
-              % (s, new, off, off + delta + IMAGE_BASE, what, '' if st == 'stock' else '  [already patched]'))
+              % (s, new, off, off + delta + IMAGE_BASE, what, '' if st == 'stock' else '  [already patched]' if st == 'patched' else '  [points at %s]' % st[6:]))
     if a.command == 'plan':
         return 0
-    todo = [(off, s) for off, s, _, st in sites if st == 'stock']
+    todo = [(off, s) for off, s, _, st in sites if st != 'patched']
     if not todo:
         print('nothing to do')
         return 0
     bak = a.exe + '.hdpaths.bak'
     shutil.copyfile(a.exe, bak)
     for off, s in todo:
-        assert bytes(data[off:off + 8]) == s[:8].encode()
+        assert re.fullmatch(DIR_PATTERN, bytes(data[off:off + 8])), bytes(data[off:off + 8])
         data[off:off + 8] = NEW_DIR
     open(a.exe, 'wb').write(data)
     print('written %s (%d strings); backup %s' % (a.exe, len(todo), bak))

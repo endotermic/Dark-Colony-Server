@@ -8,7 +8,8 @@
  *
  *   1. the Dark Colony prefix mode and the music source ALL, exactly as MULTI PLAYER WAR does;
  *   2. reads DEFAULT_SERVER.TXT beside the exe (C/C++ comments, `host[:port]`, optional `plain`);
- *   3. shows the ONLINE WAR screen (the game's own interface engine, script `intrf_hd/onlin` or
+ *   3. shows the ONLINE WAR screen (the game's own interface engine, script `<folder>/onlin` - the
+ *      resolution's interface folder read from the exe's own loadg path string, e.g. hd_1080p - or
  *      `intrface/onlin`, derived from the LOAD GAME picker) with a status line;
  *   4. connects to the relay - TCP, then a TLS handshake through Windows Schannel unless `plain` -
  *      and sends 0x50 LIST; every 0x51 ROOMS fills the list, 0x53 REFUSED goes to the status line;
@@ -51,6 +52,9 @@
 #define GAME_MUSIC_SRC      0x5327F4   /* byte: 0 DC, 1 CW, 2 ALL (fix music)                     */
 #define GAME_UI_POOL_OFF    0x24       /* ui + 0x24 = the smalloc pool the screens live in         */
 #define GAME_GS_CAMPAIGN    0x14F0     /* gs + 0x14F0 = 2 for a network game (MULTI PLAYER WAR)   */
+#define GAME_LOADG_STRING   0x48234C   /* DGROUP "intrface/loadg": after fix resolution the 8-byte directory part names the
+                                          resolution's interface folder ("hd_1080p/loadg"; patch_hd_paths.py, doc 10.61) - the
+                                          ONLINE screen and its background live there too                                   */
 #define IAT_LOADLIBRARYA    0x4804B0
 #define IAT_GETPROCADDRESS  0x480480
 
@@ -853,9 +857,27 @@ static int open_loopback(unsigned short* port) {
 }
 
 /* ------------------------------------------------------------------ the screen */
-static const char SCRIPT_HD[] = "intrf_hd/onlin";
 static const char SCRIPT_STOCK[] = "intrface/onlin";
-static const char PROBE_HD[] = "intrf_hd\\ONLINE";
+static char g_script_hd[16];          /* "<folder>/onlin": the folder copied from the exe's loadg string */
+static char g_probe_hd[16];           /* "<folder>\\ONLINE" */
+
+/* The compiler must not fold "exe address - module address" into one relocated operand (patch_online.py rebases
+   only operands that point into the module): the exe string is read through a volatile pointer, unoptimised. */
+#pragma optimize("", off)
+static void init_screen_names(void) {
+    const char* volatile dir_p = (const char*)GAME_LOADG_STRING;
+    const char* dir = dir_p;
+    static const char tail_script[] = "/onlin", tail_probe[] = "\\ONLINE";
+    volatile char* s = g_script_hd;
+    volatile char* q = g_probe_hd;
+    int i;
+    for (i = 0; i < 8; i++) { s[i] = dir[i]; q[i] = dir[i]; }
+    for (i = 0; tail_script[i]; i++) s[8 + i] = tail_script[i];
+    s[8 + i] = 0;
+    for (i = 0; tail_probe[i]; i++) q[8 + i] = tail_probe[i];
+    q[8 + i] = 0;
+}
+#pragma optimize("", on)
 static const char POOL_NAME[] = "BMOnline";
 static const char LOOPBACK[] = "127.0.0.1";
 
@@ -874,8 +896,9 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
     empty[0] = "";
     g_room_count = 0; g_rx_len = 0; g_seq = 0;
     g_pool_mark(pool, POOL_NAME);
-    logf2("screen: ", file_exists(PROBE_HD) ? SCRIPT_HD : SCRIPT_STOCK);
-    ip = g_load_interface(ui, file_exists(PROBE_HD) ? SCRIPT_HD : SCRIPT_STOCK);
+    init_screen_names();
+    logf2("screen: ", file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK);
+    ip = g_load_interface(ui, file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK);
     g_draw(ip);
     logf("screen loaded");
     g_set_text(ip, W_HEADER, HEADER_TEXT);

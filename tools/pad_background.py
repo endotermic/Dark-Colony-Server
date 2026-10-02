@@ -75,7 +75,7 @@ import sys
 
 SIZE2 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)([ \t]+)(\d+)([ \t]*\r?)$', re.M)
 SIZE4 = re.compile(rb'^([ \t]*)size([ \t]+)(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)([ \t]*\r?)$', re.M)
-BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)', re.M | re.I)
+BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/|intrf_hd/|(?:hd|uw)_[0-9]{4}p/)?(\S+)', re.M | re.I)
 
 # Since 14 Sep 2026 the game folders hold the stock 640x480 files in INTRFACE / GAMESTAT and the
 # rebuilt 1024x768 files under the same names in INTRF_HD (Council Wars: exp/intrf_hd too), the
@@ -86,7 +86,8 @@ BACKGROUND = re.compile(rb'^[ \t]*background[ \t]+(?:intrface/|intrf_hd/)?(\S+)'
 # `background` lines.  `plan` / `verify` also accept an INTRF_HD folder directly: its GIFs are
 # looked up beside the scripts first and then in the sibling INTRFACE, its briefing lists are
 # the *SCENE.TXT files inside INTRF_HD itself.
-HD_DIR = 'intrf_hd'
+HD_DIR = 'intrf_hd'       # the legacy name; since 2 Oct 2026 hdfolder.is_hd_folder (HD_<height>P / UW_<height>P)
+import hdfolder
 
 # Widget kinds whose 4th and 5th fields are x and y: <kind> <number> <desc> <x> <y> <w> <h> ...
 # `label` (static text: "Choose race", "Type in a name for your leader", "Rank", "ENTER SESSION
@@ -204,7 +205,7 @@ def find_backdrop(intrface_dir, width, height):
     if os.path.basename(root).lower() == OVERRIDE_PARENT:
         root = os.path.dirname(root)
     cands = []
-    hd = next((os.path.join(root, fn) for fn in os.listdir(root) if fn.lower() == HD_DIR), None)
+    hd = next((os.path.join(root, fn) for fn in os.listdir(root) if hdfolder.is_hd_folder(fn)), None)
     if hd:
         cands.append(os.path.join(hd, '%dx%d' % (width, height), BACKDROP_GIF))
     for folder in [d] + base_intrface_dirs(intrface_dir):
@@ -300,8 +301,9 @@ def base_intrface_dirs(intrface_dir):
     parent = os.path.dirname(d)
     if os.path.basename(parent).lower() == OVERRIDE_PARENT:
         root = os.path.dirname(parent)
-        wanted = (HD_DIR, 'intrface')
-    elif os.path.basename(d).lower() == HD_DIR:
+        hd = hdfolder.find_hd_folder(root)
+        wanted = tuple(([os.path.basename(hd).lower()] if hd else []) + ['intrface'])
+    elif hdfolder.is_hd_folder(os.path.basename(d)):
         root = parent
         wanted = ('intrface',)
     else:
@@ -332,7 +334,7 @@ def find_gif(intrface_dir, name):
 def gamestat_dir(intrface_dir):
     """The sibling GAMESTAT folder, if this INTRFACE sits inside a game directory; an INTRF_HD
     folder holds its own (letterboxed) *SCENE.TXT copies."""
-    if os.path.basename(os.path.abspath(intrface_dir)).lower() == HD_DIR:
+    if hdfolder.is_hd_folder(os.path.basename(os.path.abspath(intrface_dir))):
         return os.path.abspath(intrface_dir)
     parent = os.path.dirname(os.path.abspath(intrface_dir))
     names = {fn.lower(): fn for fn in os.listdir(parent)}

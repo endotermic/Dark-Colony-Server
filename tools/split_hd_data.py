@@ -47,8 +47,9 @@ import os
 import re
 import sys
 
-HD_DIR = 'INTRF_HD'                      # sibling of INTRFACE, GAMESTAT (root) / of exp/intrface (Council Wars)
-HD_PREFIX = b'intrf_hd/'
+HD_DIR = 'INTRF_HD'      # replaced in main: the resolution's own folder (hdfolder.hd_folder), 2 Oct 2026
+import hdfolder                      # sibling of INTRFACE, GAMESTAT (root) / of exp/intrface (Council Wars)
+HD_PREFIX = b'intrf_hd/'                 # replaced by main() with HD_DIR's lower-case form (hd_0768p/ ...)
 SCENE_LISTS = ('hscene.txt', 'gscene.txt', 'htscene.txt', 'gtscene.txt', 'hxscene.txt', 'gxscene.txt')
 LOGO_BANKS = ('dcss', 'dcuk', 'dcut')     # SPRITES banks re-baked with the menu backdrop (paint_intro.py)
 DROP = {'dcss.spr', 'dcuk.spr', 'dcut.spr', 'multie~1.txt'}
@@ -221,16 +222,28 @@ def main(argv=None):
     ap.add_argument('command', choices=('plan', 'apply'))
     ap.add_argument('game', help='a game folder ("DC - Classic" or "DC - Council wars")')
     ap.add_argument('--stock', required=True, help='folder with the stock files in the same layout')
+    ap.add_argument('--hd-folder', help='the per-resolution folder (default: hdfolder.hd_folder of the size in the padded INTRFACE/MAINE)')
     a = ap.parse_args(argv)
     game, stock = os.path.abspath(a.game), os.path.abspath(a.stock)
     for p in (game, stock):
         if not os.path.isdir(p):
             raise SystemExit('missing: ' + p)
+    global HD_DIR
+    if a.hd_folder:
+        HD_DIR = a.hd_folder
+    else:
+        maine = next((f for f in os.listdir(os.path.join(game, 'INTRFACE')) if f.lower() == 'maine'), None)
+        m = re.search(rb'(?m)^[ \t]*size[ \t]+(\d+)[ \t]+(\d+)[ \t]*$', open(os.path.join(game, 'INTRFACE', maine), 'rb').read()) if maine else None
+        if not m:
+            raise SystemExit('cannot tell the size from INTRFACE/MAINE; pass --hd-folder')
+        HD_DIR = hdfolder.hd_folder(int(m.group(1)), int(m.group(2)))
+    global HD_PREFIX
+    HD_PREFIX = HD_DIR.lower().encode() + b'/'
     plan = Plan(a.command == 'apply')
     moved = split_interface(game, stock, ('INTRFACE',), (HD_DIR,), set(), plan)
-    split_interface(game, stock, ('exp', 'intrface'), ('exp', 'intrf_hd'), moved, plan)
+    split_interface(game, stock, ('exp', 'intrface'), ('exp', HD_DIR), moved, plan)
     split_scene_lists(game, stock, ('GAMESTAT',), (HD_DIR,), plan)
-    split_scene_lists(game, stock, ('exp', 'gamestat'), ('exp', 'intrf_hd'), plan)
+    split_scene_lists(game, stock, ('exp', 'gamestat'), ('exp', HD_DIR), plan)
     renamed = split_logo_banks(game, stock, plan)
     verb = 'written' if plan.apply else 'would write'
     print('%s: %d files (%s)' % (verb, len(plan.actions), os.path.basename(game)))

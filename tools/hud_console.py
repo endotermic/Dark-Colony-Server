@@ -1642,7 +1642,12 @@ def cmd_preview(args):
 PICTURES = re.compile(rb'^([ \t]*pictures[ \t]+)intrface/(mainbut|popp)\b', re.M | re.I)
 TAB_STRIP = re.compile(rb'^(picture[ \t]+[3456][ \t]+0[ \t]+)(\d+)([ \t]+)96([ \t]+)(?:110|124|120)([ \t]+)(?:12|16)(?=\s)', re.M)
 DIALOGS = ('LOPTE', 'LQCE', 'LSGE', 'LOBJE')
-DIALOG_COPIES = ('exp/intrf_hd/lopte', 'dc/intrf_hd/lopte', 'ozi_ns/intrf_hd/lopte')
+import hdfolder
+
+
+def dialog_copies(folder):
+    """The three campaign modes' copies of the options dialog for the set folder (HD_0768P -> exp/HD_0768P/lopte ...)."""
+    return tuple('%s/%s/lopte' % (root, folder) for root in ('exp', 'dc', 'ozi_ns'))
 
 
 HUD_TEXT = re.compile(rb'^(in_text[ \t]+(148|200|234)[ \t]+\d+[ \t]+)(\d+)([ \t]+)(\d+)', re.M)
@@ -1652,7 +1657,7 @@ def edit_hud_script(data, width, height=SRC_H):
     """MAINE: `pictures intrf_hd/mainbut`, and the tab strips `picture 3..6` (stock 110x12 at x 521)
     as the 120x16 strips at the panel's left edge x 516 (+ W-640); the 124-px form of 28 Sep is rewritten too.  Idempotent; the patcher's
     Edit-HudScript does the same."""
-    data = PICTURES.sub(rb'\1intrf_hd/\2', data)
+    data = PICTURES.sub(rb'\1hd_src/\2', data)          # the console banks ship once, in HD_SRC (2 Oct 2026; until then intrf_hd/)
     x = 516 + width - SRC_W
 
     def strip(m):
@@ -1716,7 +1721,7 @@ def console_dialog(data):
       YES, QUIT / NO, CONTINUE texts (textmsg 2 / 3), the two label widgets that carried them dropped;
     * box pictures are regenerated on every pass (old ones dropped), numbered with the lowest free
       widget ids from 23 in y order and inserted as one block after the last picture line."""
-    if not re.search(rb'(?im)^[ \t]*pictures[ \t]+intrf_hd/popp\b', data):
+    if not re.search(rb'(?im)^[ \t]*pictures[ \t]+(?:intrf_hd|hd_src)/popp\b', data):
         return data
     lines = data.split(b'\n')
     rec = {}                                     # line index -> (kind, id, toks) for widget lines
@@ -1923,7 +1928,7 @@ def _form_header(out, ok_cancel, body_font):
 
 
 def edit_dialog_script(data):
-    return console_dialog(PICTURES.sub(rb'\1intrf_hd/\2', data))
+    return console_dialog(PICTURES.sub(rb'\1hd_src/\2', data))
 
 
 def _find(folder, name):
@@ -1935,9 +1940,11 @@ def _find(folder, name):
 
 def cmd_apply(args):
     game = args.game or args.target
-    hd = os.path.join(args.target, 'INTRF_HD')
-    if not os.path.isdir(hd):
-        sys.exit('%s: no INTRF_HD folder' % args.target)
+    hd = hdfolder.find_hd_folder(args.target)
+    if not hd:
+        sys.exit('%s: no interface set folder (HD_<height>P / INTRF_HD)' % args.target)
+    src_dir = os.path.join(args.target, hdfolder.SRC_DIR)
+    os.makedirs(src_dir, exist_ok=True)
     pal = read_palette(game)
     cv, info = render_frame(args.width, args.height, game)
     gif = os.path.join(hd, 'INTRFACE.GIF')
@@ -1945,14 +1952,14 @@ def cmd_apply(args):
     print('wrote %s (%dx%d)' % (gif, args.width, args.height))
     if not args.no_bank:
         flags, cells, p = build_bank(game)
-        spr.write_spr(os.path.join(hd, 'MAINBUT.SPR'), flags, cells, p)
+        spr.write_spr(os.path.join(src_dir, 'MAINBUT.SPR'), flags, cells, p)
         flags, cells, p = build_popp(game)
-        spr.write_spr(os.path.join(hd, 'POPP.SPR'), flags, cells, p)
+        spr.write_spr(os.path.join(src_dir, 'POPP.SPR'), flags, cells, p)
         flags, cells, p = build_clock(game)
         sprites = _find(args.target, 'SPRITES') or os.path.join(args.target, 'SPRITES')
         os.makedirs(sprites, exist_ok=True)
         spr.write_spr(os.path.join(sprites, 'CLOCK.SPR'), flags, cells, p)
-        print('wrote %s, POPP.SPR and %s' % (os.path.join(hd, 'MAINBUT.SPR'), os.path.join(sprites, 'CLOCK.SPR')))
+        print('wrote %s, POPP.SPR and %s' % (os.path.join(src_dir, 'MAINBUT.SPR'), os.path.join(sprites, 'CLOCK.SPR')))
     edits = 0
     maine = _find(hd, 'MAINE')
     if maine:
@@ -1969,7 +1976,7 @@ def cmd_apply(args):
             if n != d:
                 open(f, 'wb').write(n)
                 edits += 1
-    for rel in DIALOG_COPIES:
+    for rel in dialog_copies(os.path.basename(hd)):
         f = os.path.join(args.target, *rel.split('/'))
         if os.path.exists(f):
             d = open(f, 'rb').read()
@@ -1977,7 +1984,7 @@ def cmd_apply(args):
             if n != d:
                 open(f, 'wb').write(n)
                 edits += 1
-    print('%d script(s) edited (pictures intrf_hd/mainbut|popp, tab strips at x %d %dx16)' % (edits, 516 + args.width - SRC_W, TAB_STRIP_W))
+    print('%d script(s) edited (pictures hd_src/mainbut|popp, tab strips at x %d %dx16)' % (edits, 516 + args.width - SRC_W, TAB_STRIP_W))
     return 0
 
 
@@ -1985,7 +1992,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('apply')
-    p.add_argument('target', help='game folder or hd_sets/<WxH> fixture (must hold INTRF_HD)')
+    p.add_argument('target', help='game folder or hd_sets/<WxH> fixture (must hold the set folder HD_<height>P)')
     p.add_argument('--game', default=None, help='where MAINBUT.SPR, BUTTON.SPR, KNOBE.SPR, POPP.SPR, the font and PALETTE.GIF are read (default: target)')
     p.add_argument('--width', type=int, default=1024)
     p.add_argument('--height', type=int, default=768)
