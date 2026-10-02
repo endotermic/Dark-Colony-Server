@@ -90,7 +90,7 @@ test('describeRecording: participants = the human slots, real players flagged, b
   assert.equal(e.seats, 8);
   assert.equal(e.players, 2, 'Kamyck and Plink');
   assert.equal(e.bots, 3, 'two fakes and the AI slot');
-  assert.deepEqual(e.names, ['AI Mercenary', '', 'AI Marauder', '', 'Kamyck', '', 'Plink', '']);
+  assert.deepEqual(e.names, ['', '', 'AI Marauder', '', 'Kamyck', '', 'Plink', ''], 'slot 0 (the lobby host) is never offered');
   assert.equal(e.real, (1 << 4) | (1 << 6));
   assert.equal(e.frames, 5);
   assert.equal(e.durationS, Math.round((13 * 44) / 1000));
@@ -162,6 +162,8 @@ test('hall: RLIST lists the recordings (no lobby view, no room table); RPLAY ref
   assert.match(decode(p.takeCmds()[0]).reason, /one of the players/);
   p.send(build.rplay(id, 7));
   assert.match(decode(p.takeCmds()[0]).reason, /one of the players/, 'an AI slot is not a seat');
+  p.send(build.rplay(id, 0));
+  assert.match(decode(p.takeCmds()[0]).reason, /lobby host/, 'slot 0 would control the lobby settings');
   assert.equal(h.hall.clients.size, 1, 'still in the hall');
   // the real thing: watch as Kamyck (slot 4)
   p.send(build.rplay(id, 4));

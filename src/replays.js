@@ -32,6 +32,9 @@ export const COLUMNS = Object.freeze([
 
 const HEADINGS = Object.freeze({ date: 'DATE', time: 'UTC', map: 'MAP', terrain: 'TERR.', seats: 'S', players: 'P', bots: 'A', length: ' M:SS' });
 
+/** The lobby slot the game treats as the host: never a viewer's seat (its client controls the lobby settings). */
+export const HOST_SLOT = 0;
+
 /** A file that is not a battle (no frames: a lobby that never started, or a foreign file) is deleted once this old; younger ones may still be open. */
 export const STALE_MS = 24 * 3600 * 1000;
 
@@ -93,11 +96,15 @@ export function describeRecording(file, stat = null) {
   const tickMs = start.tickMs ?? 44;
   const recordedPlayers = Array.isArray(start.players) ? start.players : [];
   const names = slots.map((s, k) => (s.type === SLOT_TYPE.HUMAN ? String(s.name || `Player${k}`).slice(0, 16) : ''));
-  let real = 0;
-  for (const p of recordedPlayers) if (Number.isInteger(p.slot) && p.slot >= 0 && p.slot < REPLAY_NAMES && names[p.slot]) real |= 1 << p.slot;
   const humans = names.filter(Boolean).length;
   const ai = slots.filter((s) => s.type !== SLOT_TYPE.HUMAN && s.type !== SLOT_TYPE.EMPTY).length;
   const players = recordedPlayers.filter((p) => names[p.slot]).length;
+  // Slot 0 is the lobby HOST in the game's own logic: a client seated there can change the map and
+  // the lobby options, so no viewer may take it (maintainer, 2 Oct 2026). Normally the fake host's
+  // seat anyway (MERCENARY_SLOT 0). Its name stays out of the list; the counts above still include it.
+  names[HOST_SLOT] = '';
+  let real = 0;
+  for (const p of recordedPlayers) if (Number.isInteger(p.slot) && p.slot >= 0 && p.slot < REPLAY_NAMES && names[p.slot]) real |= 1 << p.slot;
   const stamp = start.t ?? start.loggedAt ?? null;
   let recordedAt = stamp ? new Date(stamp) : null;
   if (!recordedAt || Number.isNaN(recordedAt.getTime())) recordedAt = stat ? stat.mtime : new Date(0);

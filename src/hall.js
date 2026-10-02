@@ -25,6 +25,7 @@ import { formatScenarioTitle } from './config.js';
 import { VERSION_SHORT } from './version.js';
 import { roomsPayload, enterBlocker } from './online.js';
 import { loadReplay } from './replay.js';
+import { HOST_SLOT } from './replays.js';
 
 export const HALL_TITLE_PREFIX = '>'; // the map line shows the selected room; a room's own title never starts with it
 export const HALL_FILE = 'D8PLAY01.SCN'; // never loaded: no game starts from the hall
@@ -521,6 +522,7 @@ export class Hall {
   watch(client, id, slot) {
     const e = this.pool.replays?.get(id);
     if (!e) return this.refuseReplay(client, 'That recording is no longer on the server; press BACK and open the list again.');
+    if (slot === HOST_SLOT) return this.refuseReplay(client, 'Slot 1 is the lobby host and cannot be watched; pick another player.');
     if (!(slot >= 0 && slot < 8 && e.names[slot])) return this.refuseReplay(client, 'Pick one of the players of that battle.');
     let replay;
     try {
