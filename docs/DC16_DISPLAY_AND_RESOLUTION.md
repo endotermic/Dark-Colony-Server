@@ -6329,7 +6329,7 @@ Windows settings either. Reference hashes unchanged (no exe byte depends on the 
 `git archive HEAD` copy: 5.1 under tr-TR at 1920x1080 dark and pwsh 7 under tr-TR at 1024x768 dark = fixtures
 (HSCENE/GSCENE carry the DC ending names because the copy has the DC movies) and reference exes; 5.1 under the
 default culture at 1024x768 light = the light fixture; the headless window test passes under both shells (its
-1 Oct harness still looks for `INTRF_HD\MAINE` - two stale checks).
+1 Oct harness still looks for `INTRF_HD\MAINE` - two stale checks). Committed and pushed 2 Oct 2026: Dark-Colony `37542ea`, Server `df3d7f6`.
 
 **Rules.** (1) A patched set that is wrong although the exe is the reference and the set is freshly written:
 ask for the player's Windows regional format before anything else; the dotless-i cultures are tr-TR and az-Latn.
