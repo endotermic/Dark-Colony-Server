@@ -1232,7 +1232,8 @@ What is changed in the exe:
 REPLAY ONLINE GAME lists the battles the relay recorded (date and time, map, terrain, seats, players,
 computer players, length - the relay keeps the newest 50) and, right of the list, the eight players of
 the selected battle with a radio box each (the boxes come from HD_SRC\\KNOBR.SPR, the lobby's READY
-boxes with an empty box added); tick one and REPLAY makes the relay play that battle back to you from
+boxes with an empty box added; the host seat, slot 1 on the screen, is shown greyed and cannot be
+watched - its client would control the lobby); tick one and REPLAY makes the relay play that battle back to you from
 that player's seat - his fog of war, his base, the whole battle as it happened; you can scroll the map
 but not act.  The same encrypted connection, the same module.
 
@@ -3419,7 +3420,7 @@ function Edit-OnlineScript([string] $Text) {
 # The REPLAY ONLINE GAME screen (2 Oct 2026, doc 10.65): ONLINE -> REPLAYE, the same edits as patch_online.replay_script
 # (byte-identical output): the list narrowed to 40 columns (320 px), scroll bar / UP / DOWN and their plates 72 px LEFT
 # of their stock LOADGE places, the header line 40 columns, the participant pane after it - eight `checkb` rows (cells
-# 149 off = the empty box / 8 on = the green cross of HD_SRC\KNOBR.SPR, `pictures hd_src/knobr`) 30 px apart from list
+# 149 off = the empty box / 8 on = the green cross of HD_SRC\KNOBR.SPR, `pictures hd_src/knobr`; slot 0, the lobby host, shows the grey dead box 150 for both states) 30 px apart from list
 # top + 6 at list x + 376, a 13-column read-only name right of each box, the heading in_text 48 above them - the title
 # "Replay Online Game", the button REPLAY and the background REPLAYBG.GIF.  Idempotent on its own output.
 function Edit-ReplayScript([string] $Text) {
@@ -3429,7 +3430,7 @@ function Edit-ReplayScript([string] $Text) {
     if ($lw -ne 448 -and $lw -ne 320) { throw ('ONLINE: list width {0}, expected 448' -f $lw) }
     $already = ($lw -eq 320)
     $pane = New-Object System.Collections.Generic.List[string]
-    for ($k = 0; $k -lt 8; $k++) { $pane.Add(('checkb   {0}  0  {1}  {2}   27   17  149   8   -' -f (32 + $k), ($lx + 376), ($ly + 6 + 30 * $k))) }
+    for ($k = 0; $k -lt 8; $k++) { $cells = if ($k -eq 0) { '150   150' } else { '149   8' }; $pane.Add(('checkb   {0}  0  {1}  {2}   27   17  {3}   -' -f (32 + $k), ($lx + 376), ($ly + 6 + 30 * $k), $cells)) }   # slot 0 = the lobby host: the grey dead box
     for ($k = 0; $k -lt 8; $k++) { $pane.Add(('in_text  {0}  0  {1}  {2}   13    1  0  -  read_only' -f (40 + $k), ($lx + 407), ($ly + 6 + 30 * $k + 3))) }
     $pane.Add(('in_text  48  0  {0}  {1}   17    1  0  -  read_only' -f ($lx + 376), ($ly - 16)))
     $out = New-Object System.Collections.Generic.List[string]

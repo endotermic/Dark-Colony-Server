@@ -90,7 +90,7 @@ test('describeRecording: participants = the human slots, real players flagged, b
   assert.equal(e.seats, 8);
   assert.equal(e.players, 2, 'Kamyck and Plink');
   assert.equal(e.bots, 3, 'two fakes and the AI slot');
-  assert.deepEqual(e.names, ['', '', 'AI Marauder', '', 'Kamyck', '', 'Plink', ''], 'slot 0 (the lobby host) is never offered');
+  assert.deepEqual(e.names, ['AI Mercenary', '', 'AI Marauder', '', 'Kamyck', '', 'Plink', ''], 'slot 0 (the lobby host) is listed by name; the exe greys its box and the relay refuses the seat');
   assert.equal(e.real, (1 << 4) | (1 << 6));
   assert.equal(e.frames, 5);
   assert.equal(e.durationS, Math.round((13 * 44) / 1000));

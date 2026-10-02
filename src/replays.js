@@ -100,11 +100,12 @@ export function describeRecording(file, stat = null) {
   const ai = slots.filter((s) => s.type !== SLOT_TYPE.HUMAN && s.type !== SLOT_TYPE.EMPTY).length;
   const players = recordedPlayers.filter((p) => names[p.slot]).length;
   // Slot 0 is the lobby HOST in the game's own logic: a client seated there can change the map and
-  // the lobby options, so no viewer may take it (maintainer, 2 Oct 2026). Normally the fake host's
-  // seat anyway (MERCENARY_SLOT 0). Its name stays out of the list; the counts above still include it.
-  names[HOST_SLOT] = '';
+  // the lobby options, so no viewer may take it (maintainer, 2 Oct 2026; `Hall.watch` refuses it). Its
+  // name IS listed - the exe shows the master bot's name beside a greyed, dead box (maintainer, same
+  // day: "slot 0 must contain correct name of ai master as before, but its radio button must be
+  // grayed out and unclickable"); the real-player mask never has bit 0.
   let real = 0;
-  for (const p of recordedPlayers) if (Number.isInteger(p.slot) && p.slot >= 0 && p.slot < REPLAY_NAMES && names[p.slot]) real |= 1 << p.slot;
+  for (const p of recordedPlayers) if (Number.isInteger(p.slot) && p.slot >= 0 && p.slot < REPLAY_NAMES && names[p.slot] && p.slot !== HOST_SLOT) real |= 1 << p.slot;
   const stamp = start.t ?? start.loggedAt ?? null;
   let recordedAt = stamp ? new Date(stamp) : null;
   if (!recordedAt || Number.isNaN(recordedAt.getTime())) recordedAt = stat ? stat.mtime : new Date(0);

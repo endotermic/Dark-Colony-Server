@@ -4996,7 +4996,11 @@ loop head as before - still two edits in `AUTO`.
 narrowed from 56 to **40 columns** (320 px), the scroll bar, UP and DOWN 72 px LEFT of their stock LOADGE
 places, the header line 40 columns, and right of the scroll bar the **participant pane**: `checkb 32..39`
 (27x17, the lobby's READY boxes: `pictures hd_src/knobr` = **`HD_SRC\KNOBR.SPR`**, KNOBE's 149 cells plus
-cell **149** = cell 9 with the "?" glyph blacked out - the maintainer, same day: "client radio buttons
+cell **149** = cell 9 with the "?" glyph blacked out and cell **150** = the same in the screen palette's
+greys (82/65/41/35/23/11) - slot 0's box uses 150 for both states: the lobby host's seat is shown by
+name but greyed and dead, the module never ticks it and undoes the engine's toggle (maintainer, same
+day: "slot 0 must contain correct name of ai master as before, but its radio button must be grayed out
+and unclickable"; the relay refuses the seat as well) - the maintainer, same day: "client radio buttons
 must be empty instead of question mark"; `patch_online.py bank` builds it from `INTRFACE/KNOBE.SPR`, the
 patcher lists it as the fix's `Data`; off = 149, on = 8, the green cross) at list x + 376, 30 px apart
 from list top + 6, a 13-column read-only `in_text 40..47` right of each box (x + 407, +3), the heading
@@ -5060,8 +5064,9 @@ by both backgrounds), `Write-OnlineScreen` writes `REPLAYE` + `REPLAYBG.GIF` aft
 `ONLINEBG.GIF`, the 640x480 copies in `$STOCK_COPIES`, the two files excluded from `hd_data` like the
 ONLINE pair, the fix `online` text. Fixtures `hd_sets/<WxH>/HD_<h>P/REPLAYE` + `REPLAYBG.GIF` and the
 three `bintroe` copies per size regenerated from clean-copy patcher runs. Published Ultimate 1024x768
-dark **`4c7da630…`** (pwsh 7 = 5.1 = generator reference; the exe is 758 784 bytes with the
-14 600-byte module; `8208da56…` before the REPLAY / empty-box / money rounds of the same day);
+dark **`cd297478…`** (pwsh 7 = 5.1 = generator reference; the exe is 758 784 bytes with the
+14 616-byte module; `4c7da630…` before the host-seat round, `8208da56…` before the REPLAY /
+empty-box / money rounds of the same day);
 `dcexp16.asm` regenerated. The installer carries a version and build number since the same day
 (maintainer: "add version number and build number to the installer"): `PATCHER_VERSION` (1.0, set by
 hand in `gen_apply_script.py` when the patcher's behaviour changes) and the build `YYYYMMDD.HHMM` =

@@ -99,6 +99,8 @@
 #define W_RADIO0  32   /* checkb 32..39: one radio box per lobby slot                  */
 #define W_RNAME0  40   /* in_text 40..47: the participant's name beside its box         */
 #define W_RPANE   48   /* in_text: the pane's heading                                   */
+#define HOST_SLOT 0    /* the lobby host's seat: its client sets map and options, so it is never a viewer's seat; its box
+                          is the grey dead cell (KNOBR 150 for both states) and a click on it changes nothing */
 
 /* protocol */
 #define M_LIST      0x50
@@ -1045,7 +1047,7 @@ static int g_chosen;                /* the slot whose box is ticked, -1 = none *
    "'REPLAY' button must be disabled until user selects a client to watch for"). */
 static void set_boxes(void* ip) {
     int k;
-    for (k = 0; k < 8; k++) g_checkb_set(ip, W_RADIO0 + k, k == g_chosen);
+    for (k = 0; k < 8; k++) g_checkb_set(ip, W_RADIO0 + k, k == g_chosen && k != HOST_SLOT);
     g_set_greyed(ip, W_ENTER, g_chosen < 0);
 }
 
@@ -1179,9 +1181,9 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
             if (id >= W_RADIO0 && id < W_RADIO0 + 8) {
                 int sel = g_list_sel(ip, W_LIST);
                 int k = id - W_RADIO0;
-                if (sel >= 0 && sel < g_replay_count && g_replays[sel].names[k][0]) g_chosen = k;
+                if (k != HOST_SLOT && sel >= 0 && sel < g_replay_count && g_replays[sel].names[k][0]) g_chosen = k;
             }
-            set_boxes(ip);
+            set_boxes(ip);   /* also undoes the engine's toggle of a dead or empty box */
         } else if (kind == 0) {
             W.Sleep(1);
         }
