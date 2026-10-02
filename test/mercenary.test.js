@@ -92,7 +92,7 @@ test('the first frame carries the offer from the Mercenary player, and the greet
   assert.equal(cmds[0].type, T.UNTIL);
   const lines = chats(cmds);
   assert.ok(lines.length >= 2);
-  assert.ok(lines[0].startsWith('Mercenary: I ally with anyone who pays me 1000'));
+  assert.ok(lines[0].startsWith('AI Mercenary: I ally with anyone who pays me 1000'));
   assert.ok(lines.some((l) => l.includes('45 seconds')));
   const players = h.room.bots.list.map((b) => b.player);
   assert.equal(players.length, 2, 'Mercenary and Marauder');
@@ -101,9 +101,9 @@ test('the first frame carries the offer from the Mercenary player, and the greet
     assert.equal(c.mask, 0xff);
   }
   const marauder = h.room.bots.others[0];
-  assert.equal(marauder.name, 'Marauder');
-  assert.ok(lines.some((l) => l.startsWith('Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
-  assert.deepEqual(h.room.lobby.greeting().slice(1), ['Mercenary: Hi! I am the AI host.', '/help lists the commands.'], 'three rows; the price is in /help (27 Sep 2026)');
+  assert.equal(marauder.name, 'AI Marauder');
+  assert.ok(lines.some((l) => l.startsWith('AI Marauder: Same deal here: 1000 buys my alliance')), lines.join(' | '));
+  assert.deepEqual(h.room.lobby.greeting().slice(1), ['AI Mercenary: Hi! I am the AI host.', '/help lists the commands.'], 'three rows; the price is in /help (27 Sep 2026)');
   assert.deepEqual(h.room.lobby.helpLines().map((l) => l.split(' ')[0]), ['/botcount', '/botteam', '/bottype', '/bothire'], 'the commands, nothing about the bots');
 });
 
@@ -120,7 +120,7 @@ test('two bots, two deals: a gift to Marauder allies with it alone, the Mercenar
   assert.ok(!merc.isAlly(mar.player) && !mar.isAlly(merc.player), 'rivals');
   assert.equal(mar.ally.player, a.slot);
   assert.equal(merc.ally, null);
-  assert.ok(chats(cmds)[0].startsWith(`Marauder: ${a.name} paid 1000`), chats(cmds)[0]);
+  assert.ok(chats(cmds)[0].startsWith(`AI Marauder: ${a.name} paid 1000`), chats(cmds)[0]);
   // the Mercenary still sells: B buys it; A's second payment to the Marauder comes back
   b.send(build.bonus(merc.player));
   a.send(build.bonus(mar.player));
@@ -128,7 +128,7 @@ test('two bots, two deals: a gift to Marauder allies with it alone, the Mercenar
   assert.deepEqual(diplo(cmds), relations(merc.player, b.slot, 1));
   assert.equal(merc.ally.player, b.slot);
   assert.ok(cmds.filter((c) => c.type === T.BONUS).some((c) => c.player === a.slot), 'refund from the Marauder');
-  assert.ok(chats(cmds).some((l) => l.startsWith(`Marauder: ${a.name}, I am allied with you`)));
+  assert.ok(chats(cmds).some((l) => l.startsWith(`AI Marauder: ${a.name}, I am allied with you`)));
   assert.ok(merc.isAlly(b.slot) && !merc.isAlly(a.slot) && mar.isAlly(a.slot) && !mar.isAlly(b.slot));
 });
 
@@ -144,7 +144,7 @@ test('1000 to the Mercenary buys the alliance: 0x0F relayed, alliance + vision s
   assert.deepEqual(between(cmds, 0, mar), [], 'nothing between the bots: they were rivals already');
   assert.equal(diplo(cmds).length, 4);
   const lines = chats(cmds);
-  assert.ok(lines[0].startsWith(`Mercenary: ${a.name} paid ${ALLY_PRICE}. We are allies for 45 seconds, both ways`), lines[0]);
+  assert.ok(lines[0].startsWith(`AI Mercenary: ${a.name} paid ${ALLY_PRICE}. We are allies for 45 seconds, both ways`), lines[0]);
   assert.equal(h.room.mercenary.ally.player, a.slot);
   assert.ok(h.room.mercenary.isAlly(a.slot));
   // the engine credited the Mercenary's ledger when the frame was executed
@@ -162,7 +162,7 @@ test('a second payment while an alliance runs is returned: 0x0F back, ledger cha
   assert.deepEqual(bonuses.sort(), [0, b.slot].sort(), 'the gift and the refund');
   assert.equal(diplo(cmds).length, 0, 'no second alliance');
   const lines = chats(cmds);
-  assert.ok(lines[0].startsWith(`Mercenary: ${b.name}, I am allied with ${a.name} for`), lines[0]);
+  assert.ok(lines[0].startsWith(`AI Mercenary: ${b.name}, I am allied with ${a.name} for`), lines[0]);
   assert.ok(lines[0].endsWith(`Your ${ALLY_PRICE} goes back.`));
   assert.equal(h.room.mercenary.ally.player, a.slot, 'A stays the ally');
   // ledger: 1500 + 1000 (A) + 1000 (B's gift lands) - 1000 (refund) = 2500
@@ -170,7 +170,7 @@ test('a second payment while an alliance runs is returned: 0x0F back, ledger cha
   // the ally paying again is returned too
   a.send(build.bonus(0));
   const again = chats(frame(h, a, b));
-  assert.ok(again[0].startsWith(`Mercenary: ${a.name}, I am allied with you for`), again[0]);
+  assert.ok(again[0].startsWith(`AI Mercenary: ${a.name}, I am allied with you for`), again[0]);
 });
 
 test('the alliance ends when the time is up: both relations cleared, announced, a new deal possible', () => {
@@ -189,7 +189,7 @@ test('the alliance ends when the time is up: both relations cleared, announced, 
   const mar = h.room.bots.others[0].player;
   assert.deepEqual(diplo(ended), relations(0, a.slot, 0), 'the deal closed; the bots stay rivals');
   void mar;
-  assert.ok(chats(ended)[0].startsWith(`Mercenary: The alliance with ${a.name} is over: the time is up.`), chats(ended)[0]);
+  assert.ok(chats(ended)[0].startsWith(`AI Mercenary: The alliance with ${a.name} is over: the time is up.`), chats(ended)[0]);
   assert.equal(m.ally, null);
   b.send(build.bonus(0));
   const next = frame(h, a, b);
@@ -279,7 +279,7 @@ test('without the engine the Mercenary stays idle: no offer, gifts relayed, gree
   const h = new Harness({ SYNC_CHECK: 'off' });
   const [a, b] = startBattle(h);
   assert.ok(!h.room.mercenary.active);
-  assert.deepEqual(h.room.lobby.greeting().slice(1), ['Mercenary: Hi! I am the AI host.', '/help lists the commands.']);
+  assert.deepEqual(h.room.lobby.greeting().slice(1), ['AI Mercenary: Hi! I am the AI host.', '/help lists the commands.']);
   h.stepAfter(33);
   const cmds = cmdsOf(a.take()[0]);
   assert.deepEqual(cmds.map((c) => c.type), [T.UNTIL, T.TICK_SPEED]);
@@ -436,7 +436,7 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
       if (c.type === T.BUILD) seen.build.push([...c.raw]);
     }
   }
-  assert.ok(seen.chat[0].startsWith('Mercenary: I ally with anyone who pays me 1000'), seen.chat[0]);
+  assert.ok(seen.chat[0].startsWith('AI Mercenary: I ally with anyone who pays me 1000'), seen.chat[0]);
   assert.ok(seen.chat.some((l) => l.includes('And I play the game')), seen.chat.join(' | '));
   // actions are told to allies only: without an ally the worker orders go out unannounced
   assert.ok(!seen.chat.some((l) => l.includes('A worker first')), seen.chat.join(' | '));
@@ -472,7 +472,7 @@ test('end to end with the real engine: the Mercenary speaks and buys in the sync
 test('hiring off (the default): no offer at the start, a gift to a bot goes back with a word, no alliance', () => {
   const { h, a, b } = battle({ BOT_HIRE: false });
   assert.equal(h.room.botHire, false);
-  assert.equal(h.room.lobby.greeting()[1], 'Mercenary: Hi! I am the AI host.');
+  assert.equal(h.room.lobby.greeting()[1], 'AI Mercenary: Hi! I am the AI host.');
   let cmds = frame(h, a, b);
   const lines = chats(cmds);
   assert.ok(lines.some((l) => l.includes('Hiring is off in this game')), lines.join(' | '));

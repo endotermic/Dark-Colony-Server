@@ -62,6 +62,13 @@ export const T = Object.freeze({
   ENTER: 0x52,
   REFUSED: 0x53,
   ENTERING: 0x54,
+  // REPLAY ONLINE GAME (2 Oct 2026, plan §21, protocol doc §4.5): the same kind of relay-only dialogue
+  // for the list of recorded battles and the choice of a recording + a participant to watch as
+  RLIST: 0x55,
+  REPLAYS: 0x56,
+  REPLAY: 0x57,
+  RPLAY: 0x58,
+  REPLAYING: 0x59,
 });
 
 export const TYPE_NAME = Object.freeze(Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k])));
@@ -88,12 +95,15 @@ const FIXED = new Map([
   [T.INTRO, 2], [T.OUTRO, 2], [T.READY, 2], [T.RACE, 2], [T.TYPE, 2], [T.COLOUR_CYCLE, 2],
   [T.COLOUR_SET, 2], [T.TEAM_CYCLE, 2], [T.TEAM_SET, 2], [T.INIT_ME, 1], [T.NUKE, 1], [T.KEEPALIVE, 0],
   [T.LIST, 0], [T.ENTER, 1], [T.ENTERING, 1],
+  [T.RLIST, 0], [T.RPLAY, 2], [T.REPLAYING, 1],
 ]);
 
 /** Room states on the wire (ROOMS `state` byte, protocol doc §4.4). */
 export const ROOM_STATE = Object.freeze({ OPEN: 0, FULL: 1, STARTING: 2, IN_BATTLE: 3 });
 export const ROOM_STATE_TEXT = Object.freeze(['open', 'full', 'starting', 'in battle']);
 export const MAX_ROOM_ROW = 56; // the ONLINE WAR screen's list is 56 monospace columns (MFONTO5 advances 8 px, 448 px)
+export const MAX_REPLAY_ROW = 40; // the REPLAY ONLINE GAME screen's list is 40 columns (320 px): the participant pane takes the rest
+export const REPLAY_NAMES = 8; // one name per lobby slot in a REPLAY entry ('' = not a human in that battle)
 
 export function typeName(type) {
   return TYPE_NAME[type] ?? `0x${type.toString(16).padStart(2, '0')}`;
@@ -167,6 +177,17 @@ export function commandLength(buf, off) {
     case T.REFUSED:
       need(rest >= 1, name);
       return cstrEnd(buf, off + 1, name) - off + 1;
+    case T.REPLAYS:
+      // u8 count, string header
+      need(rest >= 2, name);
+      return cstrEnd(buf, off + 2, name) - off + 1;
+    case T.REPLAY: {
+      // u8 id, seats, players, bots, real-player mask; u16 duration; then the row and eight names
+      need(rest >= 7, name);
+      let p = off + 8;
+      for (let k = 0; k < 1 + REPLAY_NAMES; k++) p = cstrEnd(buf, p, name) + 1;
+      return p - off;
+    }
     case T.ROOMS: {
       // u8 count, then per room u8 id, state, seats, players, bots + three strings
       need(rest >= 1, name);
@@ -261,6 +282,26 @@ export function decode(cmd) {
       return { id: b[1] };
     case T.REFUSED:
       return { reason: readCstr(b, 1) };
+    case T.RPLAY:
+      return { id: b[1], slot: b[2] };
+    case T.REPLAYING:
+      return { slot: b[1] };
+    case T.REPLAYS:
+      return { count: b[1], header: readCstr(b, 2) };
+    case T.REPLAY: {
+      const e = { id: b[1], seats: b[2], players: b[3], bots: b[4], real: b[5], durationS: b.readUInt16LE(6) };
+      let p = 8;
+      let end = b.indexOf(0, p);
+      e.row = b.toString('latin1', p, end);
+      p = end + 1;
+      e.names = [];
+      for (let k = 0; k < REPLAY_NAMES; k++) {
+        end = b.indexOf(0, p);
+        e.names.push(b.toString('latin1', p, end));
+        p = end + 1;
+      }
+      return e;
+    }
     case T.ROOMS: {
       const rooms = [];
       let p = 2;
@@ -329,6 +370,20 @@ export const build = Object.freeze({
   enter: (id) => u8(T.ENTER, id),
   entering: (slot) => u8(T.ENTERING, slot),
   refused: (reason) => Buffer.concat([u8(T.REFUSED), cstr(reason, MAX_TEXT)]),
+  // REPLAY ONLINE GAME (plan §21)
+  rlist: () => u8(T.RLIST),
+  /** The list begins: how many REPLAY entries follow and the column header the screen shows above them. */
+  replays: (count, header) => Buffer.concat([u8(T.REPLAYS, count), cstr(header, MAX_REPLAY_ROW)]),
+  /** e = { id, seats, players, bots, real (bit k = slot k was a real player), durationS, row, names[8] } */
+  replay: (e) => {
+    const dur = Buffer.alloc(2);
+    dur.writeUInt16LE(Math.max(0, Math.min(0xffff, e.durationS | 0)));
+    const names = [];
+    for (let k = 0; k < REPLAY_NAMES; k++) names.push(cstr(e.names[k] ?? '', MAX_NAME));
+    return Buffer.concat([u8(T.REPLAY, e.id, e.seats, e.players, e.bots, e.real), dur, cstr(e.row, MAX_REPLAY_ROW), ...names]);
+  },
+  rplay: (id, slot) => u8(T.RPLAY, id, slot),
+  replaying: (slot) => u8(T.REPLAYING, slot),
   /** rooms = [{ id, state, seats, players, bots, terrain, name, row }] */
   rooms: (rooms) =>
     Buffer.concat([

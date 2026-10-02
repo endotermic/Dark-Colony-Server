@@ -24,6 +24,7 @@ import { Client, readCommands, packPayloads, isModuleFrame } from './client.js';
 import { formatScenarioTitle } from './config.js';
 import { VERSION_SHORT } from './version.js';
 import { roomsPayload, enterBlocker } from './online.js';
+import { loadReplay } from './replay.js';
 
 export const HALL_TITLE_PREFIX = '>'; // the map line shows the selected room; a room's own title never starts with it
 export const HALL_FILE = 'D8PLAY01.SCN'; // never loaded: no game starts from the hall
@@ -232,7 +233,7 @@ export class Hall {
     for (const client of this.players()) {
       if (only && client !== only) continue;
       if (client.online) {
-        this.sendRooms(client, true); // the ONLINE WAR table, only when it changed (plan §20)
+        if (!client.replays) this.sendRooms(client, true); // the ONLINE WAR table, only when it changed (plan §20); a replay browser gets nothing unasked
         continue;
       }
       const rows = this.rowsFor(client);
@@ -359,6 +360,18 @@ export class Hall {
           this.enter(client, decode(cmd).id);
           break;
 
+        case T.RLIST: // a REPLAY ONLINE GAME client (plan §21): the recorded battles instead of the lobby view
+          client.online = true;
+          client.replays = true;
+          this.sendReplays(client);
+          break;
+
+        case T.RPLAY: {
+          const d = decode(cmd);
+          this.watch(client, d.id, d.slot);
+          break;
+        }
+
         case T.INIT_ME: {
           client.initMeCount++;
           if (client.initMeCount > 1) {
@@ -477,6 +490,56 @@ export class Hall {
     client.firstMessageAt = 0; // the game's own connection starts now: its first lobby message gets the join grace again (F71)
     client.joinedAt = this.now();
     this.log.info('online -> room', { id: client.id, slot, name: client.name, room: room.id, waiting: this.clients.size });
+    room.adopt(client, slot, true);
+    return undefined;
+  }
+
+  // ---- REPLAY ONLINE GAME (plan §21) --------------------------------------------------------
+
+  /**
+   * 0x56 REPLAYS + one 0x57 REPLAY per recording, newest first - ONE COMMAND PER FRAME, in one write: the
+   * exe module reads the first command of every frame (the room table was always a single command), so a
+   * packed frame would lose every entry behind the header (found in the first game test, 2 Oct 2026).
+   */
+  sendReplays(client) {
+    const payloads = this.pool.replays ? this.pool.replays.payloads() : [build.replays(0, '')];
+    client.sendBatch(payloads);
+  }
+
+  refuseReplay(client, text) {
+    this.log.info('replay refused', { id: client.id, reason: text });
+    client.send(build.refused(text));
+  }
+
+  /**
+   * 0x58 RPLAY: open a viewer room for recording `id` with the client in `slot` (a seat a human held
+   * in that battle: a real player or a bot), answer 0x59 REPLAYING, reset both sequence counters
+   * and run the stock join sequence into that room - exactly the ENTER hand-over of §20.4, so the
+   * exe module's proxy code is the same.  The room plays the recorded frames once the viewer is
+   * READY and is dropped when the viewer leaves (RoomPool.openViewerRoom / Room.onEmpty).
+   */
+  watch(client, id, slot) {
+    const e = this.pool.replays?.get(id);
+    if (!e) return this.refuseReplay(client, 'That recording is no longer on the server; press BACK and open the list again.');
+    if (!(slot >= 0 && slot < 8 && e.names[slot])) return this.refuseReplay(client, 'Pick one of the players of that battle.');
+    let replay;
+    try {
+      replay = loadReplay(e.file, { slot });
+    } catch (err) {
+      this.log.warn('replay cannot be loaded', { file: e.file, err: err.message });
+      return this.refuseReplay(client, `The recording cannot be played: ${err.message}`);
+    }
+    const room = this.pool.openViewerRoom(replay);
+    this.clients.delete(client);
+    client.send(build.replaying(slot));
+    client.seqOut = 0;
+    client.seqIn = 0;
+    client.online = false;
+    client.replays = false;
+    client.handover = true; // the module's stragglers are dropped until the game's first frame (F81)
+    client.firstMessageAt = 0; // the game's own connection starts now (F71)
+    client.joinedAt = this.now();
+    this.log.info('replay -> viewer room', { id: client.id, slot, name: client.name, room: room.id, file: e.file, as: e.names[slot], waiting: this.clients.size });
     room.adopt(client, slot, true);
     return undefined;
   }

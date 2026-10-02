@@ -32,6 +32,31 @@ sys.path.insert(0, TOOLS)
 from hdfolder import hd_folder, hd_token, SRC_DIR     # one interface folder per resolution (2 Oct 2026, doc 10.61)
 GAME = sys.argv[1]
 OUT = sys.argv[2]
+
+# Version and build number of the generated installer (maintainer, 2 Oct 2026: "add version number and build
+# number to the installer").  PATCHER_VERSION is set by hand here whenever the patcher's behaviour changes (its
+# window, its options, a new or removed fix); the BUILD is derived at every generation: the UTC time of the run
+# (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
+# (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
+# welcome page, in the result box and in the command-line banner, and written into the script's header.
+PATCHER_VERSION = '1.0'
+
+
+def _git_state(repo):
+    """'<short sha>[+]' of a repository's HEAD, '?' when git or the repository is unavailable."""
+    try:
+        sha = subprocess.run(['git', '-C', repo, 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(['git', '-C', repo, 'status', '--porcelain'], capture_output=True, text=True, check=True).stdout.strip() != ''
+        return sha + ('+' if dirty else '')
+    except Exception:
+        return '?'
+
+
+import datetime as _dt
+_NOW = _dt.datetime.now(_dt.timezone.utc)
+PATCHER_BUILD = _NOW.strftime('%Y%m%d.%H%M')
+PATCHER_GENERATED = '%s UTC from Dark-Colony-Server %s and Dark-Colony %s' % (
+    _NOW.strftime('%Y-%m-%d %H:%M'), _git_state(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), _git_state(GAME))
 WORK = tempfile.mkdtemp(prefix='dcpatch_')
 
 # Since 15 Sep 2026 both games run from the Council Wars folder (maintainer decision): the originals keep
@@ -133,8 +158,8 @@ def hd_data(g, mode=None):
             continue                                    # the briefing lists come from GAMESTAT (below)
         if name.upper().endswith('.SPR'):
             continue                                    # the console-style banks belong to the dark theme (console_data)
-        if name.upper() in ('ONLINE', 'ONLINEBG.GIF'):
-            continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51)
+        if name.upper() in ('ONLINE', 'ONLINEBG.GIF', 'REPLAYE', 'REPLAYBG.GIF'):
+            continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51 / 10.65)
         src = os.path.join(GAME_DIR[g], 'INTRFACE', name)
         assert os.path.exists(src), src
         files.append('INTRFACE\\' + name)
@@ -158,6 +183,15 @@ def set_sources(g, mode):
     (INTRG / INTRO with their bottom bands, BACKDROP without one - the pre-battle screens' ground,
     doc 10.56) and the spliced HUD frame, shipped as HD_SRC\\<WxH>\\*.GIF (until 1 Oct 2026 INTRF_HD\\<WxH>)."""
     out = ['%s\\%s\\%s' % (SRC_DIR, mode, x) for x in SHIPPED_PICTURES]
+    for f in out:
+        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+    return out
+
+
+def online_data(g, mode=None):
+    """The ONLINE WAR / REPLAY ONLINE GAME fix's resource (2 Oct 2026): the radio-box bank HD_SRC\\KNOBR.SPR
+    (patch_online.py bank: KNOBE + the empty box), read by the REPLAYE screen as `pictures hd_src/knobr`."""
+    out = [SRC_DIR + '\\KNOBR.SPR']
     for f in out:
         assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
@@ -1168,13 +1202,13 @@ No code changes.  The file grows by the new section (about 75 KB), which is why 
 last - after it only `online` (Dark Colony Ultimate), which appends its own section behind this one.
 The appended bytes are written below in Base64 (they are the icon images, the manifest and the
 directory that lists them); their SHA-256 is checked like every other edit.'''),
- dict(id='online', name='ONLINE WAR: a room browser for the relay server in the main menu, TLS to port 8889 (Dark Colony Ultimate only)', date='29 Sep 2026',
+ dict(id='online', name='ONLINE WAR and REPLAY ONLINE GAME: a room browser and a replay browser for the relay server in the main menu, TLS to port 8889 (Dark Colony Ultimate only)', date='29 Sep 2026 (REPLAY ONLINE GAME 2 Oct 2026)',
       tool='tools/patch_online.py (module: tools/online/online.c, built by tools/online/build.cmd)',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.51; docs/RELAY_SERVER_PLAN.md section 20; docs/DC16_NETWORK_PROTOCOL.md sections 4.4 and 6.9',
-      blocks=blocks_online, cw_only=True, requires=['ozi', 'icon'],
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.51 and 10.65; docs/RELAY_SERVER_PLAN.md sections 20 and 21; docs/DC16_NETWORK_PROTOCOL.md sections 4.4, 4.5, 6.9 and 6.10',
+      blocks=blocks_online, cw_only=True, requires=['ozi', 'icon'], data=online_data,
       desc='''The main menu of Dark Colony Ultimate gets an eleventh button, ONLINE WAR (top of the right column;
-MULTI PLAYER WAR and ENCYCLOPEDIA move two rows down, the second row stays empty for a future replay
-button).  It opens a room browser built from the LOAD GAME screen that lists the rooms of the Dark
+MULTI PLAYER WAR and ENCYCLOPEDIA move two rows down) and, since 2 Oct 2026, a twelfth right under it,
+REPLAY ONLINE GAME.  ONLINE WAR opens a room browser built from the LOAD GAME screen that lists the rooms of the Dark
 Colony Server relay - map, terrain, seats, players, bots, status - and joins the room you pick; the
 relay then chooses a free slot for you.  The address of the relay comes from DEFAULT_SERVER.TXT beside
 the exe (plain text with C++-style comments; the shipped file names dark-colony-server.fly.dev and
@@ -1191,15 +1225,24 @@ What is changed in the exe:
     nothing: it takes LoadLibraryA and GetProcAddress from the exe's own import table and resolves
     the Windows socket, TLS and kernel functions at run time.  Three header edits register the
     section (section count, section header, image size).
-  * the menu's accepted-id filter `cmp edx,7` -> `cmp edx,8` (button id 8 = ONLINE WAR), and the
-    seven NOP bytes at the end of the menu's id chain become a jump into the section (ids other than
-    8 return to the menu loop as before).  Nothing else in the code changes.
+  * the menu's accepted-id filter `cmp edx,7` -> `cmp edx,9` (button ids 8 = ONLINE WAR, 9 = REPLAY
+    ONLINE GAME), and the seven NOP bytes at the end of the menu's id chain become a jump into the
+    section (ids other than 8 and 9 return to the menu loop as before).  Nothing else in the code changes.
 
-Data: the screen script HD_<height>P\\ONLINE (INTRFACE\ONLINE at 640x480) is derived from LOADGE by
-this script (list widened to 56 columns, header and status lines, ENTER / BACK), and
-DEFAULT_SERVER.TXT is written beside the exe when it is missing - an existing file is never
-overwritten, so your own relay address stays.  The appended bytes are written below in Base64 with
-their SHA-256; the C source they were compiled from is in the Dark-Colony-Server repository.'''),
+REPLAY ONLINE GAME lists the battles the relay recorded (date and time, map, terrain, seats, players,
+computer players, length - the relay keeps the newest 50) and, right of the list, the eight players of
+the selected battle with a radio box each (the boxes come from HD_SRC\\KNOBR.SPR, the lobby's READY
+boxes with an empty box added); tick one and REPLAY makes the relay play that battle back to you from
+that player's seat - his fog of war, his base, the whole battle as it happened; you can scroll the map
+but not act.  The same encrypted connection, the same module.
+
+Data: the screen scripts HD_<height>P\\ONLINE and REPLAYE (INTRFACE\ONLINE / REPLAYE at 640x480) are
+derived from LOADGE by this script (list widened to 56 columns, header and status lines, ENTER / BACK;
+the replay screen: a 40-column list and the participant pane), their backgrounds ONLINEBG.GIF /
+REPLAYBG.GIF from LOADER.GIF, and DEFAULT_SERVER.TXT is written beside the exe when it is missing - an
+existing file is never overwritten, so your own relay address stays.  The appended bytes are written
+below in Base64 with their SHA-256; the C source they were compiled from is in the Dark-Colony-Server
+repository.'''),
 ]
 
 # Names of the patched builds and their desktop shortcuts since 25 Sep 2026 (maintainer: "resulting files and
@@ -1410,8 +1453,11 @@ for B in BUILDS:
 # ----------------------------------------------------------------------------------------------
 # emit PowerShell
 # ----------------------------------------------------------------------------------------------
-W(r'''<#
-.SYNOPSIS
+W(f'''<#
+    Dark Colony patcher {PATCHER_VERSION}, build {PATCHER_BUILD} - generated {PATCHER_GENERATED}.
+
+''')
+W(r'''.SYNOPSIS
     Rebuilds the patched Dark Colony executables from the untouched originals, one documented
     patch at a time, so that anyone can see exactly which bytes change and why.
 
@@ -1604,7 +1650,16 @@ $ErrorActionPreference = 'Stop'
 #  And one that grows the file (the icon and online fixes, the last ones of a build): @{ Append = <offset = the file's
 #  length before>; Sha256 = '<of the appended bytes>'; Length = <n>; Base64 = '<the appended bytes>' }.
 # =================================================================================================
-$Builds = @(
+''')
+W(f'''# Version and build of this patcher (maintainer, 2 Oct 2026): the version is set by hand in the generator when the
+# patcher's behaviour changes, the build is the UTC time of the generation (YYYYMMDD.HHMM) - the commits it was
+# generated from are in the header above.
+$PatcherVersion = '{PATCHER_VERSION}'
+$PatcherBuild = '{PATCHER_BUILD}'
+$PatcherGenerated = '{PATCHER_GENERATED}'
+$script:BannerShown = $false   # the command-line banner is printed once (Set-StrictMode: declare before reading)
+''')
+W(r'''$Builds = @(
 ''')
 
 for bd in build_data:
@@ -1814,7 +1869,7 @@ $HD_SRC = 'HD_SRC'
 $HD_FOLDER_RE = [regex] '^(?i)(HD|UW)_\d{4}P$'
 # the copies the 640x480 build reads (fixes movies / ozi / music / online at the original size)
 $STOCK_COPIES = @('exp\intrface\bintoze', 'dc\intrface\bintoze', 'ozi_ns\intrface\bintoze', 'exp\intrface\lopme', 'dc\intrface\lopme', 'ozi_ns\intrface\lopme',
-                  'GAMESTAT\HSCNDC.TXT', 'GAMESTAT\GSCNDC.TXT', 'INTRFACE\ONLINE', 'INTRFACE\ONLINEBG.GIF')
+                  'GAMESTAT\HSCNDC.TXT', 'GAMESTAT\GSCNDC.TXT', 'INTRFACE\ONLINE', 'INTRFACE\ONLINEBG.GIF', 'INTRFACE\REPLAYE', 'INTRFACE\REPLAYBG.GIF')
 
 # What a run for $Keep (a folder name, or '' for a 640x480 build) deletes: every other resolution's folder under the
 # game folder and under exp\, dc\, ozi_ns\ (HD_*P / UW_*P and the pre-October INTRF_HD / intrf_hd), plus - for an
@@ -2694,17 +2749,17 @@ function Get-TextmsgLine([int] $N, [string] $Text) {
 }
 
 function Edit-OziMenu([string] $Text) {
-    # right column: ONLINE WAR (8, 29 Sep 2026), an empty row reserved for a replay button, MULTI PLAYER WAR, ENCYCLOPEDIA, QUIT
-    $cols = @(@(1, 6, 7, 0, 2, 16, 4), @(8, $null, 3, 5, $null, $null, 12))
+    # right column: ONLINE WAR (8, 29 Sep 2026), REPLAY ONLINE GAME (9, 2 Oct 2026), MULTI PLAYER WAR, ENCYCLOPEDIA, QUIT
+    $cols = @(@(1, 6, 7, 0, 2, 16, 4), @(8, 9, 3, 5, $null, $null, 12))
     $gapAfter = @(1, 3, 5)
     $stockButtons = @(0, 1, 2, 3, 4, 5, 12, 16)
-    $stockGadgets = @(9, 10, 11, 13, 17)   # 8 is renumbered (see $renum)
-    $newButtons = @(6, 7, 8)
-    # widget ids are one object space for every kind: the plates 6, 7 and 8 of buttons 0, 1 and 2 move to
-    # 19, 20 and 24 so that the button ids 6, 7 (Dark Colony) and 8 (ONLINE WAR) are free
-    $renum = @{ 6 = 19; 7 = 20; 8 = 24 }
-    $gadgetOf = @{ 0 = 19; 1 = 20; 2 = 24; 3 = 9; 4 = 10; 5 = 11; 6 = 21; 7 = 22; 8 = 23; 12 = 13; 16 = 17 }
-    $labelOf = @{ 6 = 9; 7 = 10; 8 = 11 }
+    $stockGadgets = @(10, 11, 13, 17)   # 8 and 9 are renumbered (see $renum)
+    $newButtons = @(6, 7, 8, 9)
+    # widget ids are one object space for every kind: the plates 6, 7, 8 and 9 of buttons 0, 1, 2 and 3 move to
+    # 19, 20, 24 and 25 so that the button ids 6, 7 (Dark Colony), 8 (ONLINE WAR) and 9 (REPLAY ONLINE GAME) are free
+    $renum = @{ 6 = 19; 7 = 20; 8 = 24; 9 = 25 }
+    $gadgetOf = @{ 0 = 19; 1 = 20; 2 = 24; 3 = 25; 4 = 10; 5 = 11; 6 = 21; 7 = 22; 8 = 23; 9 = 26; 12 = 13; 16 = 17 }
+    $labelOf = @{ 6 = 9; 7 = 10; 8 = 11; 9 = 12 }
     $template = @{ 'pushb' = 16; 'gadget' = 17 }
     $banimId = 18
     # `banim` = the menu's opening wave: the first listed plate carries anim_oneoff, each finished
@@ -2714,7 +2769,7 @@ function Edit-OziMenu([string] $Text) {
     $textTemplate = 8
     $stockTopLimit = 218
     $labels = @{ 1 = 'COUNCIL WARS'; 2 = 'ACADEMY'; 3 = 'LOAD CW GAME'; 5 = 'LOAD OZI GAME'
-                 8 = 'OZI MISSIONS'; 9 = 'DARK COLONY'; 10 = 'LOAD DC GAME'; 11 = 'ONLINE WAR' }
+                 8 = 'OZI MISSIONS'; 9 = 'DARK COLONY'; 10 = 'LOAD DC GAME'; 11 = 'ONLINE WAR'; 12 = 'REPLAY ONLINE GAME' }
     $xy = @{}
     foreach ($m in ([regex] '(?m)^\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s').Matches($Text)) { $xy[[int]$m.Groups[1].Value] = @([int]$m.Groups[2].Value, [int]$m.Groups[3].Value) }
     $gadgets = @{}
@@ -2722,12 +2777,12 @@ function Edit-OziMenu([string] $Text) {
     $missing = @()
     foreach ($need in $stockButtons) { if (-not $xy.ContainsKey($need)) { $missing += "pushb $need" } }
     foreach ($need in $stockGadgets) { if (-not $gadgets.ContainsKey($need)) { $missing += "gadget $need" } }
-    # the stock grid has the plates as 6, 7 and 8, this function's own output as 19, 20 and 24 (the 23 Sep
-    # form as 19, 20 and 8): each pair needs one of its two ids
+    # the stock grid has the plates as 6, 7, 8 and 9, this function's own output as 19, 20, 24 and 25 (the 23 Sep
+    # form as 19, 20, 8, 9; the 29 Sep form as 19, 20, 24, 9): each pair needs one of its two ids
     foreach ($k in @($renum.Keys | Sort-Object)) { if (-not ($gadgets.ContainsKey([int]$k) -or $gadgets.ContainsKey([int]$renum[$k]))) { $missing += ('gadget {0}/{1}' -f $k, $renum[$k]) } }
     $b = ([regex] '(?m)^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s').Match($Text)
-    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + 2), [string] ($stockButtons.Count + $newButtons.Count))   # stock grid, the 23 Sep form, this form
-    if (-not $b.Success -or $b.Groups[1].Value -ne $b.Groups[2].Value -or -not ($pairs -contains $b.Groups[1].Value)) { $missing += 'banim 18 with 8, 10 or 11 pairs' }
+    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + 2), [string] ($stockButtons.Count + 3), [string] ($stockButtons.Count + $newButtons.Count))   # stock grid, the 23 Sep form, the 29 Sep form, this form
+    if (-not $b.Success -or $b.Groups[1].Value -ne $b.Groups[2].Value -or -not ($pairs -contains $b.Groups[1].Value)) { $missing += 'banim 18 with 8, 10, 11 or 12 pairs' }
     if ($missing.Count) { throw ("bintroe: not Classic's 2x4 button grid (missing " + ($missing -join ', ') + ')') }
     $xs = @($xy.Values | ForEach-Object { $_[0] } | Sort-Object -Unique)
     $ys = @($xy.Values | ForEach-Object { $_[1] } | Sort-Object -Unique)
@@ -2795,7 +2850,7 @@ function Edit-OziMenu([string] $Text) {
             $id = [int] $m.Groups[2].Value
             if ($kind -eq 'pushb' -and ($dropPushb -contains $id)) { continue }     # re-emitted below
             if ($kind -eq 'gadget' -and ($dropGadget -contains $id)) { continue }
-            if ($kind -eq 'gadget' -and $renum.ContainsKey($id)) {                  # free ids 6, 7 and 8
+            if ($kind -eq 'gadget' -and $renum.ContainsKey($id)) {                  # free ids 6, 7, 8 and 9
                 $line = Set-ScriptTokens $line @{ 2 = [string] $renum[$id] }
                 $id = [int] $renum[$id]
             }
@@ -3361,6 +3416,77 @@ function Edit-OnlineScript([string] $Text) {
     return ($out -join "`n")
 }
 
+# The REPLAY ONLINE GAME screen (2 Oct 2026, doc 10.65): ONLINE -> REPLAYE, the same edits as patch_online.replay_script
+# (byte-identical output): the list narrowed to 40 columns (320 px), scroll bar / UP / DOWN and their plates 72 px LEFT
+# of their stock LOADGE places, the header line 40 columns, the participant pane after it - eight `checkb` rows (cells
+# 149 off = the empty box / 8 on = the green cross of HD_SRC\KNOBR.SPR, `pictures hd_src/knobr`) 30 px apart from list
+# top + 6 at list x + 376, a 13-column read-only name right of each box, the heading in_text 48 above them - the title
+# "Replay Online Game", the button REPLAY and the background REPLAYBG.GIF.  Idempotent on its own output.
+function Edit-ReplayScript([string] $Text) {
+    $m = [regex]::Match($Text, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s')
+    if (-not $m.Success) { throw 'ONLINE: no list 0 line' }
+    $lx = [int]$m.Groups[1].Value; $ly = [int]$m.Groups[2].Value; $lw = [int]$m.Groups[3].Value
+    if ($lw -ne 448 -and $lw -ne 320) { throw ('ONLINE: list width {0}, expected 448' -f $lw) }
+    $already = ($lw -eq 320)
+    $pane = New-Object System.Collections.Generic.List[string]
+    for ($k = 0; $k -lt 8; $k++) { $pane.Add(('checkb   {0}  0  {1}  {2}   27   17  149   8   -' -f (32 + $k), ($lx + 376), ($ly + 6 + 30 * $k))) }
+    for ($k = 0; $k -lt 8; $k++) { $pane.Add(('in_text  {0}  0  {1}  {2}   13    1  0  -  read_only' -f (40 + $k), ($lx + 407), ($ly + 6 + 30 * $k + 3))) }
+    $pane.Add(('in_text  48  0  {0}  {1}   17    1  0  -  read_only' -f ($lx + 376), ($ly - 16)))
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in $Text.Split("`n")) {
+        $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
+        $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
+        $w = [regex]::Match($line, '^\s*(\w+)\s+(\d+)\s')
+        $bgm = [regex]::Match($line, '^\s*background\s+\S+/\S+\s*$')
+        if ($bgm.Success) { $out.Add(([regex]::Replace($line, '(\S+/)\S+\s*$', '${1}replaybg')) + $cr); continue }
+        if ([regex]::IsMatch($line, '^\s*pictures\s+\S+\s*$')) { $out.Add('pictures hd_src/knobr' + $cr); continue }   # the bank with the empty box
+        if ($w.Success) {
+            $kind = $w.Groups[1].Value; $id = [int]$w.Groups[2].Value
+            if (($kind -eq 'checkb' -and $id -ge 32 -and $id -le 39) -or ($kind -eq 'in_text' -and (($id -ge 40 -and $id -le 47) -or $id -eq 48))) { continue }   # re-emitted after the header line
+            if ($kind -eq 'list' -and $id -eq 0) { $line = Set-ScriptTokens $line @{ 6 = '320' } }
+            elseif ((-not $already) -and (($kind -eq 'scroll' -and $id -eq 1) -or ($kind -eq 'pushb' -and ($id -eq 2 -or $id -eq 3)) -or ($kind -eq 'gadget' -and ($id -eq 7 -or $id -eq 8)))) {
+                $x = [int]([regex]::Match($line, '^\s*\w+\s+\d+\s+\d+\s+(\d+)').Groups[1].Value)
+                $line = Set-ScriptTokens $line @{ 4 = [string]($x - 56 - 72) }
+            }
+            elseif ($kind -eq 'in_text' -and $id -eq 30) {
+                $out.Add((Set-ScriptTokens $line @{ 6 = '40' }) + $cr)
+                foreach ($e in $pane) { $out.Add($e + $cr) }
+                continue
+            }
+            elseif ($kind -eq 'textmsg' -and $id -eq 1) { $line = Get-TextmsgLine 1 'Replay Online Game' }
+            elseif ($kind -eq 'textmsg' -and $id -eq 2) { $line = Get-TextmsgLine 2 'REPLAY' }
+        }
+        $out.Add($line + $cr)
+    }
+    return ($out -join "`n")
+}
+
+# LOADER.GIF with grey frames drawn into it (patch_online.online_background / draw_frame: a 3-px tube in the palette's
+# greys 35 / 106 / 35, a 2-px black gap, black inside, corner pixels off); $Rects = x0, y0, x1, y1 (exclusive).
+function Get-FramedBackground($Im, $Rects) {
+    $greyIdx = foreach ($g in 35, 106, 35, 0) {
+        $best = -1; $bestD = 999
+        for ($i = 0; $i -lt 256; $i++) {
+            $r = $Im.Palette[3 * $i]
+            if ($r -eq $Im.Palette[3 * $i + 1] -and $r -eq $Im.Palette[3 * $i + 2] -and [Math]::Abs([int]$r - $g) -lt $bestD) { $bestD = [Math]::Abs([int]$r - $g); $best = $i }
+        }
+        $best
+    }
+    $px = [byte[]] $Im.Pixels.Clone()
+    foreach ($r in $Rects) {
+        $x0 = $r[0]; $y0 = $r[1]; $x1 = $r[2]; $y1 = $r[3]
+        for ($y = $y0; $y -lt $y1; $y++) {
+            for ($x = $x0; $x -lt $x1; $x++) {
+                if (($x -eq $x0 -or $x -eq ($x1 - 1)) -and ($y -eq $y0 -or $y -eq ($y1 - 1))) { continue }
+                $d = [Math]::Min([Math]::Min($x - $x0, $x1 - 1 - $x), [Math]::Min($y - $y0, $y1 - 1 - $y))
+                $v = if ($d -lt 3) { $greyIdx[$d] } else { $greyIdx[3] }
+                $px[$y * $Im.Width + $x] = [byte]$v
+            }
+        }
+    }
+    return [DcGif]::Encode('GIF87a', $Im.Width, $Im.Height, $Im.Palette, $px)
+}
+
 # DEFAULT_SERVER.TXT as the repository ships it (the same bytes as patch_online.DEFAULT_SERVER_TEXT).
 $DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server that ONLINE WAR connects to.', ' *', ' * Dark Colony Ultimate reads this file when you press ONLINE WAR in the main menu.', ' * It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay, https://github.com/endotermic/Dark-Colony-Server), shows the rooms the', ' * relay offers - map, terrain, seats, players, bots, status - and joins the room you pick.', ' *', ' * Usage:', ' *   - one address, optionally with a port:      my.relay.example.org:8889', ' *   - the word "plain" after the address turns the encryption off, for a relay on your own', ' *     network without a certificate (the plain relay port is 8888):', ' *                                                 192.168.1.10 plain', ' *   - comments in the C++ style are ignored: "//" to the end of a line, or a block like this one.', ' *', ' * Keep one address in the file. MULTI PLAYER WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
 
@@ -3375,42 +3501,33 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     Write-Latin1 $dst $t
     $lines = @(('wrote {0}\ONLINE (the ONLINE WAR room screen, derived from LOADGE)' -f $sub))
     # the background: LOADER.GIF with three grey frames - header + list, the scroll bar with its buttons, the server
-    # and status lines (patch_online.online_background / frame_rects: a 3-px tube in the palette's greys 35 / 106 / 35,
-    # a 2-px black gap, black inside, corner pixels off)
+    # and status lines (patch_online.online_background / frame_rects)
     $loader = Find-CI (Join-Path $GameDir $sub) 'LOADER.GIF'
     if (-not $loader) { throw 'LOADER.GIF is missing' }
     Initialize-GifCodec    # at 640x480 no interface set is built, so the codec may not be compiled yet
     $lm = [regex]::Match($t, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+\d+\s+(\d+)\s')
     $lx = [int]$lm.Groups[1].Value; $ly = [int]$lm.Groups[2].Value; $lh = [int]$lm.Groups[3].Value
     $im = [DcGif]::Decode([System.IO.File]::ReadAllBytes($loader))
-    $greyIdx = foreach ($g in 35, 106, 35, 0) {
-        $best = -1; $bestD = 999
-        for ($i = 0; $i -lt 256; $i++) {
-            $r = $im.Palette[3 * $i]
-            if ($r -eq $im.Palette[3 * $i + 1] -and $r -eq $im.Palette[3 * $i + 2] -and [Math]::Abs([int]$r - $g) -lt $bestD) { $bestD = [Math]::Abs([int]$r - $g); $best = $i }
-        }
-        $best
-    }
     $b = $ly + $lh; $ux = $lx + 448 + 12
     # every coordinate in its own parentheses: inside @( , ) the comma binds before + and -
     $rects = @(@(($lx - 6), ($ly - 22), ($lx + 448 + 6), ($b + 3)), @(($ux - 4), $ly, ($ux + 26 + 4), ($b + 2)), @(($lx - 6), ($b + 8), ($lx + 448 + 6), ($b + 52)))
-    $px = $im.Pixels
-    foreach ($r in $rects) {
-        $x0 = $r[0]; $y0 = $r[1]; $x1 = $r[2]; $y1 = $r[3]
-        for ($y = $y0; $y -lt $y1; $y++) {
-            for ($x = $x0; $x -lt $x1; $x++) {
-                if (($x -eq $x0 -or $x -eq ($x1 - 1)) -and ($y -eq $y0 -or $y -eq ($y1 - 1))) { continue }
-                $d = [Math]::Min([Math]::Min($x - $x0, $x1 - 1 - $x), [Math]::Min($y - $y0, $y1 - 1 - $y))
-                $v = if ($d -lt 3) { $greyIdx[$d] } else { $greyIdx[3] }
-                $px[$y * $im.Width + $x] = [byte]$v
-            }
-        }
-    }
-    $bgOut = [DcGif]::Encode('GIF87a', $im.Width, $im.Height, $im.Palette, $px)
     $bgDst = Find-CI (Join-Path $GameDir $sub) 'ONLINEBG.GIF'
     if (-not $bgDst) { $bgDst = Join-Path (Join-Path $GameDir $sub) 'ONLINEBG.GIF' }
-    [System.IO.File]::WriteAllBytes($bgDst, $bgOut)
+    [System.IO.File]::WriteAllBytes($bgDst, (Get-FramedBackground $im $rects))
     $lines += ('wrote {0}\ONLINEBG.GIF (the screen background: LOADER.GIF with grey frames around the list, the scroll bar and the text lines)' -f $sub)
+    # REPLAY ONLINE GAME (2 Oct 2026, doc 10.65): the second screen from the ONLINE script, its background with the
+    # list frame (40 columns), the scroll bar's frame, the participant pane's frame and the full-width text frame
+    $rt = Edit-ReplayScript $t
+    $rDst = Find-CI (Join-Path $GameDir $sub) 'REPLAYE'
+    if (-not $rDst) { $rDst = Join-Path (Join-Path $GameDir $sub) 'REPLAYE' }
+    Write-Latin1 $rDst $rt
+    $lines += ('wrote {0}\REPLAYE (the REPLAY ONLINE GAME screen, derived from ONLINE)' -f $sub)
+    $rux = $lx + 320 + 12
+    $rRects = @(@(($lx - 6), ($ly - 22), ($lx + 320 + 6), ($b + 3)), @(($rux - 4), $ly, ($rux + 26 + 4), ($b + 2)), @(($lx + 368), ($ly - 22), ($lx + 518), ($b + 3)), @(($lx - 6), ($b + 8), ($lx + 518), ($b + 52)))
+    $rBgDst = Find-CI (Join-Path $GameDir $sub) 'REPLAYBG.GIF'
+    if (-not $rBgDst) { $rBgDst = Join-Path (Join-Path $GameDir $sub) 'REPLAYBG.GIF' }
+    [System.IO.File]::WriteAllBytes($rBgDst, (Get-FramedBackground $im $rRects))
+    $lines += ('wrote {0}\REPLAYBG.GIF (the replay screen background: frames around the list, the scroll bar, the participant pane and the text lines)' -f $sub)
     if (-not (Find-CI $GameDir 'DEFAULT_SERVER.TXT')) {
         Write-Latin1 (Join-Path $GameDir 'DEFAULT_SERVER.TXT') $DefaultServerText
         $lines += 'wrote DEFAULT_SERVER.TXT (dark-colony-server.fly.dev; an existing file is never overwritten)'
@@ -3585,6 +3702,7 @@ function Get-RequirementLines($Build, $Patch) {
 }
 
 function Write-PatchList([switch] $WithEdits) {
+    Write-Host ("Dark Colony patcher {0}, build {1} (generated {2})" -f $PatcherVersion, $PatcherBuild, $PatcherGenerated) -ForegroundColor Cyan
     foreach ($b in $Builds) {
         Write-Host ''
         Write-Host ("=== {0}: {1}" -f $b.Id, $b.Title) -ForegroundColor Cyan
@@ -3677,7 +3795,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $bold = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'Dark Colony patcher'
+    $form.Text = "Dark Colony patcher $PatcherVersion (build $PatcherBuild)"
     $form.ClientSize = New-Object System.Drawing.Size(984, 700)
     $form.FormBorderStyle = 'FixedDialog'; $form.MaximizeBox = $false
     $form.StartPosition = 'CenterScreen'
@@ -3725,7 +3843,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $lblLnk.Location = '44,334'; $lblLnk.Size = '900,36'
     $lblLnk.Text = 'Named "Dark Colony Ultimate", "Dark Colony Map Editor" (and "Dark Colony" if you patch it); each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
     $lblNext = New-Object System.Windows.Forms.Label
-    $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = 'Press Next to continue.'
+    $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = "Press Next to continue.          Dark Colony patcher $PatcherVersion, build $PatcherBuild (generated $PatcherGenerated)"
     # a missing or wrong original: a big red banner here, the details and the remedies on its page
     $lblProblem = New-Object System.Windows.Forms.Label
     $lblProblem.Location = '24,378'; $lblProblem.Size = '936,156'; $lblProblem.Visible = $false
@@ -4551,6 +4669,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $skipped = @(& $g.SkippedLines)
         if ($skipped.Count -gt 0) { $text += "`r`n`r`nNot patched: " + ($skipped -join ', ') }
         if ($ok -gt 0) { $text += "`r`n`r`nStart the games with the desktop shortcuts or the files above." }
+        $text += "`r`n`r`nDark Colony patcher $PatcherVersion, build $PatcherBuild"
         if ($interactive) { & $g.Notify $text $title $icon }
         return $results
     }
@@ -4695,6 +4814,7 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
     $origPath = (Resolve-Path $OriginalFile).Path
     $data = [System.IO.File]::ReadAllBytes($origPath)
     $sha = Get-Sha256Hex $data
+    if (-not $script:BannerShown) { $script:BannerShown = $true; Write-Host ("Dark Colony patcher {0}, build {1} (generated {2})" -f $PatcherVersion, $PatcherBuild, $PatcherGenerated) -ForegroundColor Cyan; Write-Host '' }
     Write-Host ("input : {0}" -f $origPath)
     Write-Host ("        {0} bytes, SHA-256 {1}" -f $data.Length, $sha)
 

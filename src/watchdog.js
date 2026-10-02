@@ -71,7 +71,9 @@ export class Watchdog {
             r.evict(c, `no echo for frame ${late}`);
             break;
           }
-          if (now - c.lastSeen > cfg.IDLE_TIMEOUT_MS) r.evict(c, 'idle');
+          // a viewer whose recording has ended (plan 21) gets no more frames, so nothing to answer: it may
+          // look at the final state until it quits
+          if (now - c.lastSeen > cfg.IDLE_TIMEOUT_MS && !(r.replay && r.game.replayDone)) r.evict(c, 'idle');
           break;
         }
         default:

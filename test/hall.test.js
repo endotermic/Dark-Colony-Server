@@ -124,7 +124,7 @@ test("a newcomer gets 'd', then one packed frame: rooms 1..7 in the rows in plac
   assert.deepEqual(chat.slice(0, 2), [`Welcome to Dark Colony server ${VERSION_SHORT}.`, 'No room selected. Type /1../7 + ENTER.'], 'two header rows (maintainer, 27 Sep 2026)');
   assert.ok(chat.slice(2).every((t) => t === ' '));
   assert.deepEqual(hallClient(h, p).chat.header.length, 2, 'both greeting lines are static');
-  assert.ok(!chat.some((t) => t.startsWith('Mercenary:')), 'the fake host greets in rooms only');
+  assert.ok(!chat.some((t) => t.startsWith('AI Mercenary:')), 'the fake host greets in rooms only');
   assert.equal(h.hall.clients.size, 1);
   assert.equal(h.room.clients.size, 0);
 });
@@ -200,7 +200,7 @@ test('the name may be typed in the hall and follows into the room; race, colour 
   assert.ok(cmds.some((c) => c.type === T.NAME && c.player === p.slot && c.name === 'Nika'));
   const win = windowOf(cmds);
   assert.equal(win[0], 'Room 1: Plink - O, jungle, 8 players.', 'the room header; no player name, not even a typed one');
-  assert.ok(win[1].startsWith('Mercenary: '), 'the fake host greets (maintainer, 12 Sep 2026)');
+  assert.ok(win[1].startsWith('AI Mercenary: '), 'the fake host greets (maintainer, 12 Sep 2026)');
   assert.equal(win[3], ' ', 'present-not-ready: nothing below the three header lines');
   assert.ok(!p.gone);
 });
@@ -241,7 +241,7 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   const roomScen = cmds.find((cmd) => cmd.type === T.SCENARIO);
   assert.equal(roomScen.file, 'D8PLAY02.SCN');
   assert.equal(roomScen.title, room.map.titleWire);
-  assert.ok(cmds.some((cmd) => cmd.type === T.NAME && cmd.player === 0 && cmd.name === 'Mercenary'), 'rows are real names again');
+  assert.ok(cmds.some((cmd) => cmd.type === T.NAME && cmd.player === 0 && cmd.name === 'AI Mercenary'), 'rows are real names again');
   assert.ok(cmds.some((cmd) => cmd.type === T.NAME && cmd.player === p.slot && cmd.name === `Player${p.slot}`));
   assert.ok(cmds.some((cmd) => cmd.type === T.READY && cmd.player === p.slot && cmd.status === 1), 'present, not ready (no automatic start)');
   for (const s of [1, 2, 3, 4, 5, 6, 7].filter((x) => x !== p.slot)) {
@@ -255,7 +255,7 @@ test('/N selects a room: the map line shows it, the rows stay; READY moves the c
   const lines = windowOf(cmds);
   assert.equal(lines.length, CHAT_ROWS, 'the whole window is repainted: the hall chat is gone');
   assert.equal(lines[0], 'Room 3: Black Widow, desert, 8 players.');
-  assert.ok(lines[1].startsWith('Mercenary: Hi! I am the AI host'), 'the host greeting under the room line');
+  assert.ok(lines[1].startsWith('AI Mercenary: Hi! I am the AI host'), 'the host greeting under the room line');
   assert.ok(lines.slice(3).every((t) => t === ' '), 'three header lines, nothing else');
 
   // the hall no longer writes to this client
@@ -415,7 +415,7 @@ test('seven fakes: rooms show (0/1), stay joinable, the fake in the way moves, a
   const names = cmds.filter((cmd) => cmd.type === T.NAME);
   for (const f of room.fakeSlots()) assert.ok(names.some((n) => n.player === f.slot && n.name === f.name), `${f.name} named in the dump`);
   const fakeNames = names.filter((n) => n.player !== p.slot).map((n) => n.name).sort();
-  assert.deepEqual(fakeNames, ['Drifter', 'Marauder', 'Mercenary', 'Nomad', 'Outlaw', 'Renegade', 'Vagabond']);
+  assert.deepEqual(fakeNames, ['AI Drifter', 'AI Marauder', 'AI Mercenary', 'AI Nomad', 'AI Outlaw', 'AI Renegade', 'AI Vagabond']);
   assert.ok(cmds.filter((cmd) => cmd.type === T.TYPE).every((cmd) => cmd.value === 2), 'all eight slots are humans');
   assert.equal(windowOf(cmds)[0], 'Room 4: Circle of Friends, desert, 8', 'a long header line wraps at 40 on the server side');
   p.pressReady();

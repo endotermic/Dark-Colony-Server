@@ -3,12 +3,18 @@
 //   node tools/fakeclient.js --port 8888 --count 3 [--host 127.0.0.1] [--ready-after 1000]
 //        [--tick-ms 33] [--behave noEcho,noKeepalive,...] [--duration 20000] [--room 2] [--ready-policy auto|hold|follow]
 //        [--online] [--tls] [--servername dark-colony-server.fly.dev]
+//        [--replay [ID]] [--slot S]
 //
 // --online: the ONLINE WAR dialogue of the patched Ultimate exe (plan §20): 0x50 LIST right after
 // connecting, the 0x51 ROOMS table is printed, 0x52 ENTER --room (or the first open room) is sent,
 // and after 0x54 ENTERING the client continues as a stock lobby client from the 'd' handshake, with
 // its sequence counters reset like the game's own connection through the exe's proxy. --tls wraps
 // the connection in TLS (port 8889 on Fly; --servername for the certificate check, default = host).
+//
+// --replay: the REPLAY ONLINE GAME dialogue (plan §21): 0x55 RLIST, the 0x56/0x57 list is printed,
+// 0x58 RPLAY for recording --replay ID (0 or none = the newest) in seat --slot (default: the first
+// recorded real player), and after 0x59 REPLAYING the client continues as a stock lobby client of the
+// viewer room (READY after --ready-after starts the playback; the sync frames are counted).
 //
 // Behaviours: silent, noKeepalive, noEcho, noProgress, noMready, badSeq, garbage, cheat, speed, foreign
 //
@@ -43,9 +49,15 @@ export class FakeClient extends EventEmitter {
     this.announceName = opts.announceName ?? false; // send the name after the handshake, as if typed
     this.readyWanted = 1; // follow: the status last sent
     this.online = opts.online ?? false; // ONLINE WAR dialogue before the lobby (plan §20)
+    this.replay = opts.replay ?? null; // REPLAY ONLINE GAME (plan §21): recording id to watch (0 = newest), null = not a replay client
+    this.replaySlot = opts.replaySlot ?? -1; // seat to watch from (-1 = the first recorded real player)
+    this.replayList = []; // the last REPLAY entries
+    this.replayHeader = '';
+    this.replayCount = -1;
     this.tls = opts.tls ?? false;
     this.servername = opts.servername ?? null;
     this.rooms = []; // the last ROOMS table (online)
+    if (this.replay !== null) this.online = true; // the replay dialogue runs on the same hall connection
     this.refusals = [];
     this.enteredSlot = -1; // the slot 0x54 ENTERING announced
     this.behave = new Set(opts.behave ?? []);
@@ -155,8 +167,28 @@ export class FakeClient extends EventEmitter {
   /** ONLINE WAR: ask for the room table and keep the connection alive while browsing. */
   startOnline() {
     this.state = 'online';
-    this.send(build.list());
+    this.send(this.replay !== null ? build.rlist() : build.list());
     this.every(700, () => this.send(build.keepalive()));
+  }
+
+  /** The list is complete: pick the recording and the seat, send RPLAY once. */
+  pickReplay() {
+    if (this.enterSent) return;
+    const list = this.replayList;
+    const e = this.replay > 0 ? list.find((x) => x.id === this.replay) : list[0];
+    if (!e) {
+      this.log(`${this.name}: no recording to watch (${list.length} listed)`);
+      this.emit('noreplay', list);
+      return;
+    }
+    let slot = this.replaySlot;
+    if (slot < 0) {
+      slot = e.names.findIndex((n, k) => n && (e.real >> k) & 1);
+      if (slot < 0) slot = e.names.findIndex((n) => n);
+    }
+    this.enterSent = true;
+    this.log(`${this.name}: RPLAY recording ${e.id} (${e.row.trim()}) as slot ${slot} "${e.names[slot]}"`);
+    this.send(build.rplay(e.id, slot));
   }
 
   onOnlineFrame(payload) {
@@ -174,6 +206,29 @@ export class FakeClient extends EventEmitter {
             this.send(build.enter(pick.id));
           }
         }
+      } else if (c.type === T.REPLAYS) {
+        this.replayHeader = d.header;
+        this.replayCount = d.count;
+        this.replayList = [];
+        this.log(`${this.name}: ${d.count} recording(s): ${d.header}`);
+        if (d.count === 0) {
+          this.emit('replays', []);
+          this.pickReplay();
+        }
+      } else if (c.type === T.REPLAY) {
+        this.replayList.push(d);
+        this.log(`${this.name}: replay ${d.id}: ${d.row}  [${d.names.map((n, k) => (n ? `${k}:${n}${(d.real >> k) & 1 ? '*' : ''}` : '')).filter(Boolean).join(' ')}]`);
+        if (this.replayList.length >= this.replayCount) {
+          this.emit('replays', this.replayList);
+          this.pickReplay();
+        }
+      } else if (c.type === T.REPLAYING) {
+        this.enteredSlot = d.slot;
+        this.log(`${this.name}: REPLAYING as slot ${d.slot}; the game's connection starts at sequence 0`);
+        this.clearTimers();
+        this.seqOut = 0;
+        this.state = 'connecting';
+        this.emit('entering', d.slot);
       } else if (c.type === T.REFUSED) {
         this.refusals.push(d.reason);
         this.log(`${this.name}: refused: ${d.reason}`);
@@ -379,6 +434,8 @@ if (isMain) {
       room: Number(args.room ?? 0),
       readyPolicy: args['ready-policy'] ?? 'auto',
       online: args.online === 'true',
+      replay: args.replay === undefined ? null : Number(args.replay === 'true' ? 0 : args.replay),
+      replaySlot: args.slot === undefined ? -1 : Number(args.slot),
       tls: args.tls === 'true',
       servername: args.servername,
       behave: i === count - 1 ? behave : [], // only the last client misbehaves

@@ -4973,6 +4973,113 @@ after a 3-4 s screen load at 1920x1200, so the first thing to shorten is §10.46
 
 **Game test (28 Sep 2026, Ultimate 1920×1200 from `subst W:` on the game folder, local relay `BOT_HIRE=true SYNC_CHECK=shadow LOG_LEVEL=debug`).** Rig `battle_chat.py` (menu → MULTI PLAYER WAR → TCP/IP → CONNECT TO SERVER → 127.0.0.1 → `/1` → READY twice; DPI-aware input and captures; `SetCursorPos(5,5)`) plus `chatter.mjs`, a `FakeClient` in room 1 with `readyPolicy: 'follow'` that sends `Tester: line N of 8` every 2.5 s from 25 s into the battle. Captures every 2.6 s of the view's last rows: lines 1-2, then 2-4, 2-5, 3-7, **3-8 = six lines at once**, oldest on top, then 4-8, 5-8, 6-8 … one line leaving every 7.5 s, all above the bevel plate; `error.log` empty. Sound: the battle music masks a process-wide meter, so the same run from a copy without `MUSIC\` and `exp\music\` (`subst Q:`) with a pycaw `IAudioMeterInformation` thread at 25 Hz: eight bursts of 0.33 s at peak 0.64 starting 0.2-0.7 s after each of the eight sends (81.4, 84.4, 86.4, 89.4, 91.4, 94.5, 96.4, 99.5 s), none before the first line. Rig lessons: the relay logs the hall's `/N` join as `READY status 2` too - match `"state":"LOBBY"` for the in-room READY; the fake client's `mready` reports game player 7, so shadow mode logs `shuffle mismatch … engine disabled, bots idle` (rig artefact, the bots then stand idle); music-free copy for any sound measurement.
 
+### 10.65 REPLAY ONLINE GAME: the relay's recorded battles in the Ultimate main menu, watched from a participant's seat (2 Oct 2026)
+
+Maintainer, 2 Oct 2026: "it's time to create a replay functionality for server and Ultimate executable.
+Ultimate must contain 'REPLAY ONLINE GAME' in main menu right under 'ONLINE WAR'. it must bring up the
+similar form as 'ONLINE WAR' does but with correct headers and modified. it must be possible to select
+from client list of participants (8 radio buttons with client names on the right pane of form)." The
+relay side is `RELAY_SERVER_PLAN.md` §21 (recordings on a Fly volume, the newest 50 kept, a private
+viewer room per watcher) and `DC16_NETWORK_PROTOCOL.md` §4.5 / §6.10 (messages `0x55..0x59`).
+
+**Menu.** Button id **9** in the right column's second row, the one reserved since 29 Sep: `build_ozi_overlay.py`
+`OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (8, 9, 3, 5, None, None, 12))`, `textmsg 12 REPLAY ONLINE GAME`
+(18 characters of the 8-px menu font = 144 px on the 179-px plate). Widget ids are one object space, so
+the button id 9 displaced MULTI PLAYER WAR's plate `gadget 9` → **25** (`OZI_RENUM`), the new plate is
+**26**, `banim` has 12 pairs, and the patcher's `Edit-OziMenu` is the byte-identical port. The exe's
+menu id filter `cmp edx,8` → **`cmp edx,9`** (`patch_online.py` `ID_FILTER_NEW`), and `online_dispatch`
+in the `.dccode` section tests `edi` for 8 (`online_war`) and 9 (`replay_game`), everything else to the
+loop head as before - still two edits in `AUTO`.
+
+**Screen `REPLAYE`** (`<folder>/replay` + the language letter; 640x480: `INTRFACE/REPLAYE`), derived by
+`patch_online.replay_script()` from the ONLINE script and by the patcher's `Edit-ReplayScript`: the list
+narrowed from 56 to **40 columns** (320 px), the scroll bar, UP and DOWN 72 px LEFT of their stock LOADGE
+places, the header line 40 columns, and right of the scroll bar the **participant pane**: `checkb 32..39`
+(27x17, the lobby's READY boxes: `pictures hd_src/knobr` = **`HD_SRC\KNOBR.SPR`**, KNOBE's 149 cells plus
+cell **149** = cell 9 with the "?" glyph blacked out - the maintainer, same day: "client radio buttons
+must be empty instead of question mark"; `patch_online.py bank` builds it from `INTRFACE/KNOBE.SPR`, the
+patcher lists it as the fix's `Data`; off = 149, on = 8, the green cross) at list x + 376, 30 px apart
+from list top + 6, a 13-column read-only `in_text 40..47` right of each box (x + 407, +3), the heading
+`in_text 48` "WATCH AS" at the header line's height; title "Replay Online Game", button **REPLAY** -
+**greyed until a seat is ticked** (`set_greyed 0x424574(ip, id; bl = flag)`, the function main.c uses
+for the CD-less menu buttons; maintainer: "'REPLAY' button must be disabled until user selects a client
+to watch for"; nothing is preselected); background
+`REPLAYBG.GIF` = LOADER.GIF with four frames (list, scroll bar, the pane x +368..+518, the text frame
+across the whole width). The pane frame ends 2 px inside the 640-wide form at every size (638 at
+640x480, 830 of 832 at 1024x768), so one layout serves all resolutions; the form's right artwork is
+covered where the pane sits. The ONLINE geometry has no room for a right pane at 56 columns - the
+maintainer's row format `[date time] [map name] [map type] [map slots count] [players] [AI count]
+[duration]` fits 40 columns as `02.10 14:54 Armageddo Desert 8 2 1 12:34` (map 9, terrain 6, one
+digit each for seats / players / computer players, `m:ss`; "1h40" from 100 minutes), with the header
+`DATE  UTC   MAP       TERR.  S P A  M:SS` sent by the relay like the rows.
+
+**Radio buttons = `checkb` widgets with the module's exclusivity.** The widget keyword table at
+`0x4895B4` (`{name, creator}` pairs) names `checkb` → creator `0x4271AC`: the script line is
+`checkb id 0 x y w h <cell off> <cell on> -`, the state struct at `objects[id]+0x28` (+0 state byte, +4
+/ +8 the cells), the draw `0x427420` paints the cell by the state, the vtable `0x4896E4` = {redraw
+`0x4270D0`, mouse handler `0x42711C`}. **The handler toggles the box itself** on a press (event 4):
+it stores the id at `ip+0x431C`, inverts the state byte, redraws, plays sound `0x61` and returns 2
+(now ticked) or 3 (now cleared); the hit dispatcher `0x423B30` puts the widget's index into the pump's
+out-parameter, so `pump(ip, &arg)` (`0x42417C`) yields kind 2 / 3 with `arg` = the box. The lobby
+code sets boxes from code with **`0x427308(eax = ip, edx = id, bl = state)`** (40 callers; asserts the
+widget type). The module takes kind 2 / 3, remembers the clicked seat and sets all eight boxes
+(`set_boxes`), so exactly one is ticked and the eight behave as radio buttons, and greys the REPLAY
+button while none is; `update_pane` fills the names of the selected list entry with every box empty
+(the `real` mask of the `REPLAY` message is carried for a client that wants to mark the real players),
+bots' seats are selectable too (their names carry `AI ` since the same day). The
+first build listened for kinds 4 / 5 - the return values of `0x4273B0`, which is the keyboard entry at
+vtable +0xC, not the mouse handler - and the game test showed two ticked boxes. WATCH sends `0x58 RPLAY
+id slot`; `0x59 REPLAYING slot` is handled exactly like `ENTERING` (the §10.51 proxy and network
+entry), the viewer's game then runs the recorded battle from that seat.
+
+**Module.** `online.c`: `run(ui, gs, replay)` shared by the exports `online_war` and `replay_game`;
+`room_screen(..., replay)` loads the screen by mode, sends `0x55 RLIST` instead of `LIST`, parses
+`0x56 REPLAYS` (count + header; the list is reset) and `0x57 REPLAY` (id, seats, players, bots, real
+mask, u16 seconds, the row, eight names - into `Work.replays[50]`, 9.7 KB of the VirtualAlloc'd work
+block, not the section), fills the list when the announced count is reached, polls `g_list_sel` every
+loop to follow the selection, handles the box events, and after WATCH is silent until the answer (F81).
+`GAME_CHECKB_SET 0x427308` and `GAME_SET_GREYED 0x424574` are the new engine addresses; no new Windows
+import. **Money (F83; maintainer, same day: "fix money count increase problem in replay mode, when money
+are not shrinking on purchase"):** a purchase is deducted from `MONEY` (`gs+0xBAC+p*0xE34`) only on
+the machine that issued it, every machine books the price into `SPENT` (`gs+0xBB0+p*0xE34`), and
+money is not in the checksum - so the viewer's seat only ever gained. `viewer_money_fix` in the proxy
+thread (100 ms `select` timeout while `g_viewer`) subtracts every increase of the local seat's `SPENT`
+(`gs+0x7D3C` = the local game player) from its `MONEY`, the normalisation the game's own `DISCONNECT`
+handler applies; a drop of `SPENT` marks a re-initialised battle. **`gs` here is the simulation state
+read from `.bss 0x4AA9DC`** (stored by the game start `0x41EAA0`, `mov ds:[4AA9DCh],eax`): the `gs`
+the main menu hands the module is proto.c's campaign object (flags `+0x14F0`/`+0x14F4`, settings
+`+0x1984`), a different allocation - the first build read local player 0, money 0 from it and
+corrected nothing (found with a memory probe of the running viewer, `smoke_rig/money_probe.py`). `ONLINE.LOG` gets the
+REPLAY lines (`--- REPLAY ONLINE GAME pressed`, `replay list: entries N`, the first box event's kind /
+id, `RPLAY recording` / `slot`, `REPLAYING slot`). **The relay sends the list one command per frame**:
+the module reads the first command of every frame (the room table was always one command), and the
+first game test lost every entry behind a packed header.
+
+**Patcher.** `gen_apply_script.py`: `Edit-ReplayScript`, `Get-FramedBackground` (the frame drawing shared
+by both backgrounds), `Write-OnlineScreen` writes `REPLAYE` + `REPLAYBG.GIF` after `ONLINE` +
+`ONLINEBG.GIF`, the 640x480 copies in `$STOCK_COPIES`, the two files excluded from `hd_data` like the
+ONLINE pair, the fix `online` text. Fixtures `hd_sets/<WxH>/HD_<h>P/REPLAYE` + `REPLAYBG.GIF` and the
+three `bintroe` copies per size regenerated from clean-copy patcher runs. Published Ultimate 1024x768
+dark **`4c7da630…`** (pwsh 7 = 5.1 = generator reference; the exe is 758 784 bytes with the
+14 600-byte module; `8208da56…` before the REPLAY / empty-box / money rounds of the same day);
+`dcexp16.asm` regenerated. The installer carries a version and build number since the same day
+(maintainer: "add version number and build number to the installer"): `PATCHER_VERSION` (1.0, set by
+hand in `gen_apply_script.py` when the patcher's behaviour changes) and the build `YYYYMMDD.HHMM` =
+the UTC time of the generation, plus the commits of both repositories (`+` = uncommitted changes), in
+the window title, the welcome page's footer, the result box, the command-line banner and the file's
+header (`$PatcherVersion`, `$PatcherBuild`, `$PatcherGenerated`).
+
+**Confirmed in game (2 Oct 2026, 1024x768, a local relay with one recorded battle):** the menu, the
+screen (list row, header, pane, frames), the radio behaviour, WATCH → the viewer lobby ("Replay of
+2026-10-02 15:30: Plink - O, 1 min. You sit in Player3's seat (slot 3) ...") → READY → the battle
+from that seat, `error.log` empty. Rig: `smoke_rig/drive.py` on a `subst X:` clean copy with
+`DEFAULT_SERVER.TXT` = `127.0.0.1 plain`, the relay started with `RECORD_DIR`, the recording made by
+`tools/fakeclient.js --room 1` (45 s); clicks at 1024x768: REPLAY ONLINE GAME (608,539), first list
+row (352,254), box k (701, 260 + 30k), WATCH (640,604), the lobby's READY box of slot s (815, 170 + 19s).
+A recording made with the fake client carries its synthetic MREADY (game player = slot), so the relay
+logs "start shuffle differs from the recording" for it - harmless for the smoke test, absent for real
+recordings.
+
 ## 11. Risks
 
 | Risk | Assessment |

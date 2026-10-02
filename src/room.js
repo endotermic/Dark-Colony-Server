@@ -28,7 +28,9 @@ export class Room {
    * @param log      logger (log.js)
    * @param now      monotonic clock in ms (injectable for tests)
    * @param random   random integer in [0, n) (injectable for tests)
-   * @param opts     { id: 1-based room number, map: entry of config.ROOM_LIST, engine, replay: a Replay (replay.js) }
+   * @param opts     { id: 1-based room number, map: entry of config.ROOM_LIST, engine, replay: a Replay (replay.js),
+   *                   replays: the recordings index (replays.js) that learns of every closed recording,
+   *                   onEmpty: (room) => void, called after the reset when the last client left (viewer rooms, plan §21) }
    */
   constructor(config, log, now = () => performance.now(), random = (n) => randomInt(n), opts = {}) {
     this.config = config;
@@ -37,6 +39,7 @@ export class Room {
     this.random = random;
     this.id = opts.id ?? 1;
     this.replay = opts.replay ?? null; // replay mode (plan §18.7): the lobby and the frames come from a recording
+    this.onEmpty = opts.onEmpty ?? null; // a viewer room (plan §21) is dropped by the pool once its client has left
     this.map = opts.map ?? this.replay?.map ?? config.ROOM_LIST[0];
     // occupied slots (fakes, AI and real players) may not exceed the map's player count (F22)
     this.capacity = this.map.players;
@@ -62,10 +65,12 @@ export class Room {
     this.watchdog = new Watchdog(this);
     // the battle engine beside the relay (plan §18). The engine module is loaded asynchronously by
     // index.js (enginebridge.js) and handed in through setEngine(); tests inject a fake one.
+    const recorder = config.RECORD_DIR ? new Recorder(config.RECORD_DIR, this.log) : null;
+    if (recorder && opts.replays) recorder.onClose = (file) => opts.replays.onRecorded(file); // the battle becomes watchable (plan §21)
     this.sync = new SyncCheck(this, {
       mode: config.SYNC_CHECK,
       recorder: teeRecorders([
-        config.RECORD_DIR ? new Recorder(config.RECORD_DIR, this.log) : null,
+        recorder,
         config.RECORD_LOG ? new LogRecorder(this.log) : null,
       ]),
       createGame: opts.engine?.createGame ?? null,
@@ -611,6 +616,7 @@ export class Room {
     client.destroy();
     if (this.clients.size === 0) {
       this.reset();
+      this.onEmpty?.(this);
       return;
     }
     if (this.state === STATE.LOBBY) this.lobby.onLeave(client);

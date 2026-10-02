@@ -16,8 +16,18 @@ primary_region = "iad"
   SYNC_CHECK = "send"
   # every battle leaves a compact, lossless recording in the log (about 10 KB per game-minute) that
   # `node tools/logs2replay.js --fetch dark-colony-server` rebuilds for tools/replay.js while Fly still
-  # holds the lines (about seven days); the machine has no volume, so RECORD_DIR would be lost
+  # holds the lines (about seven days)
   RECORD_LOG = "on"
+  # since 2 Oct 2026 every battle is also recorded as a file on the volume below: these are the
+  # battles REPLAY ONLINE GAME in Dark Colony Ultimate offers (plan §21); the newest 50 are kept
+  RECORD_DIR = "/data/replays"
+  REPLAY_KEEP = "50"
+
+# 1 GB persistent disk (`fly volumes create dc_replays --region iad --size 1`, 2 Oct 2026) for the
+# recordings; one volume per machine, so the app stays a single machine
+[mounts]
+  source = "dc_replays"
+  destination = "/data"
 
 [[services]]
   internal_port = 8888

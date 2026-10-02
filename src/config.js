@@ -35,14 +35,16 @@ export const DEFAULTS = Object.freeze({
   LAG_DROP_MS: 10000, // 0 = never drop laggards (original behaviour)
   STRIKE_LIMIT: 10,
   STRICT_SEQ: true,
-  MERCENARY_NAME: 'Mercenary', // the fake host's display name ('AI Mercenary' from 12 to 19 Sep 2026; maintainer: no "AI" label)
+  // the fake host's display name: 'AI Mercenary' since 2 Oct 2026 (maintainer: "all bots on the server must have
+  // 'AI ' prefix for their names"; 'Mercenary' from 19 Sep to 2 Oct, 'AI Mercenary' from 12 to 19 Sep 2026)
+  MERCENARY_NAME: 'AI Mercenary',
   MERCENARY_RACE: 'random', // race of a fake player: 0 Human, 1 Gray, random = drawn per bot when its slot is made (default since 19 Sep 2026)
   // fake human players including the master bot AI Mercenary (1..7) at the start of every game; the
   // rest of the slots are for real players. Two from 13 Sep to 19 Sep 2026 (AI Mercenary and AI
   // Marauder); since 19 Sep 2026 (maintainer: "by default only the bare minimum, one master bot") the
   // default is ONE, and the players raise it per room with the lobby chat command `/botcount N`
   FAKE_PLAYERS: 1,
-  FAKE_NAMES: 'Mercenary,Marauder,Renegade,Outlaw,Nomad,Drifter,Vagabond,Raider',
+  FAKE_NAMES: 'AI Mercenary,AI Marauder,AI Renegade,AI Outlaw,AI Nomad,AI Drifter,AI Vagabond,AI Raider',
   // (FILL_EMPTY_WITH_AI / FILL_AI_TYPE, AI-typed lobby slots, were removed on 27 Sep 2026: the game's
   // AI must never run on a player's machine; the relay's own bots are the computer players)
   ALLOW_PAUSE: true,
@@ -60,6 +62,9 @@ export const DEFAULTS = Object.freeze({
   // Record every battle (sync frames, client checksums, engine checksums) as JSON lines into this
   // directory for offline replay with tools/replay.js; '' = off. Independent of SYNC_CHECK.
   RECORD_DIR: '',
+  // How many recordings stay in RECORD_DIR (the newest; older files are deleted when a battle ends):
+  // these are the battles REPLAY ONLINE GAME offers (plan §21; maintainer, 2 Oct 2026: "keep last 50 replays")
+  REPLAY_KEEP: 50,
   // Record every battle into the LOG as compact "replay" lines (src/logrecorder.js: start header,
   // every sync frame byte for byte incl. the server's 0x08, every client 0x08, events; only the
   // per-tick engine checksum lines are left out) so that a battle played on Fly - no volume, root
@@ -203,6 +208,7 @@ function validate(cfg) {
   if (!SYNC_CHECK_MODES.includes(cfg.SYNC_CHECK)) throw new Error(`SYNC_CHECK must be one of ${SYNC_CHECK_MODES.join(', ')}`);
   if (!Number.isInteger(cfg.MERCENARY_SLOT) || cfg.MERCENARY_SLOT < 0 || cfg.MERCENARY_SLOT > 7) throw new Error('MERCENARY_SLOT must be 0..7');
   if (!Number.isInteger(cfg.REPLAY_SLOT) || cfg.REPLAY_SLOT < -1 || cfg.REPLAY_SLOT > 7) throw new Error('REPLAY_SLOT must be -1..7');
+  if (!Number.isInteger(cfg.REPLAY_KEEP) || cfg.REPLAY_KEEP < 1 || cfg.REPLAY_KEEP > 250) throw new Error('REPLAY_KEEP must be 1..250');
   cfg.BOT_TYPE = String(cfg.BOT_TYPE).trim().toLowerCase();
   if (!BOT_TYPES.includes(cfg.BOT_TYPE)) throw new Error(`BOT_TYPE must be one of ${BOT_TYPES.join(', ')}`);
   if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');

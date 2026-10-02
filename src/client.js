@@ -67,6 +67,7 @@ export class Client {
     this.online = false; // an ONLINE WAR client (sent 0x50 LIST): gets the room table, not the lobby view (plan §20)
     this.handover = false; // set at ENTER: the module's stragglers (keep-alives) are dropped until the game's first frame (F81)
     this.roomsSent = null; // the ROOMS payload last sent to an online client
+    this.replays = false; // a REPLAY ONLINE GAME client (sent 0x55 RLIST): gets the recordings, no room table (plan §21)
     this.chat = new ChatView(); // the client's lobby chat window as the server paints it (chat.js)
   }
 
@@ -157,7 +158,7 @@ export function readCommands(client, chunk, strictSeq) {
   return { batches, resyncs, error: null };
 }
 
-/** A frame the ONLINE WAR module (not the game) can have sent: keep-alives, LIST, ENTER only. */
+/** A frame the ONLINE WAR / REPLAY ONLINE GAME module (not the game) can have sent: keep-alives, LIST, ENTER, RLIST, RPLAY only. */
 export function isModuleFrame(cmds) {
-  return cmds.every((c) => c.type === T.KEEPALIVE || c.type === T.LIST || c.type === T.ENTER);
+  return cmds.every((c) => c.type === T.KEEPALIVE || c.type === T.LIST || c.type === T.ENTER || c.type === T.RLIST || c.type === T.RPLAY);
 }

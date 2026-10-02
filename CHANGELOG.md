@@ -6,6 +6,21 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **REPLAY ONLINE GAME** (2 Oct 2026, maintainer; plan §21, protocol doc §4.5 / §6.10): the relay records
+  every battle as a file again - on Fly into the new 1 GB volume `dc_replays` (`RECORD_DIR=/data/replays`),
+  the newest `REPLAY_KEEP` (50) kept (`src/replays.js`) - and offers them to the patched Dark Colony
+  Ultimate exe: `0x55 RLIST` → `0x56 REPLAYS` (count + column header) + one `0x57 REPLAY` per battle
+  (date, map, terrain, seats, players, computer players, length as a 40-column row; the eight participant
+  names; the real-player mask), `0x58 RPLAY id slot` → `0x59 REPLAYING` opens a private **viewer room**
+  (`RoomPool.openViewerRoom`: the §18.7 replay room per viewer - recorded lobby, the chosen seat pinned,
+  recorded speed, no engine, no recording) and hands the connection over like `ENTERING`; the room is
+  dropped when the viewer leaves. `tools/fakeclient.js --replay [ID] --slot S`. Exe side (game repo, fix
+  `online`): the twelfth main-menu button REPLAY ONLINE GAME under ONLINE WAR, the screen `REPLAYE` with
+  the list and eight radio boxes (`checkb` widgets made exclusive by the module; the empty box is a new
+  cell of `HD_SRC\KNOBR.SPR`) for the participants, REPLAY greyed until one is ticked. Seven tests (268).
+- **Bot names carry the `AI ` prefix again** (2 Oct 2026, maintainer: "all bots on the server must have
+  'AI ' prefix for their names"): `AI Mercenary`, `AI Marauder`, `AI Renegade`, ...; a taken-over base was
+  `AI <name>` already.
 - **ONLINE WAR hand-over race** (29 Sep 2026, maintainer report "often connection lost" when entering a
   room; plan F81): the exe module's 700 ms keep-alive kept going between `ENTER` and its receipt of
   `ENTERING`, while the relay had already reset the sequence counter for the game's own stream, so the

@@ -18,6 +18,16 @@
  *      and calls the stock network entry 0x40122C with 127.0.0.1:<port> - the game's own lobby and
  *      battle code run unchanged; BACK (or a lost connection + BACK) returns to the menu.
  *
+ * REPLAY ONLINE GAME (button id 9, 2 Oct 2026; plan 21, protocol doc 4.5, display doc 10.65) is the
+ * second entry point, `replay_game`: the same connection and hand-over, but the screen is REPLAYE
+ * (`<folder>/replay`; a 40-column list of the relay's recorded battles and, right of it, eight
+ * radio boxes - `checkb` widgets, the lobby's READY boxes, made exclusive here - with the participants' names), the
+ * dialogue is 0x55 RLIST -> 0x56 REPLAYS (count + the column header) + one 0x57 REPLAY per battle
+ * (id, seats, players, bots, real-player mask, duration, the list row, eight names), REPLAY (greyed
+ * until a seat is ticked) sends
+ * 0x58 RPLAY (recording id, slot) and 0x59 REPLAYING hands the connection over exactly like
+ * ENTERING: the relay seats the viewer in a private room that plays the recorded frames back.
+ *
  * Build: build.cmd (MSVC x86, no C run-time: /O1 /Oi- /GS- /Zl, linked as a relocatable DLL with
  * .rdata/.data/.bss merged into .text; the tool rebases .text to the section's VA). The only
  * imports taken from the exe are LoadLibraryA and GetProcAddress (their IAT slots); everything
@@ -52,11 +62,31 @@
 #define GAME_MUSIC_SRC      0x5327F4   /* byte: 0 DC, 1 CW, 2 ALL (fix music)                     */
 #define GAME_UI_POOL_OFF    0x24       /* ui + 0x24 = the smalloc pool the screens live in         */
 #define GAME_GS_CAMPAIGN    0x14F0     /* gs + 0x14F0 = 2 for a network game (MULTI PLAYER WAR)   */
+/* The viewer's money (REPLAY ONLINE GAME, 2 Oct 2026; DC16_BATTLE_ENGINE.md 7 / 18): a purchase is deducted from MONEY
+   only on the machine that issued it, while every machine books the price into the player's SPENT total (the command
+   handlers 0x09 / 0x0A / 0x0C).  A viewer never issues anything, so its seat's MONEY would only ever grow; the proxy
+   thread therefore takes every increase of SPENT off MONEY while a replay runs - the game's own DISCONNECT handler
+   normalises a base the same way (MONEY -= SPENT).  Money is not part of the sync checksum. */
+#define GAME_LIVE_GS_PTR     0x4AA9DC  /* .bss: the SIMULATION state of the running battle, stored by the game start 0x41EAA0
+                                          (mov ds:[4AA9DCh],eax; the main menu's `gs` is proto.c's campaign object - its
+                                          +0x14F0 / +0x14F4 flags, +0x1984 settings - a different allocation; the first money
+                                          build read local player 0 / money 0 / spent 0 from it)                           */
+#define GAME_GS_LOCAL_PLAYER 0x7D3C    /* gs + 0x7D3C: the local game player index (after the start shuffle)         */
+#define GAME_PLAYER0_MONEY   0xBAC     /* gs + 0xBAC + p * 0xE34: player p's money                                   */
+#define GAME_PLAYER0_SPENT   0xBB0     /* gs + 0xBB0 + p * 0xE34: player p's total spent                             */
+#define GAME_PLAYER_STRIDE   0xE34
 #define GAME_LOADG_STRING   0x48234C   /* DGROUP "intrface/loadg": after fix resolution the 8-byte directory part names the
                                           resolution's interface folder ("hd_1080p/loadg"; patch_hd_paths.py, doc 10.61) - the
                                           ONLINE screen and its background live there too                                   */
 #define IAT_LOADLIBRARYA    0x4804B0
 #define IAT_GETPROCADDRESS  0x480480
+#define GAME_CHECKB_SET     0x427308   /* f(ip, id; bl = state): sets a `checkb` widget's box (the lobby's READY boxes) and redraws it */
+#define GAME_SET_GREYED     0x424574   /* f(ip, id; bl = flag): greys a pushb (main.c uses it for the CD-less menu buttons) and redraws it */
+/* A checkb's mouse handler (0x42711C, vtable 0x4896E4+4) toggles the box itself on a press, redraws, plays the click and
+   returns 2 (now ticked) or 3 (now cleared); the pump hands that back with the widget id in its out-parameter.  The
+   module then sets the eight boxes to its own choice, so they behave as radio buttons. */
+#define EV_CHECKB_ON   2
+#define EV_CHECKB_OFF  3
 
 /* widget ids of the ONLINE screen (from LOADGE; see patch_online.py online_script()) */
 #define W_LIST    0
@@ -65,6 +95,10 @@
 #define W_STATUS  17   /* second line under the list: the connection state            */
 #define W_HEADER  30   /* the column header above the list                            */
 #define W_SERVER  31   /* first line under the list: "Server: host:port"              */
+/* ... and of the REPLAY ONLINE GAME screen (REPLAYE = ONLINE with a narrower list and the participant pane, patch_online.py replay_script()) */
+#define W_RADIO0  32   /* checkb 32..39: one radio box per lobby slot                  */
+#define W_RNAME0  40   /* in_text 40..47: the participant's name beside its box         */
+#define W_RPANE   48   /* in_text: the pane's heading                                   */
 
 /* protocol */
 #define M_LIST      0x50
@@ -72,9 +106,17 @@
 #define M_ENTER     0x52
 #define M_REFUSED   0x53
 #define M_ENTERING  0x54
+#define M_RLIST     0x55   /* REPLAY ONLINE GAME (plan 21): the recorded battles                     */
+#define M_REPLAYS   0x56   /* u8 count, string header                                               */
+#define M_REPLAY    0x57   /* u8 id, seats, players, bots, real mask; u16 seconds; row; 8 names      */
+#define M_RPLAY     0x58   /* u8 id, u8 slot                                                        */
+#define M_REPLAYING 0x59   /* u8 slot - the hand-over, like ENTERING                                */
 #define M_KEEPALIVE 0x71
 #define MAX_ROOMS   7
+#define MAX_REPLAYS 50     /* the relay keeps the newest 50 recordings (REPLAY_KEEP)                */
 #define ROW_CHARS   56   /* the list: 448 px / 8 px per column (MFONTO5 7 px glyphs, 1 px apart) */
+#define RROW_CHARS  40   /* the replay list: 320 px, the participant pane takes the rest           */
+#define NAME_CHARS  16   /* a lobby name                                                          */
 #define KEEPALIVE_MS 700
 #define DEFAULT_TLS_PORT   8889
 #define DEFAULT_PLAIN_PORT 8888
@@ -312,6 +354,38 @@ static __declspec(naked) void g_set_text(void* ip, int id, const char* text) {
             mov edx, [esp+20]
             mov ebx, [esp+24]
             mov esi, GAME_SET_TEXT
+            call esi
+            pop edi
+            pop esi
+            pop ebx
+            ret
+    }
+}
+static __declspec(naked) void g_checkb_set(void* ip, int id, int state) {
+    __asm {
+            push ebx
+            push esi
+            push edi
+            mov eax, [esp+16]
+            mov edx, [esp+20]
+            mov ebx, [esp+24]
+            mov esi, GAME_CHECKB_SET
+            call esi
+            pop edi
+            pop esi
+            pop ebx
+            ret
+    }
+}
+static __declspec(naked) void g_set_greyed(void* ip, int id, int flag) {
+    __asm {
+            push ebx
+            push esi
+            push edi
+            mov eax, [esp+16]
+            mov edx, [esp+20]
+            mov ebx, [esp+24]
+            mov esi, GAME_SET_GREYED
             call esi
             pop edi
             pop esi
@@ -696,6 +770,15 @@ static int g_rx_len;
 
 static const char HEADER_TEXT[] = "MAP                TERRAIN  SEATS PLAYERS BOTS STATUS";
 
+/* the recorded battles (REPLAY ONLINE GAME): the relay's list, one entry per 0x57 REPLAY */
+typedef struct { unsigned char id, seats, players, bots, real; unsigned short dur; char row[RROW_CHARS + 1]; char names[8][NAME_CHARS + 1]; } ReplayEntry;
+static ReplayEntry* g_replays;      /* MAX_REPLAYS entries in Work */
+static const char* g_rrowptr[MAX_REPLAYS];
+static int g_replay_count;          /* entries received                                           */
+static int g_replay_total;          /* entries announced by the 0x56 header (-1 = no list yet)    */
+static char g_rheader[RROW_CHARS + 1];
+static const char RPANE_TEXT[] = "WATCH AS";
+
 /* One 0x51 ROOMS command (after the type byte). Returns 1 if the table changed. */
 static int parse_rooms(const unsigned char* p, int n) {
     int count, i, pos = 1, k;
@@ -723,12 +806,51 @@ static int parse_rooms(const unsigned char* p, int n) {
     return 1;
 }
 
-/* Handle one complete frame payload (without header/terminator). Returns 0 nothing special, 1 ROOMS, 2 REFUSED, 3 ENTERING (slot in *slot). */
+/* One 0x56 REPLAYS command (after the type byte): the list starts over. Returns 1 when it is already complete (no battles). */
+static int parse_replays_header(const unsigned char* p, int n) {
+    int len = 0;
+    if (n < 2) return 0;
+    g_replay_total = p[0] > MAX_REPLAYS ? MAX_REPLAYS : p[0];
+    g_replay_count = 0;
+    while (1 + len < n && p[1 + len]) len++;
+    if (len > RROW_CHARS) len = RROW_CHARS;
+    memcpy(g_rheader, p + 1, len); g_rheader[len] = 0;
+    return g_replay_total == 0;
+}
+
+/* One 0x57 REPLAY command (after the type byte). Returns 1 when the announced count is reached (the list is complete). */
+static int parse_replay_row(const unsigned char* p, int n) {
+    ReplayEntry* r;
+    int pos = 7, k;
+    if (n < 7 || g_replay_total < 0 || g_replay_count >= g_replay_total) return 0;
+    r = &g_replays[g_replay_count];
+    r->id = p[0]; r->seats = p[1]; r->players = p[2]; r->bots = p[3]; r->real = p[4];
+    r->dur = (unsigned short)(p[5] | (p[6] << 8));
+    for (k = 0; k < 9; k++) {
+        int start = pos, len, cap = k == 0 ? RROW_CHARS : NAME_CHARS;
+        char* dst = k == 0 ? r->row : r->names[k - 1];
+        while (pos < n && p[pos]) pos++;
+        if (pos >= n) return 0;
+        len = pos - start; if (len > cap) len = cap;
+        memcpy(dst, p + start, len); dst[len] = 0;
+        pos++;
+    }
+    g_rrowptr[g_replay_count] = r->row;
+    g_replay_count++;
+    return g_replay_count >= g_replay_total;
+}
+
+/* Handle one complete frame payload (without header/terminator). Returns 0 nothing special, 1 the list changed
+   (ROOMS, or the last REPLAY of a complete list), 2 REFUSED, 3 ENTERING / REPLAYING (slot in *slot). */
 static int handle_frame(const unsigned char* p, int n, int* slot) {
     if (n < 1) return 0;
     switch (p[0]) {
     case M_ROOMS:
         return parse_rooms(p + 1, n - 1) ? 1 : 0;
+    case M_REPLAYS:
+        return parse_replays_header(p + 1, n - 1) ? 1 : 0;
+    case M_REPLAY:
+        return parse_replay_row(p + 1, n - 1) ? 1 : 0;
     case M_REFUSED: {
         int len = n - 1; if (len > (int)sizeof g_status - 1) len = (int)sizeof g_status - 1;
         memcpy(g_status, p + 1, len); g_status[len] = 0;
@@ -736,6 +858,7 @@ static int handle_frame(const unsigned char* p, int n, int* slot) {
         return 2;
     }
     case M_ENTERING:
+    case M_REPLAYING:
         if (n >= 2) { *slot = p[1]; return 3; }
         return 0;
     default:
@@ -775,6 +898,30 @@ static int poll_relay(Stream* st, int* slot) {
 static SOCKET g_listen = INVALID_SOCKET;
 static unsigned char* g_pbuf;   /* PBUF_CAP bytes in Work */
 #define PBUF_CAP 8192
+static int g_viewer;            /* 1 while REPLAY ONLINE GAME runs the game (set by run()) */
+static int g_last_spent;        /* the viewer seat's SPENT total already taken off its MONEY */
+static int g_money_logged;      /* the first poll's values go to ONLINE.LOG once per run */
+
+/* Every 100 ms while a replay runs: MONEY[local] -= (SPENT[local] - what was already deducted); a drop of SPENT means
+   a re-initialised battle (SPENT starts at 0) and resets the bookkeeping.  Single dword writes next to the game's own
+   income additions (every 16 ticks): a lost update would cost a few credits of display, nothing in the simulation. */
+static void viewer_money_fix(void) {
+    int p, s, d;
+    int* money; int* spent;
+    unsigned char* sim;
+    if (!g_viewer) return;
+    sim = *(unsigned char**)GAME_LIVE_GS_PTR;          /* 0 before the first battle of the process */
+    if (!sim) return;
+    p = *(int*)(sim + GAME_GS_LOCAL_PLAYER);
+    if (p < 0 || p > 7) return;
+    money = (int*)(sim + GAME_PLAYER0_MONEY + GAME_PLAYER_STRIDE * p);
+    spent = (int*)(sim + GAME_PLAYER0_SPENT + GAME_PLAYER_STRIDE * p);
+    s = *spent;
+    if (!g_money_logged) { g_money_logged = 1; logu("money fix: sim state ", (unsigned)sim); logu("money fix: local player ", (unsigned)p); logu("money fix: money ", (unsigned)*money); logu("money fix: spent ", (unsigned)s); }
+    if (s < g_last_spent) g_last_spent = s;
+    d = s - g_last_spent;
+    if (d > 0) { *money -= d; g_last_spent = s; }
+}
 
 static DWORD WINAPI proxy_thread(void* arg) {
     Stream* st = (Stream*)arg;
@@ -794,9 +941,10 @@ static DWORD WINAPI proxy_thread(void* arg) {
             if (n > 0) { if (!send_all(g, g_pbuf, n)) break; continue; }
         }
         FD_ZERO(&rs); FD_SET(g, &rs); FD_SET(st->s, &rs);
-        tv.tv_sec = 1; tv.tv_usec = 0;
+        if (g_viewer) { tv.tv_sec = 0; tv.tv_usec = 100000; } else { tv.tv_sec = 1; tv.tv_usec = 0; }
         r = W.select(0, &rs, 0, 0, &tv);
         if (r < 0) break;
+        viewer_money_fix();
         if (r == 0) continue;
         if (fd_isset(g, &rs)) {
             int n = W.recv(g, (char*)g_pbuf, PBUF_CAP, 0);
@@ -857,24 +1005,28 @@ static int open_loopback(unsigned short* port) {
 }
 
 /* ------------------------------------------------------------------ the screen */
-static const char SCRIPT_STOCK[] = "intrface/onlin";
-static char g_script_hd[16];          /* "<folder>/onlin": the folder copied from the exe's loadg string */
-static char g_probe_hd[16];           /* "<folder>\\ONLINE" */
+static const char SCRIPT_STOCK[] = "intrface/onlin";       /* 640x480: INTRFACE\ONLINE (load_interface appends the language letter) */
+static const char SCRIPT_STOCK_R[] = "intrface/replay";     /* 640x480: INTRFACE\REPLAYE */
+static char g_script_hd[20];          /* "<folder>/onlin" or "<folder>/replay": the folder copied from the exe's loadg string */
+static char g_probe_hd[20];           /* "<folder>\\ONLINE" or "<folder>\\REPLAYE" */
 
 /* The compiler must not fold "exe address - module address" into one relocated operand (patch_online.py rebases
    only operands that point into the module): the exe string is read through a volatile pointer, unoptimised. */
 #pragma optimize("", off)
-static void init_screen_names(void) {
+static void init_screen_names(int replay) {
     const char* volatile dir_p = (const char*)GAME_LOADG_STRING;
     const char* dir = dir_p;
     static const char tail_script[] = "/onlin", tail_probe[] = "\\ONLINE";
+    static const char tail_script_r[] = "/replay", tail_probe_r[] = "\\REPLAYE";
+    const char* ts = replay ? tail_script_r : tail_script;
+    const char* tp = replay ? tail_probe_r : tail_probe;
     volatile char* s = g_script_hd;
     volatile char* q = g_probe_hd;
     int i;
     for (i = 0; i < 8; i++) { s[i] = dir[i]; q[i] = dir[i]; }
-    for (i = 0; tail_script[i]; i++) s[8 + i] = tail_script[i];
+    for (i = 0; ts[i]; i++) s[8 + i] = ts[i];
     s[8 + i] = 0;
-    for (i = 0; tail_probe[i]; i++) q[8 + i] = tail_probe[i];
+    for (i = 0; tp[i]; i++) q[8 + i] = tp[i];
     q[8 + i] = 0;
 }
 #pragma optimize("", on)
@@ -886,23 +1038,49 @@ static void status(void* ip, const char* text) {
     g_set_text(ip, W_STATUS, g_status);
 }
 
-/* Returns: 0 = BACK / failure (back to the menu), 1 = ENTERING (slot in *slot, connection kept). */
-static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_msg, int* slot) {
+/* ---- the participant pane of the REPLAY screen (eight radio boxes = checkb widgets, exclusive by this code) */
+static int g_chosen;                /* the slot whose box is ticked, -1 = none */
+
+/* The boxes show exactly our choice, and the REPLAY button is greyed until a seat is ticked (maintainer, 2 Oct 2026:
+   "'REPLAY' button must be disabled until user selects a client to watch for"). */
+static void set_boxes(void* ip) {
+    int k;
+    for (k = 0; k < 8; k++) g_checkb_set(ip, W_RADIO0 + k, k == g_chosen);
+    g_set_greyed(ip, W_ENTER, g_chosen < 0);
+}
+
+/* The pane for list entry `sel` (-1 = nothing selected): the names of the battle's humans, no seat ticked
+   (the player picks one; nothing is preselected). */
+static void update_pane(void* ip, int sel) {
+    int k;
+    const ReplayEntry* r = (sel >= 0 && sel < g_replay_count) ? &g_replays[sel] : 0;
+    g_chosen = -1;
+    for (k = 0; k < 8; k++) g_set_text(ip, W_RNAME0 + k, r && r->names[k][0] ? r->names[k] : "");
+    set_boxes(ip);
+}
+
+/*
+ * The screen loop of both entry points.  `replay` = 0: ONLINE WAR (the room list, 0x50 LIST, ENTER);
+ * 1: REPLAY ONLINE GAME (the recorded battles, 0x55 RLIST, the participant pane, WATCH).
+ * Returns: 0 = BACK / failure (back to the menu), 1 = ENTERING / REPLAYING (slot in *slot, connection kept).
+ */
+static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_msg, int* slot, int replay) {
     void* pool = *(void**)((unsigned char*)ui + GAME_UI_POOL_OFF);
     void* ip;
-    int result = 0, connected = 0, lost = 0, arg = 0, entering = 0;
+    int result = 0, connected = 0, lost = 0, arg = 0, entering = 0, last_sel = -2, logged_box = 0;
     DWORD last_keepalive = 0;
     const char* empty[1];
     empty[0] = "";
-    g_room_count = 0; g_rx_len = 0; g_seq = 0;
+    g_room_count = 0; g_replay_count = 0; g_replay_total = -1; g_rheader[0] = 0; g_rx_len = 0; g_seq = 0; g_chosen = -1;
     g_pool_mark(pool, POOL_NAME);
-    init_screen_names();
-    logf2("screen: ", file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK);
-    ip = g_load_interface(ui, file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK);
+    init_screen_names(replay);
+    logf2("screen: ", file_exists(g_probe_hd) ? g_script_hd : (replay ? SCRIPT_STOCK_R : SCRIPT_STOCK));
+    ip = g_load_interface(ui, file_exists(g_probe_hd) ? g_script_hd : (replay ? SCRIPT_STOCK_R : SCRIPT_STOCK));
     g_draw(ip);
     logf("screen loaded");
-    g_set_text(ip, W_HEADER, HEADER_TEXT);
+    g_set_text(ip, W_HEADER, replay ? "" : HEADER_TEXT);
     g_list_set(ip, W_LIST, empty, 0);
+    if (replay) { g_set_text(ip, W_RPANE, RPANE_TEXT); update_pane(ip, -1); }
     if (cfg_err) {
         g_set_text(ip, W_SERVER, "Server: none (see DEFAULT_SERVER.TXT)");
         status(ip, cfg_msg);
@@ -915,10 +1093,13 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
         g_set_text(ip, W_STATUS, g_status);
         g_pump(ip, &arg);   /* paint the status before the blocking connect */
         if (connect_relay(g_st, c)) {
-            unsigned char cmd = M_LIST;
+            unsigned char cmd = replay ? M_RLIST : M_LIST;
             connected = 1;
             logf(c->plain ? "connected (plain)" : "connected (TLS)");
-            if (send_command(g_st, &cmd, 1)) status(ip, c->plain ? "Connected. Select a room and press ENTER." : "Connected (TLS). Select a room and press ENTER.");
+            if (send_command(g_st, &cmd, 1)) {
+                if (replay) status(ip, c->plain ? "Connected. Pick a battle, tick a player, press REPLAY." : "Connected (TLS). Pick a battle, tick a player, press REPLAY.");
+                else status(ip, c->plain ? "Connected. Select a room and press ENTER." : "Connected (TLS). Select a room and press ENTER.");
+            }
             else { status(ip, "Connection lost."); lost = 1; }
             last_keepalive = W.GetTickCount();
         } else {
@@ -935,7 +1116,17 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
                 if (!g_status[0] || g_status[0] == 'C') scopy(g_status, "Connection lost.", sizeof g_status);
                 g_set_text(ip, W_STATUS, g_status); lost = 1; stream_close(g_st);
             } else if (ev == 3) { result = 1; break; }
-            else if (ev == 1) { g_list_set(ip, W_LIST, g_rowptr, g_room_count); }
+            else if (ev == 1) {
+                if (replay) {
+                    g_set_text(ip, W_HEADER, g_rheader);
+                    g_list_set(ip, W_LIST, g_rrowptr, g_replay_count);
+                    last_sel = -2;   /* re-read the selection: the pane follows */
+                    if (g_replay_count == 0) status(ip, "No recorded battle on the server yet.");
+                    logu("replay list: entries ", (unsigned)g_replay_count);
+                } else {
+                    g_list_set(ip, W_LIST, g_rowptr, g_room_count);
+                }
+            }
             else if (ev == 2) { g_set_text(ip, W_STATUS, g_status); entering = 0; }
             /* Nothing goes out between ENTER and ENTERING: the relay restarts its sequence counter for the
                game's own stream the moment it seats us, so a keep-alive still in flight would be read as the
@@ -946,6 +1137,10 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
                 if (!send_command(g_st, &q, 1)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
             }
         }
+        if (replay) {
+            int sel = g_list_sel(ip, W_LIST);
+            if (sel != last_sel) { last_sel = sel; update_pane(ip, sel); }
+        }
         kind = g_pump(ip, &arg);
         if (kind == 1) {
             if (arg == W_BACK) break;
@@ -953,16 +1148,40 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
                 int sel = g_list_sel(ip, W_LIST);
                 if (lost || !connected) status(ip, cfg_err ? cfg_msg : "Not connected. Press BACK and try again.");
                 else if (entering) { /* the answer is on its way; a second ENTER would be a straggler too */ }
-                else if (sel < 0 || sel >= g_room_count) status(ip, "Select a room first.");
-                else {
-                    unsigned char cmd[2];
-                    cmd[0] = M_ENTER; cmd[1] = g_rooms[sel].id;
-                    scopy(g_status, "Entering room ", sizeof g_status); scat_uint(g_status, g_rooms[sel].id, sizeof g_status); scat(g_status, "...", sizeof g_status);
-                    g_set_text(ip, W_STATUS, g_status);
-                    if (!send_command(g_st, cmd, 2)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
-                    else entering = 1;
+                else if (!replay) {
+                    if (sel < 0 || sel >= g_room_count) status(ip, "Select a room first.");
+                    else {
+                        unsigned char cmd[2];
+                        cmd[0] = M_ENTER; cmd[1] = g_rooms[sel].id;
+                        scopy(g_status, "Entering room ", sizeof g_status); scat_uint(g_status, g_rooms[sel].id, sizeof g_status); scat(g_status, "...", sizeof g_status);
+                        g_set_text(ip, W_STATUS, g_status);
+                        if (!send_command(g_st, cmd, 2)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
+                        else entering = 1;
+                    }
+                } else {
+                    if (sel < 0 || sel >= g_replay_count) status(ip, "Select a battle first.");
+                    else if (g_chosen < 0 || !g_replays[sel].names[g_chosen][0]) status(ip, "Tick the player to watch as.");
+                    else {
+                        unsigned char cmd[3];
+                        cmd[0] = M_RPLAY; cmd[1] = g_replays[sel].id; cmd[2] = (unsigned char)g_chosen;
+                        scopy(g_status, "Starting the replay as ", sizeof g_status); scat(g_status, g_replays[sel].names[g_chosen], sizeof g_status); scat(g_status, "...", sizeof g_status);
+                        g_set_text(ip, W_STATUS, g_status);
+                        logu("RPLAY recording ", g_replays[sel].id); logu("RPLAY slot ", (unsigned)g_chosen);
+                        if (!send_command(g_st, cmd, 3)) { status(ip, "Connection lost."); lost = 1; stream_close(g_st); }
+                        else entering = 1;
+                    }
                 }
             }
+        } else if (replay && (kind == EV_CHECKB_ON || kind == EV_CHECKB_OFF)) {
+            /* a radio box was pressed: the engine toggled it and `arg` is its id; make the eight boxes show our choice */
+            int id = arg;
+            if (!logged_box) { logged_box = 1; logu("checkb event kind ", (unsigned)kind); logu("checkb event id ", (unsigned)id); }
+            if (id >= W_RADIO0 && id < W_RADIO0 + 8) {
+                int sel = g_list_sel(ip, W_LIST);
+                int k = id - W_RADIO0;
+                if (sel >= 0 && sel < g_replay_count && g_replays[sel].names[k][0]) g_chosen = k;
+            }
+            set_boxes(ip);
         } else if (kind == 0) {
             W.Sleep(1);
         }
@@ -978,18 +1197,20 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
 typedef struct { unsigned short port; unsigned short pad; const char* host; } NetAddress;   /* the game reads the host pointer at +4 (0x405BEB..0x405C16) */
 #pragma pack(pop)
 
-typedef struct { Stream stream; unsigned char rx[RX_CAP]; unsigned char pbuf[PBUF_CAP]; unsigned char frame[1030]; char cfgbuf[CFGBUF_CAP]; } Work;
+typedef struct { Stream stream; unsigned char rx[RX_CAP]; unsigned char pbuf[PBUF_CAP]; unsigned char frame[1030]; char cfgbuf[CFGBUF_CAP]; ReplayEntry replays[MAX_REPLAYS]; } Work;
 static Work* g_work;
 
-__declspec(dllexport) int __cdecl online_war(void* ui, void* gs) {
+/* Both buttons: the screen, then - after ENTERING / REPLAYING - the loopback proxy and the game's own network entry. */
+static int run(void* ui, void* gs, int replay) {
     ServerConfig cfg; char msg[96]; int cfg_err, slot = -1;
     NetAddress addr; unsigned short port = 0; HANDLE th; DWORD tid;
     if (!resolve_imports()) return 0;
-    logf("--- ONLINE WAR pressed");
+    logf(replay ? "--- REPLAY ONLINE GAME pressed" : "--- ONLINE WAR pressed");
+    g_viewer = replay; g_last_spent = 0; g_money_logged = 0;
     if (!g_work) {
         g_work = (Work*)W.VirtualAlloc(0, sizeof(Work), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!g_work) { logf("VirtualAlloc failed"); return 0; }
-        g_st = &g_work->stream; g_rx = g_work->rx; g_pbuf = g_work->pbuf; g_frame = g_work->frame; g_cfgbuf = g_work->cfgbuf;
+        g_st = &g_work->stream; g_rx = g_work->rx; g_pbuf = g_work->pbuf; g_frame = g_work->frame; g_cfgbuf = g_work->cfgbuf; g_replays = g_work->replays;
     }
     /* the same mode MULTI PLAYER WAR sets: Classic tables through the dc/ prefix, music source ALL */
     g_stub_dc_set();
@@ -998,9 +1219,9 @@ __declspec(dllexport) int __cdecl online_war(void* ui, void* gs) {
     msg[0] = 0;
     cfg_err = read_config(&cfg, msg, sizeof msg);
     if (cfg_err) logf2("config: ", msg); else { logf2("config: host ", cfg.host); logu("config: port ", cfg.port); logu("config: plain ", (unsigned)cfg.plain); }
-    if (!room_screen(ui, &cfg, cfg_err, msg, &slot)) { logf("back to the menu"); return 0; }
-    logu("ENTERING slot ", (unsigned)slot);
-    /* ENTERING: the relay now speaks the stock protocol to whoever reads this connection */
+    if (!room_screen(ui, &cfg, cfg_err, msg, &slot, replay)) { logf("back to the menu"); return 0; }
+    logu(replay ? "REPLAYING slot " : "ENTERING slot ", (unsigned)slot);
+    /* ENTERING / REPLAYING: the relay now speaks the stock protocol to whoever reads this connection */
     if (!open_loopback(&port)) { logf("loopback listener failed"); stream_close(g_st); return 0; }
     logu("loopback port ", port);
     th = W.CreateThread(0, 0, proxy_thread, g_st, 0, &tid);
@@ -1020,12 +1241,25 @@ __declspec(dllexport) int __cdecl online_war(void* ui, void* gs) {
     return 1;
 }
 
+__declspec(dllexport) int __cdecl online_war(void* ui, void* gs) { return run(ui, gs, 0); }
+__declspec(dllexport) int __cdecl replay_game(void* ui, void* gs) { return run(ui, gs, 1); }
+
 /* The main menu's id chain jumps here from the seven NOP bytes at 0x405136 (fix ozi's tail) with
-   eax = the game state, edi = the button id and [ebp-4] = the screen (see patch_ozi_menu.py). */
+   eax = the game state, edi = the button id and [ebp-4] = the screen (see patch_ozi_menu.py):
+   id 8 = ONLINE WAR, id 9 = REPLAY ONLINE GAME, anything else continues at the loop head. */
 __declspec(dllexport) __declspec(naked) void online_dispatch(void) {
     __asm {
         cmp edi, 8
+        je war
+        cmp edi, 9
         jne back
+        mov edx, [ebp-4]
+        push eax            ; gs
+        push edx            ; ui
+        call replay_game
+        add esp, 8
+        jmp back
+    war:
         mov edx, [ebp-4]
         push eax            ; gs
         push edx            ; ui

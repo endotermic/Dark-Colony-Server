@@ -169,9 +169,14 @@ export function loadReplay(file, opts = {}) {
   return new Replay(readRecording(file), { ...opts, file });
 }
 
-/** The configuration a replay server runs with: one room, no hall, no bots, the recorded speed. */
-export function replayConfig(cfg, replay) {
-  return {
+/**
+ * The configuration a replay server runs with: one room, no hall, no bots, the recorded speed.
+ * `opts.viewer` (REPLAY ONLINE GAME, plan §21): a viewer room inside a live relay - nothing is
+ * recorded again (the file would be a copy of the recording) and the engine stays off (the frames
+ * carry the original checksums, and a viewer must not cost a battle engine of its own).
+ */
+export function replayConfig(cfg, replay, opts = {}) {
+  const out = {
     ...cfg,
     HALL: false,
     // the frames already carry the original server's 0x08; a second set would contradict them
@@ -180,6 +185,8 @@ export function replayConfig(cfg, replay) {
     LOOKAHEAD: replay.header.lookahead ?? cfg.LOOKAHEAD,
     ROOM_LIST: [replay.map],
   };
+  if (opts.viewer) Object.assign(out, { SYNC_CHECK: 'off', RECORD_DIR: '', RECORD_LOG: false });
+  return out;
 }
 
 /** A ROOM_LIST-style entry for the recorded map (the shipped table, or the header when unknown). */

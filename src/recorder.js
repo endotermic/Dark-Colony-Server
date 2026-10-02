@@ -18,6 +18,7 @@ export class Recorder {
     this.fd = null;
     this.file = null;
     this.lines = 0;
+    this.onClose = null; // optional (file) => void, called after a recording is closed (the replay index, src/replays.js)
   }
 
   open(room, header) {
@@ -60,6 +61,13 @@ export class Recorder {
       // ignore
     }
     this.fd = null;
+    if (this.onClose && this.file) {
+      try {
+        this.onClose(this.file);
+      } catch (err) {
+        this.log?.warn('recorder: onClose failed', { err: err.message });
+      }
+    }
   }
 }
 

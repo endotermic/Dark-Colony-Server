@@ -143,8 +143,9 @@ BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 # same day's evening added (patch_ozi_menu.py gives them handlers and widens the menu's id filter);
 # they were the LARGEBUTTON gadgets of buttons 0 and 1, which move to 19 and 20 here.  Id 8 is
 # ONLINE WAR (29 Sep 2026, patch_online.py): right column row 1, MULTI PLAYER WAR (3) and
-# ENCYCLOPEDIA (5) moved to rows 3 and 4, row 2 reserved for a replay button.
-OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (8, None, 3, 5, None, None, 12))
+# ENCYCLOPEDIA (5) moved to rows 3 and 4; id 9 is REPLAY ONLINE GAME (2 Oct 2026, the same tool's
+# second entry point) in the row under it that had been reserved for it.
+OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (8, 9, 3, 5, None, None, 12))
 # ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after rows 1, 3
 # and 5, which separates ACADEMY, the two Dark Colony entries, the two Council Wars entries and the
 # two pack entries, and the same half-height gap between the two columns (1 px in the stock grid),
@@ -167,15 +168,16 @@ OZI_CREDITS_ROOM = 11 + 100 + 9     # title -> first row at the HD sizes: 11 px,
 OZI_BOTTOM_MARGIN = 72              # the bottom row never passes H-72 (stock 640x480 row 408; artwork from H-45)
 TITLE_GADGET = re.compile(rb'^\s*gadget\s+\d+\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)\s+DCUT\b', re.M | re.I)
 STOCK_BUTTONS = (0, 1, 2, 3, 4, 5, 12, 16)      # the stock script's `pushb` ids
-STOCK_GADGETS = (9, 10, 11, 13, 17)             # ... and the gadgets that keep their id (8 is renumbered, see OZI_RENUM)
-OZI_NEW_BUTTONS = (6, 7, 8)                     # the two Dark Colony buttons and ONLINE WAR
+STOCK_GADGETS = (10, 11, 13, 17)                # ... and the gadgets that keep their id (8 and 9 are renumbered, see OZI_RENUM)
+OZI_NEW_BUTTONS = (6, 7, 8, 9)                  # the two Dark Colony buttons, ONLINE WAR and REPLAY ONLINE GAME
 # Widget ids are one object space for every kind, so a new button id must not be a plate's id:
 # 6 and 7 were the plates of buttons 0 and 1 (-> 19 and 20), 8 was the plate of button 2 (-> 24;
-# 29 Sep 2026: the first ONLINE WAR build kept it and the menu asserted at load, widget.c line 377)
-OZI_RENUM = {6: 19, 7: 20, 8: 24}               # gadgets of buttons 0, 1 and 2 -> free ids
-OZI_GADGET = {0: 19, 1: 20, 2: 24, 3: 9, 4: 10, 5: 11,
-              6: 21, 7: 22, 8: 23, 12: 13, 16: 17}     # pushb -> its LARGEBUTTON
-OZI_LABEL_OF = {6: 9, 7: 10, 8: 11}             # the new buttons -> their `textmsg` number
+# 29 Sep 2026: the first ONLINE WAR build kept it and the menu asserted at load, widget.c line 377),
+# 9 was the plate of button 3 (-> 25, 2 Oct 2026)
+OZI_RENUM = {6: 19, 7: 20, 8: 24, 9: 25}        # gadgets of buttons 0, 1, 2 and 3 -> free ids
+OZI_GADGET = {0: 19, 1: 20, 2: 24, 3: 25, 4: 10, 5: 11,
+              6: 21, 7: 22, 8: 23, 9: 26, 12: 13, 16: 17}     # pushb -> its LARGEBUTTON
+OZI_LABEL_OF = {6: 9, 7: 10, 8: 11, 9: 12}      # the new buttons -> their `textmsg` number
 OZI_TEMPLATE = {'pushb': 16, 'gadget': 17, 'textmsg': 8}   # lines the new ones are cloned after
 OZI_BANIM = 18                                  # the `banim` object id (unchanged)
 # The `banim` widget (button.c `create_banim` 0x427854 / update 0x4279EC in Classic) is the
@@ -197,6 +199,7 @@ OZI_LABELS = {                                  # `textmsg` number (button id) -
     9: b'DARK COLONY',                          # button 6, new
     10: b'LOAD DC GAME',                        # button 7, new
     11: b'ONLINE WAR',                          # button 8, new (29 Sep 2026)
+    12: b'REPLAY ONLINE GAME',                  # button 9, new (2 Oct 2026)
 }
 # 640x480: the first row of the backdrop below the planet's crescent (measured on the button
 # columns of exp/intrface/intrg.gif, which is black from here to the artwork at row 435).  The
@@ -352,9 +355,9 @@ def menu_layout(data):
     Council Wars and pack campaigns one under the other, each with its load button, and the
     three screens that are not a campaign in the second column:
 
-        ACADEMY       (1)   ONLINE WAR       (8)
-        DARK COLONY   (6)   (reserved for a replay button)
-        LOAD DC GAME  (7)   MULTI PLAYER WAR (3)
+        ACADEMY       (1)   ONLINE WAR         (8)
+        DARK COLONY   (6)   REPLAY ONLINE GAME (9)
+        LOAD DC GAME  (7)   MULTI PLAYER WAR   (3)
         COUNCIL WARS  (0)   ENCYCLOPEDIA     (5)
         LOAD CW GAME  (2)
         OZI MISSIONS (16)
@@ -362,8 +365,8 @@ def menu_layout(data):
 
     Ids are the exe's button numbers, which decide the handler (patch_ozi_menu.py rewires 16 and
     4 to the pack and adds 6 and 7 for Dark Colony; patch_online.py adds 8 = ONLINE WAR, 29 Sep
-    2026, doc 10.51: right column row 1, MULTI PLAYER WAR and ENCYCLOPEDIA two rows down, row 2
-    empty), so only the positions and the labels move.
+    2026, doc 10.51: right column row 1, MULTI PLAYER WAR and ENCYCLOPEDIA two rows down, and
+    9 = REPLAY ONLINE GAME in row 2, 2 Oct 2026, doc 10.65), so only the positions and the labels move.
     Columns, pitch and button size are read off the grid; the rows hang from the DCUT title: the
     first row OZI_CREDITS_ROOM (120) rows under it, leaving the code-drawn credits box its stock
     100 rows, unless the bottom row would pass H-72 - then the block stops there (94-row box at
@@ -377,12 +380,13 @@ def menu_layout(data):
     gadgets = {int(m.group(1)) for m in LIVE_GADGET.finditer(data)}
     missing = [str(n) for n in STOCK_BUTTONS if n not in xy]
     missing += ['gadget %d' % n for n in STOCK_GADGETS if n not in gadgets]
-    # the stock grid has the plates as 6, 7 and 8, this function's output as 19, 20 and 24 (the 23 Sep
-    # form as 19, 20 and 8): each pair needs one of its two ids
+    # the stock grid has the plates as 6, 7, 8 and 9, this function's output as 19, 20, 24 and 25 (the 23 Sep
+    # form as 19, 20, 8, 9; the 29 Sep form as 19, 20, 24, 9): each pair needs one of its two ids
     missing += ['gadget %d/%d' % (a, b) for a, b in sorted(OZI_RENUM.items()) if a not in gadgets and b not in gadgets]
     m = BANIM_PAIRS.search(data)
-    # the stock grid (8 pairs), the 23 Sep form (10: + the two Dark Colony buttons) or this form (11)
-    pairs = (len(STOCK_BUTTONS), len(STOCK_BUTTONS) + 2, len(STOCK_BUTTONS) + len(OZI_NEW_BUTTONS))
+    # the stock grid (8 pairs), the 23 Sep form (10: + the two Dark Colony buttons), the 29 Sep form (11: + ONLINE
+    # WAR) or this form (12: + REPLAY ONLINE GAME)
+    pairs = (len(STOCK_BUTTONS), len(STOCK_BUTTONS) + 2, len(STOCK_BUTTONS) + 3, len(STOCK_BUTTONS) + len(OZI_NEW_BUTTONS))
     if missing or not m or m.group(1) != m.group(2) or int(m.group(1)) not in pairs:
         raise SystemExit('exp/%s/bintroe: not Classic\'s 2x4 button grid (missing %s, banim %s) - '
                          'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'

@@ -255,6 +255,18 @@ little-endian, strings NUL-terminated as in §3.1.
 
 Keep-alives: while the room list is shown the module sends `'q'` every 700 ms like the lobby loop, so the hall's keep-alive deadline (`KEEPALIVE_TIMEOUT_MS`) applies unchanged. They stop with `ENTER` and resume only after a `REFUSED` (F81); the relay's join grace (`JOIN_TIMEOUT_MS`, restarted at `ENTER`) covers the round trip and the game's own connection.
 
+### 4.5 REPLAY ONLINE GAME messages (relay-only, 2 Oct 2026)
+
+Five more relay-only types for the second button of the same exe module (server plan §21, `DC16_DISPLAY_AND_RESOLUTION.md` §10.65): the list of the battles the relay recorded, and the choice of one battle plus the participant whose seat the viewer takes. The hand-over after `REPLAYING` is the one of §4.4 (`ENTERING`): sequence counters reset, the stock join sequence into a private viewer room that plays the recorded frames back (plan §18.7 mechanics, now per viewer). `0x53 REFUSED` is shared.
+
+| Type | Name | Payload | Sent by | Meaning |
+|---|---|---|---|---|
+| `0x55` | `RLIST` | — | client → relay | "I am a REPLAY ONLINE GAME client: send the recorded battles." Marks the connection like `LIST`; no lobby view, no room table. The list is sent once per `RLIST` (the module asks again when the screen is reopened). |
+| `0x56` | `REPLAYS` | `u8 count`, `string header` | relay → client | The list begins: `count` `REPLAY` entries follow (0 = none; the relay keeps the newest `REPLAY_KEEP` = 50), `header` is the column line the screen shows above its 40-column list (`DATE  UTC   MAP       TERR.  S P A  M:SS`), formatted by the relay like the rows so the layout can change without an exe rebuild. |
+| `0x57` | `REPLAY` | `u8 id`, `u8 seats`, `u8 players`, `u8 bots`, `u8 real`, `u16 seconds`, `string row`, 8 × `string name` | relay → client | One recorded battle, newest first: `id` names it in `RPLAY` (stable while the relay runs, 1..250), `seats` = the map's player count, `players` = real people, `bots` = computer players (the relay's bots + AI slots), `real` bit k = slot k was a real player, `seconds` = the battle's length, `row` = the 40-column list line (`[dd.mm] [hh:mm UTC] [map, 9] [terrain, 6] [seats] [players] [bots] [m:ss]`, `src/replays.js`), `name[k]` = the lobby name of slot k when a human (player or bot) held it - the seats a viewer may take - and `""` otherwise. **One command per frame** (header and every entry each in a frame of its own, all in one write): the exe module reads the first command of a frame, as the room table was always a single command - the first game test (2 Oct 2026) lost every entry behind a packed header. |
+| `0x58` | `RPLAY` | `u8 id`, `u8 slot` | client → relay | Watch recording `id` from `slot`'s seat. The relay loads the recording, opens a viewer room (`RoomPool.openViewerRoom`: the recorded lobby with that seat free, race / colour / team pinned, the recorded tick length, no engine, no recording, `MIN_PLAYERS` 1) and answers `REPLAYING`; `REFUSED` when the id is gone (the retention), the slot was no human in that battle, or the file cannot be loaded. From `RPLAY` to the answer the module is silent, as after `ENTER` (F81). |
+| `0x59` | `REPLAYING` | `u8 slot` | relay → client | The last frame of the dialogue: everything after it belongs to the game's lobby client (`'d'`, the room dump). READY starts the playback; the viewer's orders are ignored (§18.7); when the viewer leaves, the room is dropped. |
+
 ---
 
 ## 5. Server behaviour (`server.c`)
@@ -405,6 +417,28 @@ check, not counted, not ending the join grace - until the game's first frame (`c
 `isModuleFrame` in `client.js`; same-chunk stragglers in `hall.onData`). A straggler whose number
 happens to be 0 would otherwise have been taken for the game's frame 0 and the real one skipped as a
 duplicate.
+
+### 6.10 REPLAY ONLINE GAME: a recorded battle watched from a participant's seat (2 Oct 2026)
+
+The second button of the module (id 9, `replay_game`; display doc §10.65) uses the ONLINE WAR connection and hand-over with the replay list instead of the room table:
+
+```
+exe module                                   relay (hall)
+  DEFAULT_SERVER.TXT, TCP + TLS as in 6.9
+  |<--- 'd' + hall dump (ignored) -----------|
+  |--- 0x55 RLIST -------------------------->|
+  |<-- 0x56 REPLAYS count header ------------|  the screen: 40-column list, right of it the
+  |<-- 0x57 REPLAY x count ------------------|  eight participants of the selected battle as radio
+  |                                          |  boxes (checkb widgets), REPLAY (greyed until a seat is
+  |                                          |  ticked) / BACK; 'q' every 700 ms
+  |--- 0x58 RPLAY id slot ------------------>|  loadReplay(file, { slot }); a viewer room is opened
+  |<-- 0x59 REPLAYING slot ------------------|  seqOut = seqIn = 0
+  |<-- 'd' 15, slot + room dump -------------|  the recorded lobby: the other humans as fakes, AI slots as recorded
+  module: loopback listener + proxy thread + the game's network entry, exactly as after ENTERING
+  game: READY -> the room starts -> the recorded sync frames, byte for byte, at the recorded pace
+```
+
+The viewer sees the battle from the chosen seat (its fog of war, base and money), can scroll the map and open the dialogs, and can do nothing else: every order, chat line, gift and pause is dropped by the viewer room (`Game.handleReplay`). After the last recorded frame nothing more is sent; QUIT ends the viewing and the room is dropped. Bots' seats are watchable too (their names carry the `AI ` prefix since 2 Oct 2026).
 
 ## 7. Constants
 
