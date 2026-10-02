@@ -36,6 +36,7 @@ export class Game {
     this.lastSpeedRefresh = 0;
     this.framesSent = 0;
     this.replayDone = false;
+    this.replayDoneAt = 0; // when the last recorded frame went out (the viewer's connection is closed after it, plan 21.2)
   }
 
   start(now) {
@@ -164,6 +165,7 @@ export class Game {
       if (!f) {
         if (!this.replayDone) {
           this.replayDone = true;
+          this.replayDoneAt = now;
           r.log.info('replay finished: all recorded frames sent', { frames: this.framesSent, lastUntil: this.lastIssuedUntil, ignored: rp.ignored, compared: rp.compared, divergedAt: rp.divergedAt });
         }
         this.acc = 0;

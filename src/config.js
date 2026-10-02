@@ -83,6 +83,10 @@ export const DEFAULTS = Object.freeze({
   // simulation (18 Sep 2026: sync error at tick 3944 with it, clean run without): only for a short
   // look at the opening, a full viewing needs it off (plan §18.7).
   REPLAY_FULL_MAP: false,
+  // REPLAY ONLINE GAME (plan 21.2): a viewer's connection is closed once it has executed the last recorded frame,
+  // or this many ms after that frame went out at the latest (maintainer, 2 Oct 2026: "when replay ends then
+  // relay must close a connection")
+  REPLAY_END_GRACE_MS: 10000,
   // Lobby slot of the fake host. 0 (default) makes it the lowest network id, so no client sends
   // 0x08 (F14). Diagnostic: a higher slot (e.g. 7) lets the lowest real player send checksums every
   // tick, which RECORD_DIR/SYNC_CHECK=shadow compare with the engine. Real players never get slot 0.

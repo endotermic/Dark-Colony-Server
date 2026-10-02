@@ -71,9 +71,15 @@ export class Watchdog {
             r.evict(c, `no echo for frame ${late}`);
             break;
           }
-          // a viewer whose recording has ended (plan 21) gets no more frames, so nothing to answer: it may
-          // look at the final state until it quits
-          if (now - c.lastSeen > cfg.IDLE_TIMEOUT_MS && !(r.replay && r.game.replayDone)) r.evict(c, 'idle');
+          if (r.replay && r.game.replayDone) {
+            // the recording has ended (plan 21.2; maintainer, 2 Oct 2026: "when replay ends then relay must close a
+            // connection"): once the viewer has executed the last recorded frame - or REPLAY_END_GRACE_MS after it
+            // went out, should the progress reports stop - the relay closes the connection and the game returns
+            // to its menu
+            if (c.clientTime >= r.game.lastIssuedUntil || now - r.game.replayDoneAt > cfg.REPLAY_END_GRACE_MS) r.evict(c, 'replay ended');
+            break;
+          }
+          if (now - c.lastSeen > cfg.IDLE_TIMEOUT_MS) r.evict(c, 'idle');
           break;
         }
         default:

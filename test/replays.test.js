@@ -193,17 +193,40 @@ test('hall: RLIST lists the recordings (no lobby view, no room table); RPLAY ref
   h.stepAfter(100);
   const frames = p.takeCmds().filter((c) => c.type === T.UNTIL);
   assert.ok(frames.length >= 1, 'recorded frames flow');
-  // the recording ends: the viewer answers nothing more and is NOT evicted as idle (it looks at the final state)
+  // the recording ends: the relay closes the connection once the viewer has executed the last frame (maintainer,
+  // 2 Oct 2026: "when replay ends then relay must close a connection"), and the room is gone
   for (const f of frames) p.send(build.until(decode(f).a, decode(f).until));
   h.stepAfter(2000);
   for (const f of p.takeCmds().filter((c) => c.type === T.UNTIL)) p.send(build.until(decode(f).a, decode(f).until)); // the game echoes everything
   assert.ok(room.game.replayDone, 'all five recorded frames sent');
-  h.advance(h.cfg.IDLE_TIMEOUT_MS + 1000);
+  h.advance(1000);
   h.tick();
-  assert.equal(h.pool.viewers.length, 1, 'still watching after the idle timeout');
-  assert.equal(room.clients.size, 1);
-  // the viewer leaves: the room is gone
-  p.sock.destroy();
+  assert.equal(h.pool.viewers.length, 1, 'the viewer has not reported the last frame yet: still connected');
+  p.send(build.until(-1, room.game.lastIssuedUntil)); // the progress report of the last recorded tick
+  h.tick();
+  assert.ok(p.gone, 'connection closed');
+  assert.equal(h.pool.viewers.length, 0, 'the viewer room is gone');
+  assert.equal(h.pool.all().length, h.pool.rooms.length);
+  // a viewer that stops reporting is closed REPLAY_END_GRACE_MS after the last frame
+  const p2 = h.enter('Exe2');
+  p2.take();
+  p2.send(build.rlist());
+  p2.takeCmds();
+  p2.send(build.rplay(id, 4));
+  p2.takeCmds();
+  p2.seq = 0;
+  p2.send(build.ready(2, 4));
+  p2.send(build.mready(7, 2));
+  const room2 = h.pool.viewers[0];
+  h.stepAfter(2000);
+  for (const f of p2.takeCmds().filter((c) => c.type === T.UNTIL)) p2.send(build.until(decode(f).a, decode(f).until));
+  assert.ok(room2.game.replayDone);
+  h.advance(h.cfg.REPLAY_END_GRACE_MS - 1000);
+  h.tick();
+  assert.equal(h.pool.viewers.length, 1, 'within the grace: still connected');
+  h.advance(2000);
+  h.tick();
+  assert.ok(p2.gone, 'closed after the grace');
   assert.equal(h.pool.viewers.length, 0);
   assert.equal(h.pool.all().length, h.pool.rooms.length);
   fs.rmSync(dir, { recursive: true, force: true });

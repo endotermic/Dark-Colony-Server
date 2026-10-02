@@ -13,8 +13,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
   (date, map, terrain, seats, players, computer players, length as a 40-column row; the eight participant
   names; the real-player mask), `0x58 RPLAY id slot` → `0x59 REPLAYING` opens a private **viewer room**
   (`RoomPool.openViewerRoom`: the §18.7 replay room per viewer - recorded lobby, the chosen seat pinned,
-  recorded speed, no engine, no recording) and hands the connection over like `ENTERING`; the room is
-  dropped when the viewer leaves. `tools/fakeclient.js --replay [ID] --slot S`. Exe side (game repo, fix
+  recorded speed, no engine, no recording) and hands the connection over like `ENTERING`; the relay
+  closes the connection when the recording has ended (`REPLAY_END_GRACE_MS`) and the room is dropped
+  when the viewer leaves. `tools/fakeclient.js --replay [ID] --slot S`. Exe side (game repo, fix
   `online`): the twelfth main-menu button REPLAY ONLINE GAME under ONLINE WAR, the screen `REPLAYE` with
   the list and eight radio boxes (`checkb` widgets made exclusive by the module; the empty box is a new
   cell of `HD_SRC\KNOBR.SPR`) for the participants, REPLAY greyed until one is ticked. Seven tests (268).
