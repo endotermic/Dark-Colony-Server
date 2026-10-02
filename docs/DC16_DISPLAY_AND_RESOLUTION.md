@@ -6296,3 +6296,46 @@ the game snaps x to a whole tile and z to `.80` at 1024x768 before drawing, so t
 remainder (184 units = the "23 px right" of the first Lieutenant probe, which was no sprite error at all).
 Snap before projecting: `cam_x & ~0xFF`, `(cam_z & ~0xFF) | 0x80` (odd row count), or read the camera a frame
 after the write. The offline recorder makes this class of measurement repeatable without another game run.
+
+### 10.66 Tabs 1/2/3 and the DAYS count "lost after patching": the patcher followed the player's Windows regional format (2 Oct 2026)
+
+**Report** (maintainer, with the player's folder as a ZIP and a 1920x1080 screenshot): after patching, the three tab
+digits over the button grid and the DAYS count are gone; a cyan `000` floats on the terrain. The §10.59 signature
+of a mixed set - but the player's exe was byte-identical to the patcher's 1920x1080 dark reference and the
+`HD_1080P\` set had been written minutes earlier by the patcher of commit `cc633d5`, so no file had been
+copied between sizes.
+
+**Finding.** The player's `HD_1080P\MAINE` had every panel widget shifted by (640, 300) and `size 0 0 1920 1080` -
+the generic letterbox rule for a MENU screen - with the tab pictures left at 110x12 and `in_text 234` at
+(1253, 733) = 613 + 640 / 433 + 300: the HUD script had NOT gone through `Edit-HudScript`. `BINTROE`,
+`DINTROE`, `INTROE` were letterboxed the same way instead of relaid out by `Edit-IntroScript`, and the stray
+`MULTIE~1.TXT` that the set never contains was written; `BUTTONSE` - the one intro screen without the letter I -
+was right. `Write-InterfaceSet` chooses its branches by `$name.ToLower() -eq 'maine'`,
+`$introScreens -contains $lname` and `$lname -eq 'multie~1.txt'`, and .NET's `ToLower()` follows the thread's
+culture: under a Turkish or Azerbaijani regional format `I` lowercases to the dotless `ı` (U+0131), so `MAINE`
+becomes `maıne` and misses every comparison. The player's progress text said `3,7 s` (decimal comma), the
+regional format's other trace.
+
+**Proof.** The zip's own patcher run on a second copy with
+`[Threading.Thread]::CurrentThread.CurrentCulture = 'tr-TR'` (PowerShell 5.1) wrote a set byte-identical to the
+player's, all 65 files; with the 14 `.ToLower()` / `.ToUpper()` calls replaced by their Invariant forms in a
+scratch copy, the same run gave the fixture set under 5.1 and 7.
+
+**Fix (patcher 1.1, `gen_apply_script.py`):** every case conversion in the generated script is
+`ToLowerInvariant()` / `ToUpperInvariant()`, and the script sets the thread's `CurrentCulture` and
+`CurrentUICulture` to `InvariantCulture` right after `Set-StrictMode` - for the window and the command line alike -
+so string comparison, hashtable keys, regex IgnoreCase and number formatting cannot depend on the player's
+Windows settings either. Reference hashes unchanged (no exe byte depends on the culture). Verified on a clean
+`git archive HEAD` copy: 5.1 under tr-TR at 1920x1080 dark and pwsh 7 under tr-TR at 1024x768 dark = fixtures
+(HSCENE/GSCENE carry the DC ending names because the copy has the DC movies) and reference exes; 5.1 under the
+default culture at 1024x768 light = the light fixture; the headless window test passes under both shells (its
+1 Oct harness still looks for `INTRF_HD\MAINE` - two stale checks).
+
+**Rules.** (1) A patched set that is wrong although the exe is the reference and the set is freshly written:
+ask for the player's Windows regional format before anything else; the dotless-i cultures are tr-TR and az-Latn.
+(2) The patcher is a byte-exact generator: nothing in it may use a culture-sensitive operation - `ToLower()`,
+`ToUpper()`, `-f` on fractional numbers, `Sort-Object` on text that reaches a file - and every patcher change is
+checked once with the thread culture set to `tr-TR`
+(`powershell -Command "[Threading.Thread]::CurrentThread.CurrentCulture='tr-TR'; & .\Apply-DarkColonyPatches.ps1 -All ..."`).
+(3) Inside a PowerShell function, `$args` is the automatic argument array - a parameter of that name is empty
+and the patcher started without arguments opens its window (one lost test run that evening).
