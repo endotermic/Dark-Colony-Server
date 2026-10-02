@@ -70,6 +70,9 @@ OZI_ANIM = 'animozi.dat'            # the patched exe's start-up list (patch_ozi
 # stock Council Wars FINs kept out of animozi.dat so every Classic unit type animates exactly as in
 # Classic dc16.exe (network lockstep, docstring item 1; doc DC16_DISPLAY_AND_RESOLUTION.md 10.39)
 NOT_IN_OZI_ANIM = ('grrr.fin', 'troo.fin')
+# root ANIMATE/ banks only the patched exe loads (named in animozi.dat, not in any stock anim.dat):
+# trac.fin = the human trooper's tracer bullet (tracer.py, 2 Oct 2026)
+EXTRA_FINS = ('trac.fin',)
 SKIP_DIRS = {'animate', 'sprites'}
 SKIP_FILES = {'anim.dat', 'telp.fin', 'sound/sound2.dat', 'intrface/maine', 'intrface/bintroe',
               'intrface/introe', 'intrface/shumane', 'intrface/intrg.gif', 'intrface/intro.gif',
@@ -83,6 +86,7 @@ SKIP_SUFFIXES = ('.bak', '.med')
 UI_FROM_EXP = ('bintroe', 'shumane', 'introe')
 HD_DIR = 'intrf_hd'                 # the legacy name; main() replaces it with the folder found under exp\ (HD_<height>P, 2 Oct 2026) or --hd-folder
 import hdfolder
+import tracer
 OVERLAY = 'ozi_ns'
 SAVEDIR = 'ozisave'
 LABEL_OLD, LABEL_NEW = b'PLAY INTRO', b'OZI MISSIONS'
@@ -291,9 +295,11 @@ def base_set(game, pack, plan):
     while lines and not lines[-1].strip():
         lines.pop()
     lines += [(u + '.fin').encode() for u in NEW_UNITS if (u + '.fin').encode() not in have]
+    lines += [f.encode() for f in EXTRA_FINS if f.encode() not in have]     # root ANIMATE/, written by tracer.py
     plan.write(os.path.join(exp, OZI_ANIM), eol.join(lines) + eol,
-               'stock anim.dat + %s, %s, without %s' % (', '.join(OZI_NAME % u for u in REPLACED),
-                                                         ', '.join(NEW_UNITS), ', '.join(NOT_IN_OZI_ANIM)))
+               'stock anim.dat + %s, %s, %s, without %s' % (', '.join(OZI_NAME % u for u in REPLACED),
+                                                             ', '.join(NEW_UNITS), ', '.join(EXTRA_FINS),
+                                                             ', '.join(NOT_IN_OZI_ANIM)))
     for stock in ('anim.dat', 'animate/tran.fin', 'sprites/tran.spr'):
         p = find_ci(os.path.join(exp, *stock.split('/')[:-1]), stock.split('/')[-1])
         if p and b'TRANSMOKEY' in open(p, 'rb').read() and stock != 'anim.dat':
@@ -517,6 +523,11 @@ def overlay(game, pack, plan):
                 unshifted = os.path.join(dst_root, 'gamestat', out)
                 produced.add(os.path.normcase(unshifted))
                 plan.write(unshifted, raw, 'scene list, unshifted (source for the patcher)')
+            elif key in ('gamestat/weapstat.kor', 'gamestat/weapstat.txt'):
+                # tracer bullets (tracer.py, 2 Oct 2026): the human trooper's weapons 1-3 -> TRAC bank, the Gray
+                # trooper's upgraded weapons 16/17 -> the stock GRAY bolt; same edits as dc/ and exp/ get
+                plan.write(dst, tracer.fix_weapstat(open(os.path.join(dp, f), 'rb').read()),
+                           'pack table, weapons %s' % tracer.describe())
             else:
                 plan.copy(os.path.join(dp, f), dst, 'overlay')
     for name in UI_FROM_EXP:

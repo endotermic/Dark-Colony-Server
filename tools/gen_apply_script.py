@@ -186,6 +186,12 @@ def ozi_data(g, mode=None):
     assert len(files) >= 370, (g, len(files))
     files += ['ozi_ns\\gamestat\\hxscene.txt', 'ozi_ns\\gamestat\\gxscene.txt']   # unshifted lists, untracked at generation time
     files += ['dc\\intrface\\credits.txt']   # the DARK COLONY mode's overlay: the Council Wars credits (its menu and dialog copies are written per resolution)
+    # tracer bullets (tracer.py, 2 Oct 2026): the TRAC bank the patched exe loads through animozi.dat and the
+    # weapon-table overlays (human trooper -> TRAC, upgraded Gray trooper -> GRAY); the root tables stay stock
+    files += _tree(g, 'ANIMATE', pattern=r'^trac\.fin$') + _tree(g, 'SPRITES', pattern=r'^trac\.spr$')
+    files += _tree(g, 'dc', 'gamestat', pattern=r'^weapstat\.txt$') + _tree(g, 'exp', 'gamestat', pattern=r'^weapstat\.txt$')
+    assert {f.lower() for f in files} >= {'animate\\trac.fin', 'sprites\\trac.spr', 'dc\\gamestat\\weapstat.txt',
+                                          'exp\\gamestat\\weapstat.txt'}, 'tracer files missing from the index (git add them)'
     if mode == STOCK_MODE:
         files += ['exp\\intrface\\bintroe']                              # source of the bintoze copies
     return files
@@ -1005,8 +1011,13 @@ itself uses.  Two buttons are added for it:
     sizes (same day; 0 at 1280x720, where the DC logo already touches the planet's crescent).
 REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/animate/tranozi.fin,
 exp/sprites/tranozi.spr, dc/HD_<height>P/bintroe and the rewritten main-menu script
-(exp/HD_<height>P/bintroe) from the repository.  Because the .reloc insert shifts every later
-relocation entry, this patch is always applied last.'''),
+(exp/HD_<height>P/bintroe) from the repository, plus the tracer-bullet data of 2 Oct 2026
+(ANIMATE/TRAC.FIN, SPRITES/TRAC.SPR and the weapon-table overlays dc/gamestat/weapstat.txt,
+exp/gamestat/weapstat.txt: the human trooper and the Lieutenant fire a visible streak, the Gray
+trooper keeps its bolt at every weapon upgrade level and the Gray commander's pistol fires the
+Gray bolt; data only, the patched exe reads the tables
+through the mode prefix and the FIN through animozi.dat).  Because the .reloc insert shifts every
+later relocation entry, this patch is always applied last.'''),
  # ---- map editor (maped.exe): the functional part of the ozi_ns editor, without its Polish resources
  dict(id='blocksets', name='New Map: Atlantis, Training and Special block sets selectable', date='15 Sep 2026', tool='tools/patch_maped.py --fix blocksets',
       doc='CLAUDE.md "Map editor notes" (Dark-Colony-development)', blocks=blocks_maped('blocksets'), editor_only=True,

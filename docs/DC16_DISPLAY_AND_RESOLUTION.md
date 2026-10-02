@@ -6064,3 +6064,123 @@ Maintainer: "looks like we have to absolutely isolate files for different resolu
 **Cause.**  The camera is the view centre; after the per-frame clamp (`clamp2d`, `0x40AF16`) its low bytes are zeroed - `mov byte ptr [ui+108h],0` / `mov byte ptr [ui+110h],0` at `0x40AF1E` / `0x40AF2B` (Classic; Ultimate +0x60), the tile snap.  The renderer's origin is `camera +- half` with the patched half-viewport constants (`0xB80` = 11.5 tiles at 1024x768, Stage 3), so with a camera at `.00` the origin lands on a half tile; the tile renderer (`>> 5`, section 3) floors it and draws the terrain and the objects from whole tiles, while the selection marker / health bar and the mouse pick (`0x409574`, `rect.h / 2` from the view rect) work in the exact frame.  At an even tile count half is whole tiles and nothing is lost (the stock 14 rows, 7 tiles).  Consequences at the odd sizes: the marker floated 16 px higher above every unit (the maintainer's report) and a ground click issued its order half a tile north of the clicked spot (the unit pick has tolerance, so units were still selectable).
 
 **Fix (`patch_resolution.py`, two stage-3 sites in the `resolution` fix, 2 Oct 2026):** the snap byte becomes **`0x80`** on an axis whose tile count is odd (`g.tiles_x % 2` / `g.tiles_y % 2`), so the camera sits on a half tile and `camera +- half` is a tile boundary again - every consumer in one frame; on an even axis the site writes the stock `0` and nothing is emitted.  One byte per exe at 1024x768, 1280x720 and 1280x1024 (Classic file `0xA331`, Ultimate `0xA391`), none at the other modes.  The clamp bounds `[half, map - half]` already end in `.80` at those sizes, so the clamped camera reads 11.5 ... 72.5 tiles on the 96x84 map (measured through `gsread.py` while scrolling to all four edges with the arrow keys; alive, `error.log` empty, a ground click at the edge fine); the vision / ambience rect (`(cam - half) >> 8`, `0x40AB1C`) now covers rows `t-11 ... t+11` exactly.  **Confirmed in game at 1024x768, 1280x720 and 1280x1024 (dark): the gap is 18 px like stock**, the Lieutenant's exact screen point moved 16 px down onto his sprite.  Patcher regenerated (1 757 850 bytes): `resolution` has 200 / 199 edits at the odd sizes; references **Ultimate 1024x768 dark `b1725e95...` (the published exe, rebuilt in the game folder), Classic 1024x768 dark `24de980e...`**, Ultimate 1280x720 `48ecca5e...`, 1280x1024 `2c5df19d...`; the even sizes' hashes unchanged.  `dc16.asm` / `dcexp16.asm` regenerated from the 1024x768 reference builds (the Classic one built in a scratch copy with the three `DC*.AVI` present - without them the patcher skips `movies` and the build is not the reference).  Rig: `scroll_probe.py` in `smoke_rig/`.  Committed and pushed 2 Oct 2026: Dark-Colony `20904d3`, Server `4d4c82c`.  **Full smoke rerun after the push (maintainer: "rerun the full smoke test at 1024x768 and 1280x1024 with the fix"):** both sizes, dark and light, from the pushed patcher - exes = references (1024x768 light `fc50a224...`, 1280x1024 light `1e160482...`), the whole 10.62 sequence (menu, briefing, battle, Lieutenant, drag-selection, tabs, four dialogs), marker-to-helmet gap 18 px in all four runs, `error.log` empty.  **Lesson: a view of an odd number of tiles on an axis needs the camera on a half tile; compare the marker-to-sprite gap with stock whenever a new size is added.**
+
+### 10.64 Tracer bullets for the human trooper and the Lieutenant; the Gray trooper's bolt at every weapon level (2 Oct 2026)
+
+**Maintainer: "multiple units are throwing a projectile. investigate how much effort would be to add tracer bullets
+with light tails for human and alien troopers" -> "alien trooper already have a projectile visible with glow on the
+soil. do they loose this animation when upgrading weapon?" -> "ok, fix alien trooper weapon upgrade sprite problem.
+and implement tier 1 for human trooper only" -> (watching the test) "i see that lieutenant dont have a tracer".
+Data only, no exe byte; `tools/tracer.py`; confirmed in game at 1024x768 (Ultimate, OZI `globo01`).**
+
+**How the engine draws a projectile.** The weapon loader `0x43B6EC` fills `weapon+0x2C` with the animation set
+`<sprite>BULLET` when an animation `<sprite>BULLET0` exists (sprite = WEAPSTAT.TXT column 2); `create_missile`
+`0x44192C` draws its random byte first and starts an animation instance in the missile record (`+0x20`) only
+when that pointer is non-NULL; the missile drawer `0x439E88` (Ultimate +0x60; called from the client display
+right after the object pass `0x4396D4`) queues, for every active missile with an animation, launch delay 0,
+inside the map and inside the local player's vision mask, the cells of `set[heading >> 3]` through the sprite
+queue `0x436128` (800 entries per frame, silently dropped beyond). The animation-set loader `0x426014` takes up
+to 16 file facings `<name>BULLET<n>` with `n = (12 - i) & 15` for the set index `i = heading >> 1`, heading
+0 = +x (east), 8 = +z (north, screen up), counter-clockwise; so file facing n points 270 - 22.5 n degrees:
+0 south, 4 west, 8 north, 12 east (checked in game by the streak direction). **A bullet sprite is display
+only**: the sync checksum `0x44ABC0` covers the missile COUNT and the objects, not animations or missile
+positions, and no `rand()` depends on the bullet pointer - a player with this data and one without stay in sync,
+and the server engine port needs no change (`src/engine/missile.js` line 210 does the same conditional
+`startAnim`). What does feed `rand()` is the explosion sprite count (`weapon+0x40`, the hit path draws a random
+explosion only when it is non-zero), so **a weapon's EXPLODE lookup must never change** - no `TRACEXPLODE`,
+and weapon 5 keeps its sprite name (see below).
+
+**Why troopers fired invisibly.** Weapons 1-3 (human trooper, TRSC type 0, upgrade levels 0/1/2) and 16/17
+(Gray trooper type 8, levels 1/2) have the sprite name `weapons` in `GAMESTAT/WEAPSTAT.TXT`, and no FIN bank
+defines `weaponsBULLET0` (the twelve BULLET animations that exist: BARR, BARR2, PUS, GRAY, BANG, EGG, TOXX, UA,
+CMNDR, ZIMAL, SPIKE, TURR, XENO). Only the Gray level-0 weapon 15 says `GRAY`: `GRAYBULLET0` (GRAY.FIN frame
+421) is two cells, the glow `glit 13` (8x8, draw mode 5) and the ground glow `smsp 0` (32x20 intensity ellipse,
+draw mode 3 = the "glow on the soil", drawn in the blitter's ground pass before the sort). So the Gray bolt
+vanished with the first weapon upgrade - a stock table oversight, not a design.
+
+**Cell draw modes and registration (measured; the `.SPR` directory's yoffset plays no part in the position).**
+The in-memory FIN cell record is `{bank*, u16 cell, i16 x, i16 y, a, b, mode, d}` (20 bytes; file record 22
+bytes `char[8] bank, u16 cell, i16 x, i16 y, u16 a b mode d`); `mode` (file word 7) is the queue entry's byte
+`+0x17` = the jump table `0x4543E4` (0..5; 3 = ground pass `0x46A0BC`, 1 = plain unit cells, 5 = the glow
+cells), `a` = queue `+0x15` (2 = the "lit" flag `0x536410`, like height != 0: the blitter uses the constant
+light 0xF0 instead of the lightplane), `d` = queue `+0x18`. A cell's LEFT edge is `x + xoffset` and its BOTTOM
+edge `y` from the object's ground point (the culling code in `0x4543FC` compares `x + ox` and `y - h`; units
+stand on their point: TRSC STAND `y 4, h 45`; the glow `x -139, xoffset 136, y 4, 8x8` is centred at (+1, 0));
+the missile's height lifts the whole frame. The first build registered the streak with `y - yoffset` and the
+vertical facings rode 24 px high - measured in game, fixed, re-measured.
+
+**The fix.** `tools/tracer.py plan|apply|verify GAME` (+ `preview OUT.png`): (1) `SPRITES/TRAC.SPR`, 16 streak
+cells (bright pale-yellow head, 26 px tail fading yellow -> amber -> orange -> red behind it, half-width 1.7 ->
+0.55 px, ordered dither at the end; palette 68/70/72/75/78/80/82, none of the team ramp 128..143), one per
+file facing; (2) `ANIMATE/TRAC.FIN`: banks `trac, glit, smsp`; animations `TRACBULLET0..15` AND `SMOKBULLET0..15`
+(the alias for the Lieutenant's pistol, weapon 5 `SMOK`, found by the loader through the name - no table edit, so
+`SMOKEXPLODE` and its rand() stay) on the same 16 frames, each = the Gray bolt's two cell records byte for byte
+(`glit 13 -139 4 0 16 5 0`, `smsp 0 -59 22 0 16 3 0`) plus the streak cell registered with its head pixel on the
+glow's centre (`x = 1 - hx - 136`, `y = h - hy`, `xoffset/yoffset` = the glow's 136/116); duration 0 = 2 ticks
+like GRAYBULLET0; (3) the weapon tables: the ROOT `GAMESTAT/WEAPSTAT.TXT` and `ANIM.DAT` stay byte-identical for
+the original exes; the patched Ultimate reads its tables through the mode prefix, so `dc/gamestat/weapstat.txt`
+(DARK COLONY, ACADEMY, network, ONLINE WAR) and `exp/gamestat/weapstat.txt` (COUNCIL WARS) are copies of the root
+table with weapons 1, 2, 3 -> `TRAC` and 16, 17 -> `GRAY`, and `ozi_ns/gamestat/weapstat.txt` (the pack's own
+table) gets the same five edits in place (`build_ozi_overlay.py` applies `tracer.fix_weapstat` when it
+regenerates the overlay); (4) `exp/animozi.dat` + `trac.fin` (`build_ozi_overlay.EXTRA_FINS`; the patched exe's
+start-up list - the stock `exp/anim.dat` never loads it). The untouched `ENGEXP16.EXE` does read
+`exp/gamestat/weapstat.txt` when present: it then draws the Gray bolt at every level and still nothing for TRAC
+(no `trac.fin` in its list; a missing `BULLET0` is silent) - **the second deliberate data exception** after
+`exp/intrface/bintroe` (section 10.35); the deprecated Dark Colony exe reads the root tables and gets nothing.
+Patcher: the four files joined the `ozi` fix's `Data` list (`gen_apply_script.ozi_data`), no exe edit, hashes
+unchanged, patcher regenerated. The bullet moves 4 x 60 = 240 units = 30 px per game tick (four
+`update_missiles` passes in `0x442B50`), so the 26 px tail bridges the jumps between frames.
+
+**Test** (`smoke_rig/tracer_test.py`, 1024x768 dark, `subst X:` copy without `AVI/`, layer entry set and
+removed): OZI MISSIONS -> `globo01` -> the squad of seven troopers + Lieutenant found through the object table
+(`gsread.py`, records at (0,0) are unused slots - the first run's centroid of them put the camera outside the map
+and the vision scan `0x439DBE` read a NULL row pointer: an external camera write must be clamped to the bounds the
+battle-start fix keeps at `ui+0x114..0x120`), the enemy Grays' upgrade level poked to 2 through
+`object_types[8]+0x30+team` (`0x50FCF8`, same address in both exes), Move & Attack towards the nearest enemy,
+camera on the squad, ~4 frames/s with the live missile list read before and after each grab. Evidence: missiles
+of weapon 1 (46 observations), 5 (153, all with an animation - before the alias 21 of 99 were without, the
+flying ones) and 17 (178) carry an animation; weapon-1 and weapon-5 bullets show the yellow streak, weapon-15
+and weapon-17 bullets the stock white glow with the orange ground smear, all at the bullet's point within the
+rig's one-tick capture jitter (30 px along the flight direction); `error.log` empty. The ramp-colour detector
+also fires on the mech unit's orange shoulder lamps - judge placement from the per-missile crops
+(`shots/tracer_missiles.png`), not from colour counts. Not run: other sizes, the light theme, a network game,
+Dark Colony campaign missions (same data path through `dc/`).
+
+**Lessons.** (1) The first "displaced streak" reading was wrong twice over: the white starbursts next to the
+streaks were enemy bolts and Lieutenant hits, and a bullet captured 50-100 ms after the memory read has moved a
+tick - compare against a stock projectile measured the same way before changing a registration rule. (2) A
+sprite's placement rule is `left = x + xoffset, bottom = y`; derive it from the culling code and a unit's STAND
+record, not from one glow cell. (3) Scratch heredocs keep mangling `b'\x02'`-style literals: edits with
+backslashes go through a script file (the 25 Sep rule stands).
+
+**Same day, the Gray commander (maintainer: "do alien leader have a visible projectile?" -> "go with option 2,
+gray bolt for alien leader").** The Gray commanders (types 73-76) fire weapon 62, "ALIEN commander weapon",
+whose sprite name is `SMOK` like the Lieutenant's weapon 5, so the `SMOKBULLET` alias had given them the human
+yellow streak as a side effect (stock: invisible). Renaming weapon 62 to `GRAY` would have dropped its hit
+animation (`SMOKEXPLODE`, one sprite) and with it a `rand()` call per hit = desync, so weapon 62 gets a name of
+its own in the three overlay tables, **`SMOG`** (`WEAPON_SPRITES[62]`), and TRAC.FIN declares both lookups the
+loader makes for it: `SMOGBULLET0..15` = the bare Gray bolt (glow + ground glow, no streak; frames 16..31) and
+`SMOGEXPLODE0` = `SMOKEXPLODE0` copied byte for byte from TURR.FIN frames 184..191 (bank `ssss` cells 0..6,
+durations 6 0 13 20 26 20 13 6, record extras 12 16 5 0; frames 32..39; `PISTOL_HIT`), so the explosion count
+stays 1 and the hit looks the same. FIN: 4 banks (`trac glit smsp ssss`), 49 animations, 40 frames; `verify`
+compares the parsed FIN against `fin_plan()`. **Loader probe in game** (`smoke_rig/weapon_probe.py`: OZI globo01
+battle, `weapon_types[]` at `0x50E678` read through `ReadProcessMemory`, same address in both exes): weapon 62
+bullet set `0x4D26D4`, explosions 1 (= weapon 5: set `0x4D0DD4`, explosions 1); weapons 1/2/3/16/17 have a set,
+15 unchanged; 7 none, 10 two explosions, `error.log` empty. The commander's own shot was not watched (no Gray
+commander in globo01); the upgraded commander levels use weapons 8/10/12 (mech gun, artillery shell) on both
+sides, untouched.
+
+**Same day, the streak lifted to rifle height (maintainer: "human lieutenant projectile have wrong offset" ->
+"wrong offset is visible the most when shooting horizontally").** A missile flies at height 0, i.e. at the
+shooter's ground point, and the first frames registered the streak on the Gray bolt's centre, so the tracer ran
+along the shooter's FEET - invisible on shots up or down the screen, obvious on horizontal ones (the rifle is
+~22 px above the feet). Now `GUN_LIFT = 22`: the streak's head and the bullet glow (`BULLET_GLOW` = the
+`glit 13` record with `y 4 -> -18`) sit 22 px above the ground point, the ground glow `smsp 0` stays on the
+soil; the `SMOG` frames (Gray commander) keep the stock bolt records unchanged. Measured in game before and
+after with `smoke_rig/record_run.py` (frames + camera + missile list before/after each grab, analysed offline):
+streak heads on the bullet point in every facing, then on the rifle line of the firing trooper on horizontal
+shots. **Rig lesson - the camera snap:** reading the camera right after writing it gave the UNSNAPPED value;
+the game snaps x to a whole tile and z to `.80` at 1024x768 before drawing, so the projection was off by the
+remainder (184 units = the "23 px right" of the first Lieutenant probe, which was no sprite error at all).
+Snap before projecting: `cam_x & ~0xFF`, `(cam_z & ~0xFF) | 0x80` (odd row count), or read the camera a frame
+after the write. The offline recorder makes this class of measurement repeatable without another game run.
