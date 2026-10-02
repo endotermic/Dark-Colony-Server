@@ -1410,11 +1410,6 @@ W(r'''<#
         Colony Ultimate.exe" and "Dark Colony Map Editor.exe" (and "Dark Colony.exe" if asked for)
         with a shortcut of the same name on the desktop - or drive it from the command line, see
         the examples
-      * before anything is patched, every file the repository ships (except the patched executables
-        and the interface set this script writes itself) is compared with the manifest embedded in this
-        script: a changed, missing or unreadable file stops the installer with the list of those files
-        and a link to the latest build; and the shipped pictures of the chosen resolution
-        (INTRF_HD\<WxH>\*.GIF) must be the repository's pictures of exactly that size (1 Oct 2026)
       * it never touches the input file; it writes a new file
       * every patch is a list of (file offset, old bytes, new bytes, reason) in plain text below
       * a byte is only written if the file still holds the documented old bytes at that offset
@@ -1510,11 +1505,6 @@ W(r'''<#
     failure would look like a bug of the patch.  Each fix's Requires / Data lists say what it
     needs; -List prints them.
 
-.PARAMETER IgnoreIntegrity
-    Patch although game files beside this script are not the repository's (the start-up integrity
-    check lists them), or although the shipped pictures of the chosen resolution are not the
-    repository's.  Without it the script stops with the list and the link to the latest build.
-
 .PARAMETER Theme
     The battlefield interface, REQUIRED for a game at an HD resolution (no default): light = the
     original brushed-metal HUD, dialogs and clock dial (classic); dark = the console style of the
@@ -1574,7 +1564,6 @@ param(
     [Parameter(ParameterSetName = 'Apply')] [switch] $Overwrite,
     [Parameter(ParameterSetName = 'Apply')] [switch] $Force,
     [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreMissingData,
-    [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreIntegrity,
     [Parameter(ParameterSetName = 'Apply')] [switch] $DesktopShortcut,
     [Parameter(ParameterSetName = 'Apply')] [switch] $IncludeDeprecated,
     [Parameter(ParameterSetName = 'List')] [switch] $List,
@@ -1693,95 +1682,6 @@ for bd in build_data:
         W('                )\n            }')
     W('        )\n    }')
 W(')')
-
-# ----------------------------------------------------------------------------------------------
-# the integrity manifest (1 Oct 2026, maintainer: "installer must be sure that all files (except already
-# patched executables) are correct before patching"): every file the repository ships, hashed from the
-# repository's INDEX (not the working tree, which may hold a patcher run), minus what the patcher, the game or
-# the player writes.  REGENERATE THIS SCRIPT after any commit that changes a shipped game file
-# (tools/check_manifest.py compares the committed patcher's manifest with the repository).
-# ----------------------------------------------------------------------------------------------
-REPO_PAGE_URL = 'https://github.com/endotermic/Dark-Colony'
-REPO_ZIP_URL = 'https://github.com/endotermic/Dark-Colony/archive/refs/heads/main.zip'
-PATCHER_NAME = os.path.basename(OUT)
-
-
-def manifest_excluded(path):
-    """True for a repository file the start-up integrity check must NOT compare: what the patcher writes (the
-    patched executables, the INTRF_HD interface set and its exp\\dc\\ozi_ns copies), what the game writes
-    (minimap caches .OVH/.O16, ERROR.LOG) and what the player may edit (DEFAULT_SERVER.TXT, the HBNFUFL
-    drive-letter files), and this script itself."""
-    low = path.lower()
-    parts = low.split('/')
-    name = parts[-1]
-    if low == PATCHER_NAME.lower():
-        return True
-    for B in BUILDS:
-        if low == (os.path.dirname(B['orig_path']).replace('\\', '/') + '/' + B['exe']).lower():
-            return True
-    if len(parts) == 3 and parts[1] == 'intrf_hd' and not name.endswith('.spr'):
-        return True                                     # INTRF_HD\<set file>: written per resolution (the two console banks ship)
-    if len(parts) >= 3 and parts[2] == 'intrf_hd':
-        return True                                     # exp\intrf_hd, dc\intrf_hd, ozi_ns\intrf_hd: written per resolution
-    if name.endswith(('.ovh', '.o16')) or name in ('error.log', 'default_server.txt') or name.startswith('hbnfufl.'):
-        return True
-    return False
-
-
-def manifest_entries():
-    """[(path, size, is_text, sha256[:16])] for every shipped file, from the index: text files (no NUL byte)
-    are hashed with every CR removed, so a checkout with CRLF line endings compares equal."""
-    r = subprocess.run(['git', '-C', GAME, 'ls-files', '-s', '-z'], capture_output=True, check=True)
-    wanted = []
-    for rec in r.stdout.split(b'\0'):
-        if not rec:
-            continue
-        meta, path = rec.split(b'\t', 1)
-        blob = meta.split()[1].decode()
-        path = path.decode('utf-8')
-        if not manifest_excluded(path):
-            wanted.append((path, blob))
-    proc = subprocess.Popen(['git', '-C', GAME, 'cat-file', '--batch'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    entries = []
-    for path, blob in wanted:
-        proc.stdin.write((blob + '\n').encode()); proc.stdin.flush()
-        hdr = proc.stdout.readline().split()
-        assert len(hdr) == 3 and hdr[1] == b'blob', (path, hdr)
-        size = int(hdr[2])
-        data = proc.stdout.read(size); proc.stdout.read(1)
-        assert len(data) == size, path
-        text = b'\0' not in data
-        if text:
-            data = data.replace(b'\r', b'')
-        entries.append((path, len(data), text, hashlib.sha256(data).hexdigest()[:16]))
-    proc.stdin.close(); proc.wait()
-    assert 2000 <= len(entries) <= 4000, len(entries)
-    for must in ('DC - Council wars/INTRF_HD/1024x768/INTRFACE.GIF', 'DC - Council wars/INTRF_HD/MAINBUT.SPR', 'DC - Council wars/ENGEXP16.EXE', 'INSTALL.CMD'):
-        assert any(e[0] == must for e in entries), must
-    for never in ('DC - Council wars/INTRF_HD/MAINE', 'DC - Council wars/Dark Colony Ultimate.exe', 'DC - Council wars/exp/intrf_hd/bintroe', 'Apply-DarkColonyPatches.ps1'):
-        assert not any(e[0] == never for e in entries), never
-    return sorted(entries, key=lambda e: e[0].lower())
-
-
-W(r"""
-# =================================================================================================
-#  INTEGRITY MANIFEST (1 Oct 2026, maintainer: "installer must be sure that all files (except already patched
-#  executables) are correct before patching") - every file the repository ships, one per line:
-#      T|B <size> <first 16 hex digits of the SHA-256> <path relative to this script>
-#  T = text (no NUL byte): compared with every CR removed, so a Git checkout with CRLF line endings passes;
-#  B = binary: size and hash.  Hashed from the repository's index when this script was generated.
-#  Not listed, because this script, the game or the player writes them: the patched executables, the
-#  INTRF_HD interface set and its exp\ dc\ ozi_ns\ intrf_hd copies (written per resolution), minimap caches
-#  (.OVH / .O16), ERROR.LOG, DEFAULT_SERVER.TXT, the HBNFUFL drive-letter files.
-# =================================================================================================
-$RepoPageUrl = '""" + REPO_PAGE_URL + """'
-$RepoDownloadUrl = '""" + REPO_ZIP_URL + """'
-$ManifestText = @'""")
-_man = manifest_entries()
-for _path, _size, _text, _hash in _man:
-    W(f"{'T' if _text else 'B'} {_size} {_hash} {_path}")
-W("'@")
-print('manifest:', len(_man), 'files,', sum(1 for e in _man if e[2]), 'text')
 
 W(r'''
 # =================================================================================================
@@ -3474,270 +3374,6 @@ function New-GameShortcut([string] $ExePath, $Build) {
 # Returns a small result object; throws on any check failure.
 # $Progress (optional): a script block called with one line of text before each step - the window
 # shows it in its "patching in progress" box; the command line passes nothing.
-# =================================================================================================
-#  INTEGRITY CHECK (1 Oct 2026) - the game files must be the repository's before anything is patched
-# =================================================================================================
-$script:manifest = $null
-function Get-Manifest {
-    if ($script:manifest) { return $script:manifest }
-    $list = New-Object System.Collections.ArrayList
-    foreach ($line in ($ManifestText -split "`n")) {
-        $line = $line.Trim()
-        if (-not $line) { continue }
-        $a = $line.IndexOf(' '); $b = $line.IndexOf(' ', $a + 1); $c = $line.IndexOf(' ', $b + 1)
-        [void] $list.Add(@{ Text = ($line.Substring(0, $a) -eq 'T'); Size = [long] $line.Substring($a + 1, $b - $a - 1)
-                            Hash = $line.Substring($b + 1, $c - $b - 1); Path = $line.Substring($c + 1) })
-    }
-    $script:manifest = $list
-    return $list
-}
-
-# The first 16 hex digits of a file's SHA-256 as the manifest hashes it: a text file with every CR removed.
-function Get-ManifestHash([string] $Path, [bool] $Text) {
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    if ($Text) { $bytes = $script:latin1.GetBytes($script:latin1.GetString($bytes).Replace("`r", '')) }
-    return (Get-Sha256Hex $bytes).Substring(0, 16)
-}
-
-# Compares the repository's files under $Root (the folder this script sits in = the repository root) with
-# the manifest; $Prefix limits the check to one subtree ('DC - Council wars/').  Returns one record per file
-# that is not the repository's: @{ Path; Problem = MISSING | MODIFIED | UNREADABLE; Detail }.  $Progress
-# (optional) is called with (done, total, path) every 20 files.
-function Get-IntegrityProblems([string] $Root, [string] $Prefix = '', [scriptblock] $Progress = $null) {
-    $problems = @()
-    $entries = @(Get-Manifest | Where-Object { -not $Prefix -or $_.Path.StartsWith($Prefix, [StringComparison]::OrdinalIgnoreCase) })
-    $n = 0
-    foreach ($e in $entries) {
-        $n++
-        if ($Progress -and ($n % 20 -eq 0 -or $n -eq $entries.Count)) { & $Progress $n $entries.Count $e.Path }
-        $p = [System.IO.Path]::Combine($Root, $e.Path.Replace('/', [string][char] 92))
-        if (-not [System.IO.File]::Exists($p)) { $problems += @{ Path = $e.Path; Problem = 'MISSING'; Detail = 'not found' }; continue }
-        try {
-            if (-not $e.Text) {
-                $len = (New-Object System.IO.FileInfo($p)).Length
-                if ($len -ne $e.Size) { $problems += @{ Path = $e.Path; Problem = 'MODIFIED'; Detail = ('{0} bytes instead of {1}' -f $len, $e.Size) }; continue }
-            }
-            if ((Get-ManifestHash $p $e.Text) -ne $e.Hash) { $problems += @{ Path = $e.Path; Problem = 'MODIFIED'; Detail = 'not the content of the repository build' } }
-        } catch { $problems += @{ Path = $e.Path; Problem = 'UNREADABLE'; Detail = $_.Exception.Message } }
-    }
-    return $problems
-}
-
-# The resources of the chosen resolution (maintainer, 1 Oct 2026: "installer must check that resources
-# matches selected resolution"): the shipped pictures INTRF_HD\<WxH>\*.GIF in the game folder must be the
-# repository's and must be WxH pictures.  Returns problem records like Get-IntegrityProblems (empty = ok;
-# nothing to check at 640x480 or for a build without a resolution).
-function Get-ModeResourceProblems([string] $GameDir, [string] $Mode) {
-    if (-not $Mode -or $Mode -eq '640x480' -or -not $GameDir) { return @() }
-    $wh = Get-ModeSize $Mode
-    $top = 'DC - Council wars/'
-    $prefix = $top + 'INTRF_HD/' + $Mode + '/'
-    $entries = @(Get-Manifest | Where-Object { $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
-    if ($entries.Count -eq 0) { return @(@{ Path = "INTRF_HD\$Mode\"; Problem = 'UNKNOWN'; Detail = 'the repository ships no pictures for this size' }) }
-    $problems = @()
-    foreach ($e in $entries) {
-        $rel = $e.Path.Substring($top.Length).Replace('/', [string][char] 92)
-        $p = [System.IO.Path]::Combine($GameDir, $rel)
-        if (-not [System.IO.File]::Exists($p)) { $problems += @{ Path = $rel; Problem = 'MISSING'; Detail = 'not found' }; continue }
-        try {
-            $bytes = [System.IO.File]::ReadAllBytes($p)
-            if ($bytes.Length -lt 13 -or $script:latin1.GetString($bytes, 0, 3) -ne 'GIF') { $problems += @{ Path = $rel; Problem = 'MODIFIED'; Detail = 'not a GIF picture' }; continue }
-            $w = $bytes[6] + 256 * $bytes[7]; $h = $bytes[8] + 256 * $bytes[9]
-            if ($w -ne $wh[0] -or $h -ne $wh[1]) { $problems += @{ Path = $rel; Problem = 'WRONG SIZE'; Detail = ('a {0}x{1} picture, {2} needed' -f $w, $h, $Mode) }; continue }
-            if ((Get-Sha256Hex $bytes).Substring(0, 16) -ne $e.Hash) { $problems += @{ Path = $rel; Problem = 'MODIFIED'; Detail = 'not the picture of the repository build' } }
-        } catch { $problems += @{ Path = $rel; Problem = 'UNREADABLE'; Detail = $_.Exception.Message } }
-    }
-    return $problems
-}
-
-# Which screen resolution and battlefield interface a patched game exe carries: @{ Mode = 'WxH' | '640x480' |
-# $null (not patched); Dark = $true / $false / $null }.  The `resolution` variant whose every edit is in place
-# names the size; `nocd` alone = a 640x480 build; the `console` edit = the dark interface.
-function Get-ExeInstallState([byte[]] $Data, $Build) {
-    $state = @{ Mode = $null; Dark = $null }
-    if (@($Build.Modes).Count -eq 0) { return $state }
-    $applied = {
-        param($Patch)
-        foreach ($e in $Patch.Edits) { if ($e.ContainsKey('Offset') -and (Get-EditState $Data $e) -ne 'new') { return $false } }
-        return $true
-    }
-    foreach ($v in @($Build.Patches | Where-Object { $_.Id -eq 'resolution' })) { if (& $applied $v) { $state.Mode = $v.Mode; break } }
-    if (-not $state.Mode) {
-        $nocd = @($Build.Patches | Where-Object { $_.Id -eq 'nocd' })
-        if ($nocd.Count -gt 0 -and (& $applied $nocd[0])) { $state.Mode = '640x480' }
-    }
-    $con = @($Build.Patches | Where-Object { $_.Id -eq 'console' })
-    if ($con.Count -gt 0 -and $state.Mode -and $state.Mode -ne '640x480') { $state.Dark = [bool] (& $applied $con[0]) }
-    return $state
-}
-
-# The installation itself must be consistent (1 Oct 2026, the doc 10.59 case: a player's HUD script written for
-# one size under the frame of another put every battlefield widget inside the map view, where the terrain paints
-# over it - "interface elements are not in place").  Compares, in $GameDir: the size of INTRF_HD\INTRFACE.GIF (the
-# frame) and its theme (= the shipped dark or light picture of that size), the `size` line of every set script
-# (INTRF_HD, exp\ dc\ ozi_ns\ intrf_hd: `size W H` or `size 0 0 W H`), the HUD script's bank line (intrf_hd/mainbut
-# = dark), and the resolution / theme each patched game exe in the folder carries.  Returns @{ Problems = MIXED
-# records like Get-IntegrityProblems (empty = consistent, or nothing installed); Frame; FrameDark; Sizes (size ->
-# script count); Dark (the HUD script's); Exes = @(@{ Name; Mode; Dark }) }.  Informational: a patcher run rewrites
-# the set and the exes it is asked for, which makes them consistent again.
-function Get-InstallConsistency([string] $GameDir) {
-    $r = @{ Problems = @(); Frame = $null; FrameDark = $null; Sizes = @{}; Dark = $null; Exes = @() }
-    if (-not $GameDir -or -not (Test-Path -LiteralPath $GameDir)) { return $r }
-    $hd = Join-Path $GameDir 'INTRF_HD'
-    $fb = $null
-    if (Test-Path -LiteralPath $hd) {
-        $frame = Find-CI $hd 'INTRFACE.GIF'
-        if ($frame) {
-            $fb = [System.IO.File]::ReadAllBytes($frame)
-            if ($fb.Length -gt 10 -and $script:latin1.GetString($fb, 0, 3) -eq 'GIF') { $r.Frame = ('{0}x{1}' -f ($fb[6] + 256 * $fb[7]), ($fb[8] + 256 * $fb[9])) } else { $fb = $null }
-        }
-    }
-    if ($r.Frame) {
-        # which of the two shipped frames of that size it is = the theme the set was written for
-        $src = Join-Path $hd $r.Frame
-        if (Test-Path -LiteralPath $src) {
-            $fh = Get-Sha256Hex $fb
-            $dark = Find-CI $src 'INTRFACE.GIF'; $light = Find-CI $src 'INTRFACE_LIGHT.GIF'
-            if ($dark -and (Get-Sha256Hex ([System.IO.File]::ReadAllBytes($dark))) -eq $fh) { $r.FrameDark = $true }
-            elseif ($light -and (Get-Sha256Hex ([System.IO.File]::ReadAllBytes($light))) -eq $fh) { $r.FrameDark = $false }
-        }
-    }
-    $scripts = @()
-    foreach ($dir in 'INTRF_HD', 'exp\intrf_hd', 'dc\intrf_hd', 'ozi_ns\intrf_hd') {
-        $d = Join-Path $GameDir $dir
-        if (-not (Test-Path -LiteralPath $d)) { continue }
-        foreach ($f in [System.IO.Directory]::GetFiles($d)) {
-            $name = [System.IO.Path]::GetFileName($f); $low = $name.ToLower()
-            if ($low -match '\.(gif|bmp|spr|fin|txt|dat|bak)$') { continue }
-            $text = Read-Latin1 $f
-            $m2 = $SIZE2.Match($text); $m4 = $SIZE4.Match($text)
-            $size = $null
-            if ($m2.Success) { $size = '{0}x{1}' -f $m2.Groups[3].Value, $m2.Groups[5].Value }
-            elseif ($m4.Success -and $m4.Groups[3].Value -eq '0' -and $m4.Groups[4].Value -eq '0') { $size = '{0}x{1}' -f $m4.Groups[5].Value, $m4.Groups[6].Value }
-            if (-not $size) { continue }                       # the four sub-window dialogs (size x y w h) carry no screen size
-            $scripts += @{ Path = ($dir + '\' + $name); Size = $size; Text = $text; Name = $low }
-            if ($r.Sizes.ContainsKey($size)) { $r.Sizes[$size]++ } else { $r.Sizes[$size] = 1 }
-        }
-    }
-    $maine = @($scripts | Where-Object { $_.Name -eq 'maine' -and $_.Path -like 'INTRF_HD\*' })
-    if ($maine.Count -gt 0) { $r.Dark = ([regex] '(?im)^[ \t]*pictures[ \t]+intrf_hd/mainbut\b').IsMatch($maine[0].Text) }
-    $ref = $r.Frame
-    if (-not $ref -and $r.Sizes.Count -gt 0) { $ref = @($r.Sizes.Keys | Sort-Object { -$r.Sizes[$_] })[0] }
-    if ($ref) {
-        foreach ($sc in $scripts) {
-            if ($sc.Size -ne $ref) { $r.Problems += @{ Path = $sc.Path; Problem = 'MIXED'; Detail = ('written for {0}, the frame INTRF_HD\INTRFACE.GIF is {1}' -f $sc.Size, $ref) } }
-        }
-    }
-    if ($null -ne $r.FrameDark -and $null -ne $r.Dark -and $r.FrameDark -ne $r.Dark) {
-        $r.Problems += @{ Path = 'INTRF_HD\MAINE'; Problem = 'MIXED'; Detail = ('the {0} HUD script, the frame INTRF_HD\INTRFACE.GIF is the {1} one' -f $(if ($r.Dark) { 'dark' } else { 'light' }), $(if ($r.FrameDark) { 'dark' } else { 'light' })) }
-    }
-    foreach ($b in $Builds) {
-        if (@($b.Modes).Count -eq 0) { continue }
-        $p = Join-Path $GameDir $b.OutputName
-        if (-not (Test-Path -LiteralPath $p)) { continue }
-        $data = $null
-        try { $data = [System.IO.File]::ReadAllBytes($p) } catch { continue }
-        $bb = Find-BuildByContent $data
-        if (-not $bb) { continue }
-        $st = Get-ExeInstallState $data $bb
-        if (-not $st.Mode) { continue }                        # not a patched build (nothing of ours to compare)
-        $r.Exes += @{ Name = $b.OutputName; Mode = $st.Mode; Dark = $st.Dark }
-        if ($st.Mode -eq '640x480') { continue }               # reads the stock INTRFACE files, never the set
-        if ($ref -and $st.Mode -ne $ref) { $r.Problems += @{ Path = $b.OutputName; Problem = 'MIXED'; Detail = ('patched for {0}, the interface set in INTRF_HD is {1}' -f $st.Mode, $ref) } }
-        elseif (-not $ref) { $r.Problems += @{ Path = $b.OutputName; Problem = 'MIXED'; Detail = ('patched for {0}, but there is no INTRF_HD interface set' -f $st.Mode) } }
-        if ($null -ne $st.Dark -and $null -ne $r.Dark -and $st.Dark -ne $r.Dark) {
-            $r.Problems += @{ Path = $b.OutputName; Problem = 'MIXED'; Detail = ('patched for the {0} battlefield interface, the HUD script INTRF_HD\MAINE is the {1} one' -f $(if ($st.Dark) { 'dark' } else { 'light' }), $(if ($r.Dark) { 'dark' } else { 'light' })) }
-        }
-    }
-    return $r
-}
-
-# One line: what is installed (frame, scripts per size, HUD theme, patched exes).
-function Format-InstallSummary($Install) {
-    if (-not $Install) { return 'nothing installed' }
-    $parts = @()
-    $parts += $(if ($Install.Frame) { 'frame INTRF_HD\INTRFACE.GIF ' + $Install.Frame + $(if ($null -ne $Install.FrameDark) { $(if ($Install.FrameDark) { ' (dark)' } else { ' (light)' }) } else { '' }) } else { 'no INTRF_HD frame' })
-    foreach ($k in @($Install.Sizes.Keys | Sort-Object)) { $parts += ('{0} script(s) for {1}' -f $Install.Sizes[$k], $k) }
-    if ($null -ne $Install.Dark) { $parts += ('HUD script ' + $(if ($Install.Dark) { 'dark' } else { 'light' })) }
-    foreach ($e in @($Install.Exes)) { $parts += ('{0} patched for {1}{2}' -f $e.Name, $e.Mode, $(if ($null -ne $e.Dark) { $(if ($e.Dark) { ', dark' } else { ', light' }) } else { '' })) }
-    return ($parts -join '; ')
-}
-
-# One text line per problem, sorted by path: "MODIFIED    path   (detail)".
-function Format-IntegrityLines([object[]] $Problems) {
-    $out = @()
-    foreach ($p in @($Problems | Sort-Object { $_.Path })) { $out += ('{0,-11} {1}   ({2})' -f $p.Problem, $p.Path, $p.Detail) }
-    return $out
-}
-
-# A small unclosable "please wait" box with a marquee bar, repainted by hand (the work runs on the UI thread).
-function New-BusyBox([string] $Title, [string] $Text, $Owner) {
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = $Title; $f.FormBorderStyle = 'FixedDialog'; $f.ControlBox = $false; $f.ShowInTaskbar = $false; $f.TopMost = $true
-    $f.Size = New-Object System.Drawing.Size(560, 160)
-    $f.StartPosition = if ($Owner -and $Owner.Visible) { 'CenterParent' } else { 'CenterScreen' }
-    $f.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $l = New-Object System.Windows.Forms.Label
-    $l.Location = '16,14'; $l.Size = '512,64'; $l.Text = $Text
-    $bar = New-Object System.Windows.Forms.ProgressBar
-    $bar.Location = '16,88'; $bar.Size = '512,20'; $bar.Style = 'Marquee'; $bar.MarqueeAnimationSpeed = 30
-    $f.Controls.AddRange(@($l, $bar))
-    if ($Owner -and $Owner.Visible) { $f.Show($Owner) } else { $f.Show() }
-    $f.Refresh(); [System.Windows.Forms.Application]::DoEvents()
-    return @{ Form = $f; Label = $l }
-}
-
-# The error popup of the integrity check (maintainer, 1 Oct 2026: "popup error, saying which files (with
-# scrollbar if necessary) are out of sync and offer to download latest build"): the list in a scrollable box,
-# the download button, the repository page, a copy button.  Modal.
-function Show-IntegrityDialog([object[]] $Problems, [string] $Title, [string] $Intro, $Owner, [string] $Remedy = '') {   # $Remedy: the 'what to do' text (the default: download the latest build)
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = 'Dark Colony patcher - files out of sync'
-    $f.ClientSize = New-Object System.Drawing.Size(860, 600)
-    $f.FormBorderStyle = 'Sizable'; $f.MinimizeBox = $false; $f.ShowInTaskbar = $false
-    $f.MinimumSize = New-Object System.Drawing.Size(640, 420)
-    $f.StartPosition = if ($Owner -and $Owner.Visible) { 'CenterParent' } else { 'CenterScreen' }
-    $f.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $head = New-Object System.Windows.Forms.Label
-    $head.Location = '16,12'; $head.Size = '828,28'; $head.Anchor = 'Top,Left,Right'
-    $head.ForeColor = [System.Drawing.Color]::FromArgb(192, 0, 0)
-    $head.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
-    $head.Text = $Title
-    $lblIntro = New-Object System.Windows.Forms.Label
-    $lblIntro.Location = '16,44'; $lblIntro.Size = '828,56'; $lblIntro.Anchor = 'Top,Left,Right'
-    $lblIntro.Text = $Intro
-    $txt = New-Object System.Windows.Forms.TextBox
-    $txt.Location = '16,104'; $txt.Size = '828,376'; $txt.Anchor = 'Top,Bottom,Left,Right'
-    $txt.Multiline = $true; $txt.ReadOnly = $true; $txt.ScrollBars = 'Both'; $txt.WordWrap = $false
-    $txt.Font = New-Object System.Drawing.Font('Consolas', 9); $txt.BackColor = [System.Drawing.SystemColors]::Window
-    $txt.Text = (Format-IntegrityLines $Problems) -join "`r`n"
-    $note = New-Object System.Windows.Forms.Label
-    $note.Location = '16,488'; $note.Size = '828,58'; $note.Anchor = 'Bottom,Left,Right'
-    $note.Text = if ($Remedy) { $Remedy } else {
-                 ('What to do: download the latest build (the ZIP of the whole repository), unpack it over this folder - your saved ' +
-                  'games, DEFAULT_SERVER.TXT and the patched executables are kept - and start INSTALL.CMD again.  Nothing is patched ' +
-                  'until every file is the repository''s: a fix applied to changed data would look like a bug of the fix.') }
-    $bDl = New-Object System.Windows.Forms.Button
-    $bDl.Text = 'Download the latest build'; $bDl.Location = '16,556'; $bDl.Size = '220,32'; $bDl.Anchor = 'Bottom,Left'
-    $bDl.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-    $bDl.Add_Click({ Start-Process $script:RepoDownloadUrl })
-    $bPage = New-Object System.Windows.Forms.Button
-    $bPage.Text = 'Open the repository page'; $bPage.Location = '248,556'; $bPage.Size = '200,32'; $bPage.Anchor = 'Bottom,Left'
-    $bPage.Add_Click({ Start-Process $script:RepoPageUrl })
-    $bCopy = New-Object System.Windows.Forms.Button
-    $bCopy.Text = 'Copy the list'; $bCopy.Location = '460,556'; $bCopy.Size = '140,32'; $bCopy.Anchor = 'Bottom,Left'; $bCopy.Tag = $txt
-    $bCopy.Add_Click({ param($sender, $e) [System.Windows.Forms.Clipboard]::SetText($sender.Tag.Text) })
-    $bClose = New-Object System.Windows.Forms.Button
-    $bClose.Text = 'Close'; $bClose.Location = '740,556'; $bClose.Size = '104,32'; $bClose.Anchor = 'Bottom,Right'; $bClose.DialogResult = 'OK'
-    $f.AcceptButton = $bClose; $f.CancelButton = $bClose
-    $f.Controls.AddRange(@($head, $lblIntro, $txt, $note, $bDl, $bPage, $bCopy, $bClose))
-    $txt.TabStop = $false; $f.ActiveControl = $bClose          # the list is not pre-selected (a focused TextBox selects all)
-    if ($Owner -and $Owner.Visible) { [void] $f.ShowDialog($Owner) } else { [void] $f.ShowDialog() }
-    $f.Dispose()
-}
-
 function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [string] $OutputPath, [string] $Mode, [string] $Theme, [scriptblock] $Progress) {
     $data = [System.IO.File]::ReadAllBytes($OriginalPath)
     $effective = @(Get-BuildPatches $Build $Mode $Theme)
@@ -3762,12 +3398,6 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
         if ($Progress) { & $Progress ("Writing the {0} interface set ({1} battlefield interface) into INTRF_HD (scripts, backgrounds, loading screens) - this takes a few seconds..." -f $Mode, $(if ($console) { 'dark' } else { 'light' })) }
         try {
             $generated = @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies $console)
-            # the written set must be the chosen size (maintainer, 1 Oct 2026: "installer must check that resources matches selected resolution")
-            $frameOut = Join-Path (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) 'INTRF_HD\INTRFACE.GIF'
-            $fb = [System.IO.File]::ReadAllBytes($frameOut); $fw = $fb[6] + 256 * $fb[7]; $fh = $fb[8] + 256 * $fb[9]
-            $wh = Get-ModeSize $Mode
-            if ($fw -ne $wh[0] -or $fh -ne $wh[1]) { $generated += ('WARNING: the written INTRF_HD\INTRFACE.GIF is a {0}x{1} picture, not {2} - report this' -f $fw, $fh, $Mode) }
-            else { $generated += ('checked: INTRF_HD\INTRFACE.GIF is a {0} picture - the written set matches the chosen resolution' -f $Mode) }
         } catch {
             $generated = @('INTERFACE SET NOT WRITTEN: ' + $_.Exception.Message)
         }
@@ -3786,16 +3416,6 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     if ($Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'online' })) {
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
         try { $generated += Write-OnlineScreen $dir $Mode } catch { $generated += 'ONLINE screen NOT written: ' + $_.Exception.Message }
-    }
-    # Last, with every file of this run written (the ONLINE screen and the dialog copies come after the set):
-    # frame, set scripts, HUD theme and every patched game exe in the folder must agree (doc 10.60) - an older
-    # patched exe of another size left in the folder shows up here
-    if ($Mode -and $Mode -ne '640x480') {
-        try {
-            $ic = Get-InstallConsistency (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath)))
-            if (@($ic.Problems).Count -gt 0) { foreach ($l in (Format-IntegrityLines $ic.Problems)) { $generated += ('WARNING - still mixed after this executable''s run: ' + $l) } }
-            else { $generated += ('checked: the interface set and the patched executable(s) in the folder agree ({0})' -f (Format-InstallSummary $ic)) }
-        } catch { $generated += ('installation check failed: ' + $_.Exception.Message) }
     }
     return @{
         Generated = $generated
@@ -3974,8 +3594,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     }
     $script:gui = @{ Items = $items; Sel = -1; Step = 0; Syncing = $false; Mode = ''; Theme = ''; IncludeDeprecated = $false
                      ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize); Visible = @(); Last = 0
-                     Here = $PSScriptRoot; Results = $null     # Here = the folder this script sits in = the repository root
-                     IntegrityProblems = @(); ModeProblems = @(); Install = $null }   # the integrity check (1 Oct 2026): files out of sync / the chosen size's pictures / the installed set
+                     Here = $PSScriptRoot; Results = $null }     # Here = the folder this script sits in = the repository root
     foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $script:gui.ModeList = @($b.Modes); break } }
     $n = $items.Count
     $mono = New-Object System.Drawing.Font('Consolas', 9)
@@ -4030,17 +3649,13 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $lblLnk.Location = '44,334'; $lblLnk.Size = '900,36'
     $lblLnk.Text = 'Named "Dark Colony Ultimate", "Dark Colony Map Editor" (and "Dark Colony" if you patch it); each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
     $lblNext = New-Object System.Windows.Forms.Label
-    $lblNext.Location = '24,540'; $lblNext.Size = '660,24'; $lblNext.Text = 'Press Next to continue.'
+    $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = 'Press Next to continue.'
     # a missing or wrong original: a big red banner here, the details and the remedies on its page
     $lblProblem = New-Object System.Windows.Forms.Label
     $lblProblem.Location = '24,378'; $lblProblem.Size = '936,156'; $lblProblem.Visible = $false
     $lblProblem.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $lblProblem.ForeColor = [System.Drawing.Color]::White
     $lblProblem.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold); $lblProblem.Padding = '12,8,12,8'
-    # the integrity check's button (1 Oct 2026): reopens the list of out-of-sync files with the download link
-    $btnIntegrity = New-Object System.Windows.Forms.Button
-    $btnIntegrity.Text = 'Show the out-of-sync files...'; $btnIntegrity.Location = '700,536'; $btnIntegrity.Size = '260,30'; $btnIntegrity.Visible = $false
-    $btnIntegrity.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $btnIntegrity.ForeColor = [System.Drawing.Color]::White; $btnIntegrity.Font = $bold
-    $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $lblNext, $lblProblem, $btnIntegrity))
+    $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $lblNext, $lblProblem))
 
     # --- page 1: options - the resolution drop-down, the battlefield interface theme, the deprecated build.
     # NOTHING is preselected (maintainer, 1 Oct 2026): Next stays disabled until the resolution and - at an
@@ -4086,12 +3701,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $lblResPick = New-Object System.Windows.Forms.Label
     $lblResPick.Location = '24,540'; $lblResPick.Size = '936,20'; $lblResPick.Font = $bold
     $lblResPick.Text = 'Choose a screen resolution and a battlefield interface to continue.'
-    # the chosen size's pictures are not the repository's (1 Oct 2026): a red box with the list, Next stays disabled
-    $lblResProblem = New-Object System.Windows.Forms.Label
-    $lblResProblem.Location = '24,396'; $lblResProblem.Size = '936,136'; $lblResProblem.Visible = $false
-    $lblResProblem.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $lblResProblem.ForeColor = [System.Drawing.Color]::White
-    $lblResProblem.Font = New-Object System.Drawing.Font('Consolas', 9.5, [System.Drawing.FontStyle]::Bold); $lblResProblem.Padding = '12,8,12,8'
-    $pRes.Controls.AddRange(@($lblResIntro, $lblResL, $cmbRes, $lblResNote, $lblThemeL, $rbLight, $rbDark, $lblThemeNote, $chkDep, $lblDepNote, $lblResPick, $lblResProblem))
+    $pRes.Controls.AddRange(@($lblResIntro, $lblResL, $cmbRes, $lblResNote, $lblThemeL, $rbLight, $rbDark, $lblThemeNote, $chkDep, $lblDepNote, $lblResPick))
 
     # --- pages 2..: one per executable (the page's controls carry the executable's index in .Tag,
     # because the handlers run outside this function); a deprecated build's page exists but is shown only
@@ -4208,7 +3818,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
     # All / List / Info / Out are re-pointed to the current page's controls by Select
     $script:gui.Controls = @{ Form = $form; Title = $lblTitle; Sub = $lblSub; Welcome = $pWelcome; Found = $lblFound; Problem = $lblProblem
                               Options = $pRes; ModeBox = $cmbRes; ThemeLight = $rbLight; ThemeDark = $rbDark; DepBox = $chkDep; ModePick = $lblResPick
-                              ModeProblem = $lblResProblem; IntegrityButton = $btnIntegrity; NextLabel = $lblNext
                               Ready = $pReady; ReadyText = $txtReady
                               Done = $pDone; DoneText = $txtDone; DoneNote = $lblDone; Shortcut = $chkLnk
                               Back = $btnBack; Next = $btnNext; Cancel = $btnCancel; Apply = $btnNext
@@ -4261,30 +3870,12 @@ function Show-PatcherWindow([string] $PreloadPath) {
         if ($it.Error) { $u.ErrorTitle.Text = $it.Error.Title; $u.ErrorBody.Text = $it.Error.Body; $u.Error.BringToFront() }
         $g.Syncing = $false
         $bad = @($g.Items | Where-Object { $_.Error -and (-not $_.Build.Deprecated -or $g.IncludeDeprecated) })
-        $ip = @($g.IntegrityProblems)
-        $mixed = @(if ($g.Install) { $g.Install.Problems } else { @() })
-        $g.Controls.Problem.Visible = ($bad.Count -gt 0 -or $ip.Count -gt 0 -or $mixed.Count -gt 0)
-        $g.Controls.IntegrityButton.Visible = ($ip.Count -gt 0 -or $mixed.Count -gt 0)
-        # red for a blocking problem (files out of sync, a wrong original), orange for a mixed installation (patching repairs it)
-        $g.Controls.Problem.BackColor = if ($bad.Count -gt 0 -or $ip.Count -gt 0) { [System.Drawing.Color]::FromArgb(192, 0, 0) } else { [System.Drawing.Color]::FromArgb(200, 110, 0) }
-        $text = @()
-        if ($ip.Count -gt 0) {
-            # the integrity check failed (1 Oct 2026): nothing is patched until the game files are the repository's
-            $text += @(('PROBLEM - {0} game file(s) in this folder are not the files of the repository build (modified, missing or unreadable).' -f $ip.Count),
-                       'Nothing can be patched until they are.  Press "Show the out-of-sync files..." for the list and the link to the latest build.')
-            if ($bad.Count -gt 0) { $text += '' }
-        }
+        $g.Controls.Problem.Visible = ($bad.Count -gt 0)
         if ($bad.Count -gt 0) {
-            $text += @('PROBLEM - these originals cannot be used as they are:', '') +
+            $g.Controls.Problem.Text = (@('PROBLEM - these originals cannot be used as they are:', '') +
                 @($bad | ForEach-Object { '    ' + $_.Build.ProductName + ':  ' + $_.Error.Title }) +
-                @('', 'Press Next: the page of each one explains what is wrong and offers to select the correct file or to download it.')
+                @('', 'Press Next: the page of each one explains what is wrong and offers to select the correct file or to download it.')) -join "`r`n"
         }
-        if ($mixed.Count -gt 0) {
-            if ($text.Count -gt 0) { $text += '' }
-            $text += @(('NOTE - the interface set and the patched executable(s) in the game folder are MIXED ({0} item(s)): {1}.' -f $mixed.Count, (Format-InstallSummary $g.Install)),
-                       'That is what puts battlefield elements out of place.  Choosing the size and the interface and pressing Patch rewrites them consistently; "Show the out-of-sync files..." lists them.')
-        }
-        if ($text.Count -gt 0) { $g.Controls.Problem.Text = $text -join "`r`n" }
         $lines = @('Found:')
         foreach ($x in $g.Items) {
             $mark = if ($x.Data -and $x.IsOriginal) { 'OK ' } elseif ($x.Error) { '!! ' } else { '-- ' }
@@ -4572,90 +4163,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.ShowFix $g.Items[[int] $sender.Tag]
     }
 
-    # The integrity check (1 Oct 2026, maintainer: "installer must be sure that all files (except already patched
-    # executables) are correct before patching ... popup error, saying which files (with scrollbar if necessary)
-    # are out of sync and offer to download latest build"; then "installer must check that resources matches
-    # selected resolution").  CheckIntegrity compares every shipped file under this script's folder with the
-    # manifest (run from the entry point before the window opens, with a busy box); a failure fills
-    # IntegrityProblems: the welcome page shows the red banner and Next stays disabled, the popup lists the files.
-    # ModeProblems = the chosen size's shipped pictures that are missing, altered or of another size (Refresh
-    # recomputes them; the options page shows them and keeps Next disabled).  NotifyIntegrity shows the popup
-    # (a headless test replaces it with a recorder); GameDir = the folder the Ultimate exe is written to.
-    $script:gui.NotifyIntegrity = {
-        param([object[]] $problems, [string] $title, [string] $intro, [string] $remedy = '')
-        Show-IntegrityDialog $problems $title $intro $script:gui.Controls.Form $remedy
-    }
-    $script:gui.GameDir = {
-        $g = $script:gui
-        foreach ($x in $g.Items) { if (@($x.Build.Modes).Count -gt 0 -and $x.Out) { return (Split-Path -Parent ([System.IO.Path]::GetFullPath($x.Out))) } }
-        if ($g.Here) { return (Join-Path $g.Here 'DC - Council wars') }
-        return $null
-    }
-    $script:gui.ShowIntegrity = {
-        $g = $script:gui
-        $ip = @($g.IntegrityProblems)
-        $mp = @(if ($g.Install) { $g.Install.Problems } else { @() })
-        if ($ip.Count -eq 0 -and $mp.Count -eq 0) { return }
-        if ($ip.Count -gt 0) {
-            & $g.NotifyIntegrity ($ip + $mp) `
-                (('{0} game file(s) are out of sync with the repository build' -f $ip.Count) + $(if ($mp.Count -gt 0) { (', and the installed interface set is mixed ({0})' -f $mp.Count) } else { '' })) `
-                ('These files in "' + $g.Here + '" are not the files of the repository build: modified, missing or unreadable.  Before patching, the installer ' +
-                 'compares every shipped file - except the patched executables and the interface set it writes itself - with the list embedded in it.' +
-                 $(if ($mp.Count -gt 0) { '  The MIXED lines: interface files and patched executables written for different screen sizes or interfaces; patching rewrites them.' } else { '' }))
-        } else {
-            # the doc 10.59 case: the set and the exes were not written in one run (informational - patching repairs it)
-            & $g.NotifyIntegrity $mp ('The installed interface set is mixed ({0} item(s))' -f $mp.Count) `
-                ('In "' + (& $g.GameDir) + '" the INTRF_HD interface set and the patched executable(s) were not written in one run: ' + (Format-InstallSummary $g.Install) +
-                 '.  A HUD script written for another size than the frame puts every battlefield widget inside the map view, where the terrain paints over it - the "interface elements are not in place" picture.') `
-                ('What to do: nothing special - choose the screen resolution and the interface on the next page and press Patch: the installer rewrites the whole interface set and the ' +
-                 'executables you tick, which makes them consistent again.  Delete a patched executable you no longer use, or tick it so that it is rewritten too.')
-        }
-    }
-    $script:gui.ShowModeProblems = {
-        $g = $script:gui
-        $mp = @($g.ModeProblems)
-        if ($mp.Count -eq 0) { return }
-        & $g.NotifyIntegrity $mp ('The pictures for ' + $g.Mode + ' are out of sync with the repository build') `
-            ('The display fix for ' + $g.Mode + ' needs the five shipped pictures INTRF_HD\' + $g.Mode + '\*.GIF of exactly that size from the repository; in "' +
-             (& $g.GameDir) + '" they are not.  Choose another resolution, or download the latest build.')
-    }
-    $script:gui.CheckIntegrity = {
-        param([bool] $interactive)
-        $g = $script:gui
-        $c = $g.Controls
-        $g.IntegrityProblems = @()
-        if (-not $g.Here -or -not (Test-Path -LiteralPath (Join-Path $g.Here 'DC - Council wars'))) {
-            # not started from the repository folder: nothing to compare, the pages check the originals themselves
-            $c.NextLabel.Text = 'Not started from the repository folder (no "DC - Council wars" beside this script): the game files cannot be checked against the repository build.  Press Next to continue.'
-            return
-        }
-        $busy = $null
-        $text = 'Comparing every file of the repository build in this folder with the list embedded in the installer - a few seconds...'
-        if ($interactive) { $busy = New-BusyBox 'Checking the game files' $text $c.Form }
-        $g.Busy2 = $busy
-        try {
-            $g.IntegrityProblems = @(Get-IntegrityProblems $g.Here '' {
-                param($done, $total, $path)
-                $b = $script:gui.Busy2
-                if ($b) { $b.Label.Text = ('Comparing every file of the repository build in this folder with the list embedded in the installer...' + "`r`n`r`n" + ('{0} of {1}: {2}' -f $done, $total, $path)); $b.Form.Refresh(); [System.Windows.Forms.Application]::DoEvents() }
-            })
-            # the installation itself: frame, set scripts, HUD theme and the patched exes must agree (doc 10.59 / 10.60)
-            $g.Install = Get-InstallConsistency (& $g.GameDir)
-        } finally {
-            if ($busy) { $busy.Form.Close(); $busy.Form.Dispose() }
-            $g.Busy2 = $null
-        }
-        $ip = @($g.IntegrityProblems)
-        $mp = @(if ($g.Install) { $g.Install.Problems } else { @() })
-        $c.NextLabel.Text = if ($ip.Count -gt 0) { ('{0} game file(s) are out of sync - nothing can be patched until they are the repository''s.' -f $ip.Count) }
-                            elseif ($mp.Count -gt 0) { ('All {0} game files match, but the installed interface set is mixed ({1}) - patching rewrites it.  Press Next.' -f @(Get-Manifest).Count, $mp.Count) }
-                            else { ('All {0} game files in this folder match the repository build.  Press Next to continue.' -f @(Get-Manifest).Count) }
-        $c.NextLabel.ForeColor = if ($ip.Count -gt 0) { [System.Drawing.Color]::Firebrick } elseif ($mp.Count -gt 0) { [System.Drawing.Color]::FromArgb(200, 110, 0) } else { [System.Drawing.Color]::DarkGreen }
-        foreach ($x in $g.Items) { & $g.ShowRow $x }
-        if ($g.Step -eq 0) { $c.Next.Enabled = ($ip.Count -eq 0) }
-        if (($ip.Count -gt 0 -or $mp.Count -gt 0) -and $interactive) { & $g.ShowIntegrity }
-    }
-
     # The options page.  Refresh: every executable page is refilled for the choices (its unticked fixes
     # survive), the theme radios are live only at an HD size, Next follows the state, the status line says
     # what is still missing.  SetMode / SetTheme / SetDeprecated are the handlers' work and the test hooks.
@@ -4667,18 +4174,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.Layout
         foreach ($x in $g.Items) { & $g.Recheck $x; & $g.ShowRow $x; & $g.FillItem $x }
         if ($g.Sel -ge 0) { & $g.Select $g.Sel }
-        # the chosen size's shipped pictures (1 Oct 2026): missing, altered or of another size = no Next
-        $g.ModeProblems = @(Get-ModeResourceProblems (& $g.GameDir) $g.Mode)
-        $mp = @($g.ModeProblems)
-        $c.ModeProblem.Visible = ($mp.Count -gt 0)
-        if ($mp.Count -gt 0) {
-            $c.ModeProblem.Text = (@(('PROBLEM - the pictures for ' + $g.Mode + ' in the game folder are not the repository''s:'), '') +
-                @(Format-IntegrityLines $mp | Select-Object -First 5) +
-                @('', 'Choose another resolution, or download the latest build (the popup has the link).')) -join "`r`n"
-        }
-        $ready = [bool] $g.Mode -and (-not $hd -or [bool] $g.Theme) -and ($mp.Count -eq 0)
+        $ready = [bool] $g.Mode -and (-not $hd -or [bool] $g.Theme)
         $c.ModePick.Text = if (-not $g.Mode) { 'Choose a screen resolution and a battlefield interface to continue.' }
-                           elseif ($mp.Count -gt 0) { 'The pictures for ' + $g.Mode + ' are out of sync with the repository build - see the red box.  Choose another size, or download the latest build.' }
                            elseif (-not $ready) { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + '.  Now choose the battlefield interface (light or dark) to continue.' }
                            elseif (-not $hd) { 'Screen resolution: 640x480 (original) - the game keeps its own interface.  Press Next to continue.' }
                            else { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + ', ' + $g.Theme + ' battlefield interface.  Press Next to continue.' }
@@ -4694,7 +4191,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $c.ModeBox.SelectedIndex = if ($mode) { [Array]::IndexOf($g.ModeList, $mode) + 1 } else { 0 }
         $g.Syncing = $false
         & $g.Refresh
-        if (@($g.ModeProblems).Count -gt 0) { & $g.ShowModeProblems }     # the popup (1 Oct 2026); the red box stays on the page
     }
     $script:gui.SetTheme = {
         param([string] $theme)
@@ -4795,9 +4291,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $lines = @()
         $lines += 'Screen resolution:       ' + $(if ($g.Mode) { Format-ModeLabel $g.Mode $g.Monitor } else { 'NOT CHOSEN - go back to the options page' })
         $lines += 'Battlefield interface:   ' + $(if ($g.Mode -eq '640x480') { 'the original (640x480 keeps the stock interface)' } elseif ($g.Theme -eq 'light') { 'light (classic) - the original metal interface' } elseif ($g.Theme -eq 'dark') { 'dark - the console style of the menus' } else { 'NOT CHOSEN - go back to the options page' })
-        if ($g.Install -and @($g.Install.Problems).Count -gt 0) {
-            $lines += ('Installed interface set: MIXED ({0} item(s): {1}) - replaced by this run' -f @($g.Install.Problems).Count, (Format-InstallSummary $g.Install))
-        }
         $lines += ''
         # paths under the script's folder (the normal case) are shown relative to it, so a line fits
         $sep = [System.IO.Path]::DirectorySeparatorChar
@@ -4846,9 +4339,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $todo = @($g.Items | Where-Object { $_.Checked -and $_.Data })
         $refused = $null
         if ($todo.Count -eq 0) { $refused = 'No executable ticked - tick at least one (its original must be found).' }
-        # the integrity check (1 Oct 2026): nothing is patched while game files or the chosen size's pictures are out of sync
-        if (-not $refused -and @($g.IntegrityProblems).Count -gt 0) { $refused = 'The game files are out of sync with the repository build - nothing is patched until they are (see the welcome page).' }
-        if (-not $refused -and @($g.ModeProblems).Count -gt 0) { $refused = 'The pictures for ' + $g.Mode + ' are out of sync with the repository build - see the options page.' }
         foreach ($it in $todo) {
             if ($refused) { break }
             if (@($it.Build.Modes).Count -gt 0 -and -not $g.Mode) { $refused = "$($it.Build.ProductName): no screen resolution chosen - go back to the options page and choose one." }
@@ -5011,7 +4501,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $c.Done.Visible = ($step -eq $last + 1)
         $c.Next.Enabled = $true
         if ($step -eq 0) {
-            $c.Next.Enabled = (@($g.IntegrityProblems).Count -eq 0)     # the integrity check (1 Oct 2026) blocks the wizard
             $c.Title.Text = 'Welcome to the Dark Colony patcher'
             $c.Sub.Text = 'Builds Dark Colony Ultimate, the Map Editor (and, if you ask for it, the deprecated Dark Colony) from the untouched originals in this folder.'
         } elseif ($step -eq 1) {
@@ -5051,14 +4540,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $c.Next.Add_Click({
         $g = $script:gui
         $last = $g.Last
-        if ($g.Step -eq 0 -and @($g.IntegrityProblems).Count -gt 0) {
-            $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'The game files are out of sync with the repository build - nothing can be patched (see the red box).'
-            & $g.ShowIntegrity; return
-        }
         if ($g.Step -eq 1) {
             $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
             if (-not $g.Mode -or ($hd -and -not $g.Theme)) { $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'Choose a screen resolution and a battlefield interface first.'; return }
-            if (@($g.ModeProblems).Count -gt 0) { $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'The pictures for ' + $g.Mode + ' are out of sync with the repository build - choose another size.'; & $g.ShowModeProblems; return }
         }
         if ($g.Step -lt $last) { & $g.GoTo ($g.Step + 1); return }
         if ($g.Step -eq $last) {
@@ -5070,7 +4554,6 @@ function Show-PatcherWindow([string] $PreloadPath) {
     })
     $c.Back.Add_Click({ $g = $script:gui; if ($g.Step -gt 0) { & $g.GoTo ($g.Step - 1) } })
     $c.Cancel.Add_Click({ $script:gui.Controls.Form.Close() })
-    $c.IntegrityButton.Add_Click({ & $script:gui.ShowIntegrity })
 
     $c.Verify.Add_Click({
         $c = $script:gui.Controls
@@ -5107,7 +4590,6 @@ if ($PSCmdlet.ParameterSetName -eq 'Verify') { Get-VerifyReport $Verify | ForEac
 # No -All / -Patches: open the window (INSTALL.CMD, "Run with PowerShell", or just `.\Apply-DarkColonyPatches.ps1`)
 if (-not $All -and -not $Patches) {
     $form = Show-PatcherWindow $Original
-    & $script:gui.CheckIntegrity $true      # the integrity check (1 Oct 2026): busy box, then the popup if files are out of sync
     [void] $form.ShowDialog()
     return
 }
@@ -5143,13 +4625,6 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
     if (-not $OutputFile) { $OutputFile = Join-Path (Split-Path $origPath) $build.OutputName }
     $OutputFile = Get-AbsolutePath $OutputFile
     $gameDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputFile))
-    # the chosen size's shipped pictures must be the repository's WxH pictures (1 Oct 2026)
-    $mp = @(Get-ModeResourceProblems $gameDir $mode)
-    if ($mp.Count -gt 0) {
-        foreach ($l in (Format-IntegrityLines $mp)) { Write-Host ('  ' + $l) -ForegroundColor Red }
-        if (-not $IgnoreIntegrity) { throw ("the pictures for {0} in '{1}' are not the repository's (above): choose another resolution, or download the latest build ({2}) and unpack it over the game folder; -IgnoreIntegrity patches anyway." -f $mode, $gameDir, $RepoDownloadUrl) }
-        Write-Warning 'continuing because -IgnoreIntegrity was given.'
-    }
     $unavailable = Get-UnavailableFixes $build $gameDir $mode $theme
     if ($All) {
         # every fix whose resources are in the target folder; the others are skipped and reported
@@ -5209,29 +4684,6 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
             Write-Host ("shortcut: {0}" -f (New-GameShortcut $OutputFile $build))
         }
     }
-}
-
-# the integrity check (1 Oct 2026): every shipped file beside this script must be the repository's before anything is patched
-if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'DC - Council wars'))) {
-    Write-Host 'checking the game files beside this script against the repository build...' -NoNewline
-    $ip = @(Get-IntegrityProblems $PSScriptRoot)
-    $ic = Get-InstallConsistency (Join-Path $PSScriptRoot 'DC - Council wars')
-    if ($ip.Count -eq 0) { Write-Host (' all {0} files match.' -f @(Get-Manifest).Count) -ForegroundColor Green }
-    if (@($ic.Problems).Count -gt 0) {
-        Write-Host ('note: the installed interface set is MIXED ({0} item(s); {1}) - a run rewrites it:' -f @($ic.Problems).Count, (Format-InstallSummary $ic)) -ForegroundColor DarkYellow
-        foreach ($l in (Format-IntegrityLines $ic.Problems)) { Write-Host ('  ' + $l) -ForegroundColor DarkYellow }
-    }
-    if ($ip.Count -gt 0) {
-        Write-Host (' {0} file(s) OUT OF SYNC:' -f $ip.Count) -ForegroundColor Red
-        foreach ($l in (Format-IntegrityLines $ip)) { Write-Host ('  ' + $l) -ForegroundColor Red }
-        if (-not $IgnoreIntegrity) {
-            throw ("nothing patched: {0} game file(s) are not the files of the repository build (listed above). Download the latest build ({1}), " +
-                   "unpack it over this folder and run again; -IgnoreIntegrity patches anyway.") -f $ip.Count, $RepoDownloadUrl
-        }
-        Write-Warning 'continuing because -IgnoreIntegrity was given.'
-    }
-} else {
-    Write-Warning 'not started from the repository folder (no "DC - Council wars" beside the script): the game files cannot be checked against the repository build.'
 }
 
 if ($Original) { Invoke-CliBuild $Original $Output; return }
