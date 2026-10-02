@@ -681,6 +681,11 @@ ICON_CELLS = {0: 'options', 1: 'quit', 2: 'attack', 4: 'save', 62: 'stop', 63: '
 # ok, return them back") and asked for the same style on the Game Option tab, whose remaining cells
 # (save, allies, pause, objectives) BUTTON.SPR has no icon for: those are drawn in its idiom (_neon).
 FROM_BUTTON = (62, 63, 65, 66, 68, 69, 72, 73, 74, 75)
+# BUTTON.SPR's hot-key badges on three of these cells name a key the game does not have: 65 Move & Attack
+# says P (the live key is A - measured in game, doc 10.62: A lights the cell, P does nothing), 72 Napalm and
+# 73 Disease show the return arrow where the stock MAINBUT says D.  Those three get the stock letter drawn
+# in BUTTON's key greys (the key_glyph of the drawn cells); the other seven agree with the stock bank.
+STOCK_BADGE = {65: 'A', 72: 'D', 73: 'D'}
 PLATE_IDX = {40, 49, 55, 60, 65, 67, 0, BLK}          # BUTTON.SPR's grey plate: everything else is icon
 
 
@@ -996,16 +1001,26 @@ def icon_cell(kind, w=PLATE_W, h=PLATE_H):
     return cv.px
 
 
-def button_icon(cell, w=PLATE_W, h=PLATE_H):
+def button_icon(cell, w=PLATE_W, h=PLATE_H, key=None, template=None):
     """A BUTTON.SPR cell's neon icon and hot-key letter (every pixel that is not its grey plate) on
-    the lobby plate."""
+    the lobby plate.  With `key`, BUTTON's own badge letter is dropped (the key box is refilled from the
+    cells' common template = the empty box) and `key` is drawn there with key_glyph (STOCK_BADGE)."""
     out = grey_frame(w, h).px
     px = cell['px']
+    bx0, by0, bx1, by1 = KEY_BOX
     for y in range(3, h - 3):
         for x in range(3, w - 3):
+            if key and bx0 - 1 <= x <= bx1 + 1 and by0 - 1 <= y <= by1 + 1:
+                v = template[y * w + x]
+                if v not in (-1, 0, BLK):
+                    out[y * w + x] = v
+                continue
             v = px[y * w + x]
             if v not in PLATE_IDX:
                 out[y * w + x] = v
+    if key:
+        for (x, y), v in key_glyph(key).items():
+            out[(by0 + y) * w + bx0 + x] = v
     return out
 
 
@@ -1341,7 +1356,8 @@ def build_bank(game):
     for i, c in enumerate(mainbut['cells']):
         w, h = c['w'], c['h']
         if i in FROM_BUTTON:
-            cells.append(dict(w=PLATE_W, h=PLATE_H, ox=c['ox'], oy=c['oy'], px=button_icon(button[i])))
+            cells.append(dict(w=PLATE_W, h=PLATE_H, ox=c['ox'], oy=c['oy'],
+                              px=button_icon(button[i], key=STOCK_BADGE.get(i), template=template)))
         elif i in ACTION_CELLS and (w, h) == (PLATE_W, PLATE_H):
             kind, key, ramp = ACTION_CELLS[i]
             cells.append(dict(w=w, h=h, ox=c['ox'], oy=c['oy'], px=action_cell(template, kind, key, ramp, font)))

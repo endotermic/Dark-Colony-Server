@@ -160,6 +160,8 @@ patcher `Write-OnlineScreen` / `Edit-DialogConsole`.
   line (`action_template`, `action_cell`); wide hot keys (F11, ESC) get the wide box with `MFONTO7`
   glyphs. Never auto-trace metal glyphs (§10.49 third round: "messy").
 
+**Hot-key badges name the live key.** A badge letter is a promise to the player: write the key the game actually binds (the stock `MAINBUT.SPR` badges are the reference - S, M, A, W, D, J, O, Q, ESC, F11, the return arrow), never a letter inherited from unused art. `BUTTON.SPR` says P for Move & Attack and the return arrow for Napalm / Disease; the live keys are A and D, so `hud_console.STOCK_BADGE` overrides those three cells (doc 10.62, measured in game: A lights the cell, P does nothing).
+
 ## 5. Pipework (the ground)
 
 Everything that is not a screen, a frame or a plate is pipework: the HUD's panel column, bar and
