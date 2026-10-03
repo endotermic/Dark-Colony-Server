@@ -6511,3 +6511,181 @@ pure black (0 lit pixels; the Quit cell 982), F11 and a click on the cell's plac
 back leave it black; ACADEMY -> battle -> the cell is drawn (1083 lit pixels) and F11 opens the Save Game
 dialog; `error.log` empty in both runs. **Second round the same day (maintainer: "run: other resolutions, 640x480, the Dark Colony build in game, the replay viewer"; `smoke_rig/netsave_all.py WxH THEME net|custom|camp|replay [--classic] [--letterbox]`):** Dark Colony Ultimate at 1280x720, 1280x800, 1280x1024, 1920x1200 dark, 1920x1080 light and 640x480 (stock metal HUD) - ONLINE WAR battle: Save cell 0 lit pixels, F11 and a click on it inert, still 0 after tabs 1/2/3; ACADEMY: cell drawn, F11 opens the dialog - and **3840x1080 dark through dgVoodoo 2** (second copy, `--letterbox`, clicks scaled 0.5 to the 1920x540 frame at y 330) the same; **Dark Colony (`Dark Colony.exe`, 1024x768 dark) through CUSTOM NET WAR / MULTI PLAYER WAR**: TCP/IP -> CONNECT TO SERVER -> 127.0.0.1 -> hall -> `/1` -> READY (join) -> READY (room) -> battle: cell blank, F11 inert, TRAINING: cell drawn, F11 opens the dialog; **the replay viewer** (REPLAY ONLINE GAME, a 76 s recording of the 1024x768 ONLINE WAR battle, WATCH AS the recorded seat, READY in the viewer lobby): cell blank, F11 inert, still blank after the tab switches. Every run with an empty `error.log`; every patched exe = its reference. Rig lessons: the hall's READY is the join press and the room needs a second one - test the relay log for a READY received in `"state":"LOBBY"`; the viewer room is an ordinary lobby, the viewer presses READY and the box of an EMPTY seat is ignored (REPLAY stays greyed) - tick the seat the relay gave the recorded client; the recorded lobby plays in real time before the battle. Nothing changed on the relay. **Committed and pushed 3 Oct 2026: Dark-Colony `c77d671`, Server `7949bf8`.** A real resume of a relay battle would need
 a save upload and a rebuilt lobby on the relay - not planned.
+
+### 10.69 Frame limiter: never more than 60 frames per second (fix `fps`, 3 Oct 2026)
+
+**Report** (maintainer: "in linux+wine speed of cursor animation and map scroll on the battlefield are
+ridiculously fast. investigate" -> "why 1 is better than 2?" -> "go ahead with option 1 and update
+patcher"). Both games, `tools/patch_fps.py`, patcher 1.5.
+
+**Cause: the game has no frame limiter.** The main loop is paced by one thing only: the DirectDraw
+`Flip(NULL, flags 0)` at the end of `present` (`ddex4.c`, Classic `0x0042E0FC`, Ultimate `0x0042E15C`;
+the call at `0x0042E28A`, retried in a busy loop on every error but `DDERR_SURFACELOST`). On Windows the
+flip completes at the monitor's vertical blank, so the loop runs at the refresh rate; with the flip
+skipped the loop managed ~4 400 passes per second (the minimised measurement of section 10.28) - nothing
+else holds it. Under Wine the flip returns at once: wined3d asks for swap interval 1 for a flip without
+`DDFLIP_NOVSYNC`, but Xvfb, a Wine virtual desktop and gamescope have no vertical blank to wait for.
+Measured in the WSL rig (`winefps.sh`, `WINEDEBUG=+timestamp,+ddraw` filtered to the `_Flip` lines):
+
+| Environment | Flip calls per second |
+|---|---|
+| Windows, flip paced by the vertical blank | 60 |
+| Wine rig (Xvfb, llvmpipe), before the fix | 350-380 |
+
+Two battlefield consumers advance per frame with no time gate, so they ran six times too fast:
+
+* **Map scroll** `0x0040AE6A..0x0040AEB6`: after the 100 ms edge dwell (clock-based: `ui+0x7E0[i]` holds
+  the time the pointer entered zone i, `ui+0xF4` the frame's `timeGetTime`, stored at `0x0040ABC8`) the
+  camera moves one whole tile (`0x100`) per frame per direction; the arrow keys (`ui+0x13C[i]`) the same.
+  Designed: 60 tiles per second. At 370 frames per second a 96-tile map crosses in a quarter of a second.
+* **Cursor animation**: the client display calls the cursor-advance routine `0x00422C7C` (anim object
+  `ip+0x4330`, stepped by `0x00426294`, cursor index to the display's `set_cursor` slot `+0x148` =
+  `0x0042FB6C`) once per frame at `0x0040B309`.
+
+The menus are protected: the widget pump `0x00424294` steps its animations only when 16 ms have passed
+(`0x00489618`), and the interface loop at `0x0042412A` gates the cursor at 33 ms (`0x00489614`) and
+catches up by elapsed time. Game ticks are clock-driven (66 ms), so the simulation, the network echo
+and the music were never affected. The same mechanism makes a Windows monitor above 60 Hz scroll too
+fast in proportion (2.4x at 144 Hz) - never reported, probably never noticed.
+
+**Options weighed:** (1) a frame limiter after the flip, (2) gate the two consumers at 16 ms like the
+menus, (3) a Linux-side limiter (libstrangle, MangoHud `fps_limit`, gamescope). (1) was chosen: it
+restores the cadence the whole program was written against (unknown per-frame consumers included, no
+invented catch-up arithmetic), it is one stub in one place, and it also stops the full-core spin under
+Wine; (2) would have left anything untraced fast and needed two gates with their own catch-up; (3) is
+not packaged for 32-bit Ubuntu (`mangohud:i386` absent in 24.04) and helps nobody on Windows.
+
+**Fix = `fps`** (`tools/patch_fps.py` verify / plan / apply, `.fps.bak`, pattern-located, both games,
+`Requires ddraw`, patcher order `..., chat, netsave, fps, movies, sounds | ozi, icon, online`):
+`present`'s epilogue `lea esp,[ebp+82h]` (`0x0042E2A1` / Ultimate `0x0042E301`, reached after the
+flip, from the error paths and from fix `restore`'s minimised idle stub) becomes `jmp stub; nop`. The
+stub (132 bytes of code): the displaced `lea`; `push eax` (present's return value); `call $+5; pop esi`
+= its own address, so every operand is esi-relative or rel32 and **no absolute operand exists**;
+`now = timeGetTime()`; if `now - last < 16`: `GetModuleHandleA("winmm.dll")`,
+`GetProcAddress("timeBeginPeriod")(1)` when found, then `Sleep(1)` + `timeGetTime()` until 16 ms have
+passed, then `timeEndPeriod(1)`; `last = now`; `pop eax`; back into the epilogue. The
+`timeBeginPeriod` pair is not optional: a Windows 11 process that never raised the timer resolution
+measured **`Sleep(1)` = 15.6 ms** (timeGetTime itself 1 ms steps), which would have turned a 144 Hz
+monitor into 43 frames per second; raised only around the wait, fix `restore`'s `Sleep(1)` while
+minimised keeps its one-tick length (the same stub then paces the minimised loop too). On a 60 Hz
+Windows monitor the flip has already taken 16-17 ms (readings 16 or 17, never 15), so the stub never
+waits. Where: the three dead assert bodies of `remap` (`ddex4.c` 1029/1033/1036; Classic
+`0x0042F399..0x0042F3F4` 92 bytes, `0x0042F3FA..0x0042F423` 42, `0x0042F443..0x0042F46A` 40 = the strings; Ultimate
++0x60), dead since the `ddraw` jumps of section 10.16 - nothing branches into them (checked against
+every jump and call target of the disassembly); the code steps over the two live 5-byte jumps with
+`jmp +5`, body 3 holds the three names (`winmm.dll`, `timeBeginPeriod`, `timeEndPeriod`). The
+timestamp dword lives at **`0x00481FF0`** = the zero-filled page slack of the writable `.idata` section
+(raw size 0x1200, mapped to 0x2000; nothing in either exe references `0x481200..0x481FFF`; the tool
+checks the section table). `.reloc`: the 17 HIGHLOW entries that described absolute operands inside the
+rewritten ranges (strings, `error.log` pointer) become type 0 padding, page offset kept (the tails of bodies
+2 and 3 stay as they are - fix `pointer`, section 10.70, uses them; until the same evening `fps` wrote the
+whole bodies and 20 entries). Calls go through the
+import thunks (`timeGetTime 0x0047F116`, `Sleep 0x0047F008`, `GetModuleHandleA 0x0047EF2A`,
+`GetProcAddress 0x0047F06E`; Ultimate +0x60), so the two builds differ only in the three
+displacements of the timestamp. `plan` works on the untouched exe (the bodies hold the same bytes
+before and after `ddraw`), `apply` refuses without `ddraw`. **`patch_ddraw_lost.py` was re-anchored**:
+it located its three remap sites by the first bytes of the dead bodies, which this fix overwrites; it
+now derives them from the unchanged loop tail (`nxt - 0xF2 / 0x91 / 0x48`) and accepts the stock
+`push` or its own jump at each, so `verify` works on stock, `ddraw`-patched and `fps`-patched exes.
+
+**Verified.** Wine rig, fixed exe, 30 s at the menu: 114 Flip calls per second in pairs (16-18 ms
+then 1-3 ms - wined3d answers the first call of each frame with an error the stock loop retries, so
+that is **57-60 frames per second**), `error.log` empty; a 640x480 training battle under Wine as before.
+Windows (`smoke_rig/fps_test.py`, `subst X:` copy, 1024x768 dark, ACADEMY battle): **60.2 frames per
+second** (frame period median 17 ms, 14..19), the limiter's timestamp advancing 1000 ms per second (the
+stub runs every frame), the RIGHT arrow held: **18 tiles in 18 frames = 60.1 tiles per second** (one
+tile per frame, stock), quit clean, `error.log` empty. Clean `git archive HEAD` copy under pwsh 7 and
+PowerShell 5.1 (`tr-TR`), `-All -IncludeDeprecated -Resolution 1024x768 -Theme dark`: references
+**Ultimate `308ac5b7…`** (light `5bb3fdd4…`), **Dark Colony `32432f5c…`** (light `e2bd1fc3…`), editor
+`de8076dc…` unchanged; the written set = the fixtures (HSCENE/GSCENE = the DC ending names, the copy has
+the movies); the tool on the previous published Ultimate `b3d3ead8…` = the patcher's output. Not run:
+the other sizes in game, a Windows monitor above 60 Hz (expected: capped at 60), the pointer-edge scroll
+in the rig (the synthetic pointer move at x 894 did not start it; the key scroll measures the same
+per-frame camera code).
+
+**Rules.** Every per-frame effect of this engine assumes a 60 Hz frame; new per-frame code relies on
+this limiter or gates itself by `timeGetTime`. A tool that anchors on dead code breaks the day that
+dead code is reused - anchor on live bytes (the loop tail here). On Windows 11 a process gets 15.6 ms
+from `Sleep(1)` until it calls `timeBeginPeriod` itself; measure before relying on a sleep length.
+
+**Second round (same day, maintainer: "can you test these things on this machine using virtual monitor with
+refresh rate 120hz? run. Other sizes in game, and a Windows monitor above 60 Hz ... One rig oddity: a synthetic
+pointer move to the view's edge did not start the edge scroll" and, meanwhile, "pointer animation is too fast").**
+
+* **Six sizes in game** (`sizes.sh`: the X: copy re-patched per size with PowerShell 5.1, `fps_test.py` at each):
+  1024x768, 1280x720, 1280x800, 1280x1024, 1920x1080, 1920x1200, all dark - every exe = the generator's reference for
+  its size, 60.0-60.2 frames per second (median 17 ms), the limiter timestamp advancing every frame, the RIGHT arrow
+  held = one tile per frame (16-18 tiles in 17-18 frames at the 1280-wide sizes; at the 1920-wide sizes 7 tiles,
+  because the 64-tile training map leaves a 56-tile view only 8 tiles of travel), `error.log` empty throughout.
+* **The pointer-edge oddity explained** (`fps_test.py` reads the pointer the game uses, `0x4DFF14/1C`, the zone rect
+  `ui+0x7D0..0x7DC` and the four dwell stamps `ui+0x7E0..0x7EC`): the zone is right (3, 3, W-131, H-51) and the
+  stamps do get written when the game's pointer is in a zone (one was armed at 1280x720), but in battle the game's
+  pointer does **not** follow a synthetic absolute jump - after `SendInput` to x 1277 the game read 1197, after 1917 it
+  read 1791, i.e. the position lags the real cursor by the delta of the previous move. The in-battle pointer follows
+  relative movement (the DirectInput path `0x450E80`, which accumulates deltas and mirrors into `0x4DFF14`), so the
+  rig's jumps land short of the 3-px zone and nothing is armed. The mouse handler `0x433A15..0x433AE9` arms zone 0/2
+  when x < left / x > right and zone 1/3 for y, clearing them otherwise. **Rule: measure scrolling with a held arrow
+  key (same per-frame camera code); to use the pointer, move it in small steps.**
+* **"Pointer animation is too fast"** - measured (`cursor_rate.py`, the cursor index `0x48972C` Ultimate /
+  `0x489704` Classic written by `set_cursor`): in battle **30.2 index changes per second** (a three-frame cycle,
+  indices 0..2, ten cycles a second) at 60 frames per second; at the main menu **11.5 per second** (the interface
+  loop's 33 ms gate plus that cursor's own frame holds). The battle rate is the stock rate of a 60 Hz Windows
+  machine - the cursor-advance call `0x40B309` runs once per frame and the step routine `0x426428` has no clock,
+  it holds a frame for the FIN's per-frame count and then advances - and since the fix Wine shows the same 30.
+  To slow it, the battlefield call would have to be gated like the menus (a stub at `0x40B309`: advance only when
+  33 ms have passed since the last advance = 15 changes per second, or any other period); **built the same
+  evening as fix `pointer` at the maintainer's word, section 10.70.**
+* **120 Hz / above 60 Hz on this machine: not reproducible.** The panel offers only 60 Hz modes
+  (`EnumDisplaySettings`, every size). dgVoodoo 2 with `ForceVerticalSync = false` was tried as a presenter without
+  a vblank wait, in fake fullscreen and in real exclusive fullscreen: both still ran the OLD exe at 60 (13-18 % of a
+  core at the menu, the compositor / DXGI path paces it) and the new exe at 60.2 limiter steps per second, so it
+  proves nothing about the cap; dgVoodoo's fake-fullscreen pointer mapping also clamped the game's pointer at
+  (552, 490) with the 1024x768 proxy, so no battle could be driven there (the 3840x1080 rig of section 10.32
+  downscaled, this one upscales - the proxy / `CaptureMouse` interplay differs; left as is). A true test needs a
+  monitor with a >60 Hz mode or a virtual display driver (an IddCx driver such as the open-source "Virtual Display
+  Driver", installed as admin with its certificate - a system change left to the maintainer); the Wine rig remains
+  the one presenter without a vblank wait, and there the cap holds (57-60 frames per second, 350-380 before).
+
+### 10.70 Battlefield pointer animation at the menus' pace (fix `pointer`, 3 Oct 2026)
+
+**Request** (maintainer, after section 10.69's measurement: "pointer animation is too fast" -> "ok, let's try
+battle cursor at the rate of gated the way the menus are"). Both games, `tools/patch_pointer.py`, patcher 1.6,
+its own fix id so it can be left out independently of the frame limiter.
+
+**What changes.** The client display advances the cursor animation once per frame (`call 0x00422C7C` at
+`0x0040B309`, Ultimate `0x0040B369`; the step routine `0x00426428` has no clock, it holds a frame for the
+FIN's per-frame count and then advances), so at 60 frames per second the battlefield pointer's three-frame
+cycle turned ten times a second (30.2 cursor-index changes per second measured). The menus advance the same
+animation only when 33 ms have passed since the last advance (interface loop `0x0042412A`: `now - last >
+0x21`, one advance, `last = now`; the elapsed/33 loop that follows redraws widgets, it does not advance the
+cursor again). The battlefield call now goes through the same gate:
+
+    gate:  push eax ; now = timeGetTime() ; if now - last < 33: pop eax ; ret
+           last = now ; pop eax ; jmp 0x00422C7C          (tail call; the client's `test esi,esi` after the call is untouched)
+
+= one advance every second frame at 60 frames per second. **Measured** (`smoke_rig/cursor_rate.py`, X: copy,
+1024x768 dark, ACADEMY battle): 14.2 cursor-index changes per second with the pointer parked (30.2 before),
+11.2 at the menu as before; frame rate 60.2 and the key scroll (17 tiles in 17 frames) unchanged; `error.log`
+empty; the Wine rig's 640x480 battle as before.
+
+**Where.** 35 bytes in the tails of the second and third dead `remap` assert bodies that the `fps` stub leaves
+free (Classic `0x0042F424..0x0042F438` 21 bytes - the range starts inside the `mov eax,[error.log]` that the
+`fps` range cuts - and `0x0042F46B..0x0042F478` 14 bytes; Ultimate +0x60; dead since `ddraw`, so `Requires
+ddraw`; independent of `fps`, after it in the patcher order). The timestamp is `0x00481FF4`, the dword after
+the limiter's in the `.idata` page slack. `.reloc`: the tails' three HIGHLOW entries (page offsets `0x427`,
+`0x46C`, `0x471`; Ultimate +0x60) are re-pointed to the gate's two absolute operands (`0x427 -> 0x42E`,
+`0x46C -> 0x46D`) and the third becomes type 0, so the table stays exact; the hook's rel32 and the thunk call
+move with the code, so the written bytes are identical in both builds. **`fps` was narrowed for this** (same
+day, before anything was committed): it now writes body 2's first 42 bytes and body 3's first 40 (the
+strings) instead of the whole bodies, neutralises 17 instead of 20 relocation entries, and leaves the tails
+alone; a `pointer` applied without `fps` works on the stock tails too.
+
+**Verified.** Clean `git archive HEAD` copy under pwsh 7 and PowerShell 5.1 (`tr-TR`): references **Ultimate
+1024x768 dark `3cba8b55…`** (light `7ad1744c…`, 640x480 `be1b3fa0…`), **Dark Colony `d2424406…`** (light
+`3a53818b…`, 640x480 `67c71ef9…`), editor `de8076dc…` unchanged; sets = fixtures. Tool chain: `ddraw` ->
+`fps` -> `pointer` on both stock exes = the patcher's bytes, every tool's `verify` says patched afterwards,
+`pointer` idempotent, `pointer` without `fps` applies and leaves `fps` applicable.
+
+**Rule.** Two fixes sharing one dead region split it at an instruction boundary of the NEW code, not of the
+old: the gate's first range starts two bytes into a dead instruction, which is harmless (nothing executes
+there) but must be in the stock pattern.

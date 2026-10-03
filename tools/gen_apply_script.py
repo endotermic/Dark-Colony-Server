@@ -39,7 +39,7 @@ OUT = sys.argv[2]
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '1.4'
+PATCHER_VERSION = '1.6'
 
 
 def _git_state(repo):
@@ -243,7 +243,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'speed': ('patch_speed.py', ['--percent', '150']),
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
-           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py',
+           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py', 'fps': 'patch_fps.py', 'pointer': 'patch_pointer.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -261,7 +261,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'console': 'clock', 'speed': 'speed', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave',
+           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave', 'fps': 'fps', 'pointer': 'pointer',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'race': 'maped', 'campaign': 'maped', 'medfiles': 'maped', 'blockmenu': 'maped', 'teamdialogs': 'maped',
@@ -382,6 +382,28 @@ def blocks_netsave(g):
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     out += reloc_lines(t, '.reloc table: ')
     assert len(out) == 6, (g, len(out))                                   # two hooks, two stubs, two .reloc entries
+    return out
+
+def blocks_fps(g):
+    t = plan(g, 'fps'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (6, 92, 42, 40), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 4, (g, len(out))                                   # the epilogue hook + the three remap bodies
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 21, (g, len(out))                                  # + the 17 HIGHLOW entries inside the rewritten ranges -> type 0
+    return out
+
+def blocks_pointer(g):
+    t = plan(g, 'pointer'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (5, 21, 14), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 3, (g, len(out))                                   # the call + the gate's two parts
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 6, (g, len(out))                                   # + three entries of the tails (two re-pointed, one -> type 0)
     return out
 
 def blocks_ddraw(g):
@@ -984,6 +1006,41 @@ game start's network branch, the dialog's first five bytes) and two small stubs 
 wave loader's CD attempt, dead code since the "No CD" fix (required); the displaced absolute operand's
 relocation entry is neutralised and the dead code's one entry is re-pointed to the stub's operand, so
 the relocation table stays exact.  Same bytes at +0x60 in Council Wars.'''),
+ dict(id='fps', name='Frame limiter: never more than 60 frames per second (Wine, monitors above 60 Hz)', date='3 Oct 2026',
+      tool='tools/patch_fps.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.69', blocks=blocks_fps,
+      requires=['ddraw'],
+      desc='''The game has no frame limiter: the only thing that paces its main loop is the DirectDraw Flip at
+the end of each frame, which on Windows waits for the monitor's vertical blank - 60 frames per second
+on most monitors, and the 1997 code counts on that: the battlefield scrolls one tile per frame once
+the pointer has rested at an edge, and the cursor animation advances once per frame.  Under Wine the
+flip returns at once (a Wine virtual desktop, Xvfb and gamescope have no vertical blank to wait for)
+and the loop was measured at 350-380 frames per second: the map crosses in a quarter of a second, the
+cursor flickers.  A Windows monitor above 60 Hz has the same problem in proportion (2.4 times too fast
+at 144 Hz).  The simulation itself, the network and the menus are clock-driven and were never
+affected.  This fix makes the end of each frame wait until 16 ms have passed since the previous one:
+the frame routine's epilogue jumps to a 132-byte stub that reads the clock (timeGetTime) and, only
+when the frame was faster than that, raises the timer resolution (timeBeginPeriod 1, looked up in
+winmm.dll at that moment - without it a plain Windows process sleeps 15.6 ms at a time), sleeps in
+1 ms steps until the 16 ms are up and releases the resolution again (timeEndPeriod).  On a 60 Hz
+Windows monitor the flip has already taken the 16 ms, so nothing changes there.  The stub and its
+three names live in the three assert bodies of the palette remap that the "two-monitor start-up" fix
+(ddraw, required) turned into dead code; the timestamp lives in the unused page slack of the exe's
+import section; the 20 relocation entries of the dead bodies' absolute operands become padding and
+the new code has none (it finds its own address), so the relocation table stays exact.  Same code in
+both games (at +0x60 in Council Wars).'''),
+ dict(id='pointer', name='Battlefield pointer animation at the pace of the menus (every 33 ms instead of every frame)', date='3 Oct 2026',
+      tool='tools/patch_pointer.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.70', blocks=blocks_pointer,
+      requires=['ddraw'],
+      desc='''In a battle the game advances the pointer's animation once per frame, so at 60 frames per second the
+crosshair's three-frame cycle turns ten times a second (30 cursor changes per second), while every menu
+screen advances the same animation only when 33 ms have passed since the last step.  This fix gives the
+battlefield the menus' pace: the client's cursor-advance call goes through a 35-byte gate that reads the
+clock (timeGetTime) and lets the step through only when 33 ms have passed, so the pointer animates every
+second frame (15 changes per second).  The gate lives in the free tails of the two dead assert bodies the
+"two-monitor start-up" fix (ddraw, required) left in the palette remap; its timestamp sits in the unused page
+slack of the import section next to the frame limiter's; the tails' three relocation entries are re-pointed to
+the gate's two absolute operands (the third becomes padding), so the relocation table stays exact.  Same code
+in both games (at +0x60 in Council Wars).  Independent of the frame limiter (fps).'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=movie_data,
@@ -1311,7 +1368,7 @@ BUILDS = [
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'ozi', 'icon', 'online']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'ozi', 'icon', 'online']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
@@ -1320,7 +1377,7 @@ BUILDS = [
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe) - DEPRECATED since 1 Oct 2026',
       source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
       deprecated=CLASSIC_DEPRECATED, shipped=False,
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'movies', 'sounds', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'movies', 'sounds', 'icon']),
 ]
 
 def hexs(b):

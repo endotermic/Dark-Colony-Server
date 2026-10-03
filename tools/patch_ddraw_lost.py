@@ -107,14 +107,14 @@ class Image:
 def sites_for(img):
     """[(name, va, expected_bytes, new_bytes)] and [(file_off, expected_u16, new_u16)] relocs."""
     d = img.data
-    # anchors chosen after the bytes that change, so they match stock and patched alike
-    unlock = img.find('8B 0D ?? ?? ?? ?? 51 E8 ?? ?? ?? ?? 83 C4 08 68 ?? ?? ?? ?? 68 05 04 00 00',
-                      'remap Unlock assert', -5)                                    # 0x42F394
-    lock = img.find('68 09 04 00 00 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? A1 ?? ?? ?? ?? 50 B9 09 04 00 00',
-                    'remap Lock assert', -5)                                        # 0x42F3F5
-    getdc = img.find('68 0C 04 00 00 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 52 B9 0C 04 00 00',
-                     'remap GetDC assert', -5)                                      # 0x42F43E
+    # the three remap sites sit at fixed distances before the loop tail; each holds the stock `push fmt` or our
+    # jmp (until 3 Oct 2026 they were anchored on the dead assert bodies behind them - fix `fps` now reuses those)
     nxt = img.find('46 81 FE 00 01 00 00 0F 8D', 'remap loop tail')                 # 0x42F486
+    unlock, lock, getdc = nxt - 0xF2, nxt - 0x91, nxt - 0x48                        # 0x42F394, 0x42F3F5, 0x42F43E
+    for name, va in (('remap Unlock assert', unlock), ('remap Lock assert', lock), ('remap GetDC assert', getdc)):
+        b = bytes(d[img.va2file(va):img.va2file(va) + 5])
+        if not (b[:1] == b'h' or b == jmp(va, nxt)):
+            raise SystemExit('%s: neither the stock push nor the jmp at %#x (%s)' % (name, va, b.hex(' ')))
     flip_je = img.find('68 ?? ?? ?? ?? A1 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 08 68 ?? ?? ?? ?? 68 7D 03 00 00',
                        'loading-screen Flip assert', -2)                            # 0x42F033
     if not (unlock < lock < getdc < nxt and getdc - unlock == 0xAA):
