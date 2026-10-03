@@ -386,7 +386,7 @@ an appended code section `.dccode` (fix `online`, `DC16_DISPLAY_AND_RESOLUTION.m
 
 ```
 exe module                                   relay (hall)
-  read DEFAULT_SERVER.TXT (host[:port], `plain`)
+  read DEFAULT_SERVER.TXT (name=, address=host[:port], `plain`; plan 20.2)
   TCP connect, TLS handshake (Schannel) ---->|  (Fly terminates TLS on 8889 and forwards to 8888;
   |<--- 'd' + hall dump (ignored) -----------|   a self-hosted relay listens itself, TLS_PORT/TLS_CERT/TLS_KEY)
   |--- 0x50 LIST --------------------------->|
@@ -424,7 +424,7 @@ The second button of the module (id 9, `replay_game`; display doc §10.65) uses 
 
 ```
 exe module                                   relay (hall)
-  DEFAULT_SERVER.TXT, TCP + TLS as in 6.9
+  DEFAULT_SERVER.TXT (name=, address=), TCP + TLS as in 6.9
   |<--- 'd' + hall dump (ignored) -----------|
   |--- 0x55 RLIST -------------------------->|
   |<-- 0x56 REPLAYS count header ------------|  the screen: 40-column list, right of it the

@@ -7,10 +7,12 @@
  * `online_dispatch`. What it does, in order:
  *
  *   1. the Dark Colony prefix mode and the music source ALL, exactly as MULTI PLAYER WAR does;
- *   2. reads DEFAULT_SERVER.TXT beside the exe (C/C++ comments, `host[:port]`, optional `plain`);
+ *   2. reads DEFAULT_SERVER.TXT beside the exe (C/C++ comments; `name=<text>` and `address=host[:port]`,
+ *      optional `plain`; a file holding a bare `host[:port]` - the form before 3 Oct 2026 - is still read);
  *   3. shows the ONLINE WAR screen (the game's own interface engine, script `<folder>/onlin` - the
  *      resolution's interface folder read from the exe's own loadg path string, e.g. hd_1080p - or
- *      `intrface/onlin`, derived from the LOAD GAME picker) with a status line;
+ *      `intrface/onlin`, derived from the LOAD GAME picker) with the name and the address from the file
+ *      above a status line;
  *   4. connects to the relay - TCP, then a TLS handshake through Windows Schannel unless `plain` -
  *      and sends 0x50 LIST; every 0x51 ROOMS fills the list, 0x53 REFUSED goes to the status line;
  *   5. ENTER sends 0x52 for the selected room; on 0x54 ENTERING it opens a loopback listener,
@@ -92,9 +94,14 @@
 #define W_LIST    0
 #define W_BACK    4
 #define W_ENTER   5
-#define W_STATUS  17   /* second line under the list: the connection state            */
+#define W_STATUS  17   /* third line under the list: the connection state             */
 #define W_HEADER  30   /* the column header above the list                            */
-#define W_SERVER  31   /* first line under the list: "Server: host:port"              */
+#define W_SERVER  31   /* second line under the list: "Server: host:port"             */
+#define W_NAME    49   /* first line under the list: "Name: <name= of DEFAULT_SERVER.TXT>" (3 Oct 2026); a screen
+                          written by an older patcher lacks it, so it is set only when the widget exists */
+#define GAME_OBJECTS_OFF 0x88   /* ip->objects[], 0x34 bytes each; byte +1 = the widget type, 4 = in_text (GAME_SET_TEXT
+                                   asserts - widget.c - on any other type, so a missing widget must be tested first) */
+#define OBJ_IN_TEXT 4
 /* ... and of the REPLAY ONLINE GAME screen (REPLAYE = ONLINE with a narrower list and the participant pane, patch_online.py replay_script()) */
 #define W_RADIO0  32   /* checkb 32..39: one radio box per lobby slot                  */
 #define W_RNAME0  40   /* in_text 40..47: the participant's name beside its box         */
@@ -676,7 +683,7 @@ static int tls_handshake(Stream* st, char* host) {
 }
 
 /* ------------------------------------------------------------------ DEFAULT_SERVER.TXT */
-typedef struct { char host[128]; unsigned short port; int plain; } ServerConfig;
+typedef struct { char host[128]; char name[128]; unsigned short port; int plain; } ServerConfig;
 
 static int read_file(const char* name, char* buf, int cap) {
     HANDLE h; DWORD got = 0;
@@ -695,11 +702,12 @@ static int file_exists(const char* name) {
     return 1;
 }
 
-/* Blank out the two C++ comment forms (line and block) in place, keeping line breaks. */
+/* Blank out the two C++ comment forms (line and block) in place, keeping line breaks.  `//` opens a line comment only
+   at the start of a line or after white space, so `name=https://...` keeps its value (3 Oct 2026). */
 static void strip_comments(char* s) {
     int i = 0;
     while (s[i]) {
-        if (s[i] == '/' && s[i + 1] == '/') { while (s[i] && s[i] != '\n') s[i++] = ' '; }
+        if (s[i] == '/' && s[i + 1] == '/' && (i == 0 || is_space(s[i - 1]))) { while (s[i] && s[i] != '\n') s[i++] = ' '; }
         else if (s[i] == '/' && s[i + 1] == '*') {
             s[i++] = ' '; s[i++] = ' ';
             while (s[i] && !(s[i] == '*' && s[i + 1] == '/')) { if (s[i] != '\n') s[i] = ' '; i++; }
@@ -711,35 +719,61 @@ static void strip_comments(char* s) {
 static char* g_cfgbuf;        /* 4096 bytes in Work */
 #define CFGBUF_CAP 4096
 
-/* Returns 0 ok, 1 file missing, 2 no address in it. */
+/* `host[:port]` into the config: the port is the number after the last colon. */
+static void cfg_address(ServerConfig* c, char* word) {
+    int i, colon = -1;
+    for (i = 0; word[i]; i++) if (word[i] == ':') colon = i;
+    if (colon >= 0) {
+        unsigned v = 0; int k;
+        for (k = colon + 1; word[k]; k++) { if (word[k] < '0' || word[k] > '9') { v = 0; break; } v = v * 10 + (unsigned)(word[k] - '0'); }
+        if (v > 0 && v < 65536) c->port = (unsigned short)v;
+        word[colon] = 0;
+    }
+    scopy(c->host, word, sizeof c->host);
+}
+
+/* The white-space separated tokens of a line without `=` (or of an `address=` value): `plain` / `notls` switch
+   TLS off, the first other token is the address `host[:port]` unless one is set already. */
+static void cfg_tokens(ServerConfig* c, char* p) {
+    while (*p) {
+        char* word;
+        while (*p && is_space(*p)) p++;
+        if (!*p) break;
+        word = p;
+        while (*p && !is_space(*p)) p++;
+        if (*p) *p++ = 0;
+        if (ieq(word, "plain") || ieq(word, "notls")) c->plain = 1;
+        else if (!c->host[0]) cfg_address(c, word);
+    }
+}
+
+/* Returns 0 ok, 1 file missing, 2 no address in it.  One field per line (3 Oct 2026): `name=<text>` (the rest of the
+   line), `address=host[:port]` (an optional `plain` after it), or the bare tokens of the first form - `host[:port]`
+   and `plain`.  Keys are matched without case; an unknown key is ignored; `address=` wins over a bare address. */
 static int read_config(ServerConfig* c, char* err, int errcap) {
-    char* p; int n, tok = 0;
+    char* p; int n;
     memset(c, 0, sizeof *c);
     n = read_file("DEFAULT_SERVER.TXT", g_cfgbuf, CFGBUF_CAP);
     if (n < 0) { scopy(err, "DEFAULT_SERVER.TXT not found beside the game", errcap); return 1; }
     strip_comments(g_cfgbuf);
     p = g_cfgbuf;
     while (*p) {
-        char word[160]; int w = 0;
-        while (*p && is_space(*p)) p++;
-        if (!*p) break;
-        while (*p && !is_space(*p) && w < (int)sizeof word - 1) word[w++] = *p++;
-        word[w] = 0;
-        while (*p && !is_space(*p)) p++;
-        if (tok == 0) {
-            int i, colon = -1;
-            for (i = 0; word[i]; i++) if (word[i] == ':') colon = i;
-            if (colon >= 0) {
-                unsigned v = 0; int k;
-                for (k = colon + 1; word[k]; k++) { if (word[k] < '0' || word[k] > '9') { v = 0; break; } v = v * 10 + (unsigned)(word[k] - '0'); }
-                if (v > 0 && v < 65536) c->port = (unsigned short)v;
-                word[colon] = 0;
-            }
-            scopy(c->host, word, sizeof c->host);
-        } else if (ieq(word, "plain") || ieq(word, "notls")) {
-            c->plain = 1;
-        }
-        tok++;
+        char* line = p; char* eq = 0; char* end;
+        while (*p && *p != '\n') { if (*p == '=' && !eq) eq = p; p++; }
+        end = p;
+        if (*p) p++;                                              /* p = the next line */
+        *end = 0;                                                 /* this line is its own string now */
+        while (*line && is_space(*line)) line++;
+        while (end > line && is_space(end[-1])) *--end = 0;
+        if (!*line) continue;
+        if (eq) {
+            char* val = eq + 1; char* kend = eq;
+            *eq = 0;
+            while (kend > line && is_space(kend[-1])) *--kend = 0;
+            while (*val && is_space(*val)) val++;
+            if (ieq(line, "name")) scopy(c->name, val, sizeof c->name);
+            else if (ieq(line, "address") || ieq(line, "server") || ieq(line, "host")) { c->host[0] = 0; c->port = 0; cfg_tokens(c, val); }
+        } else cfg_tokens(c, line);
     }
     if (!c->host[0]) { scopy(err, "DEFAULT_SERVER.TXT names no server address", errcap); return 2; }
     if (!c->port) c->port = c->plain ? DEFAULT_PLAIN_PORT : DEFAULT_TLS_PORT;
@@ -1035,6 +1069,9 @@ static void init_screen_names(int replay) {
 static const char POOL_NAME[] = "BMOnline";
 static const char LOOPBACK[] = "127.0.0.1";
 
+/* Does the loaded screen have the in_text `id`?  A script from an older patcher may lack a line this build sets. */
+static int has_in_text(void* ip, int id) { return *((const unsigned char*)ip + GAME_OBJECTS_OFF + 0x34 * id + 1) == OBJ_IN_TEXT; }
+
 static void status(void* ip, const char* text) {
     scopy(g_status, text, sizeof g_status);
     g_set_text(ip, W_STATUS, g_status);
@@ -1084,11 +1121,14 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
     g_list_set(ip, W_LIST, empty, 0);
     if (replay) { g_set_text(ip, W_RPANE, RPANE_TEXT); update_pane(ip, -1); }
     if (cfg_err) {
+        if (has_in_text(ip, W_NAME)) g_set_text(ip, W_NAME, "Name: none (see DEFAULT_SERVER.TXT)");
         g_set_text(ip, W_SERVER, "Server: none (see DEFAULT_SERVER.TXT)");
         status(ip, cfg_msg);
         lost = 1;
     } else {
-        char server[160];
+        char name[ROW_CHARS + 1], server[ROW_CHARS + 1];      /* both lines clipped to the widgets' 56 columns */
+        scopy(name, "Name: ", sizeof name); scat(name, c->name[0] ? c->name : "-", sizeof name);
+        if (has_in_text(ip, W_NAME)) g_set_text(ip, W_NAME, name);
         scopy(server, "Server: ", sizeof server); scat(server, c->host, sizeof server); scat(server, ":", sizeof server); scat_uint(server, c->port, sizeof server);
         g_set_text(ip, W_SERVER, server);
         scopy(g_status, c->plain ? "Connecting (no encryption)..." : "Connecting (TLS)...", sizeof g_status);
@@ -1099,7 +1139,7 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
             connected = 1;
             logf(c->plain ? "connected (plain)" : "connected (TLS)");
             if (send_command(g_st, &cmd, 1)) {
-                if (replay) status(ip, c->plain ? "Connected. Pick a battle, tick a player, press REPLAY." : "Connected (TLS). Pick a battle, tick a player, press REPLAY.");
+                if (replay) status(ip, c->plain ? "Connected. Pick a battle, tick a player, press REPLAY." : "Connected (TLS). Pick a battle, tick a player, REPLAY.");   /* <= 56 columns: the TLS form ended in "REP" (3 Oct 2026) */
                 else status(ip, c->plain ? "Connected. Select a room and press ENTER." : "Connected (TLS). Select a room and press ENTER.");
             }
             else { status(ip, "Connection lost."); lost = 1; }
@@ -1220,7 +1260,7 @@ static int run(void* ui, void* gs, int replay) {
     *(unsigned long*)((unsigned char*)gs + GAME_GS_CAMPAIGN) = 2;
     msg[0] = 0;
     cfg_err = read_config(&cfg, msg, sizeof msg);
-    if (cfg_err) logf2("config: ", msg); else { logf2("config: host ", cfg.host); logu("config: port ", cfg.port); logu("config: plain ", (unsigned)cfg.plain); }
+    if (cfg_err) logf2("config: ", msg); else { logf2("config: name ", cfg.name); logf2("config: host ", cfg.host); logu("config: port ", cfg.port); logu("config: plain ", (unsigned)cfg.plain); }
     if (!room_screen(ui, &cfg, cfg_err, msg, &slot, replay)) { logf("back to the menu"); return 0; }
     logu(replay ? "REPLAYING slot " : "ENTERING slot ", (unsigned)slot);
     /* ENTERING / REPLAYING: the relay now speaks the stock protocol to whoever reads this connection */

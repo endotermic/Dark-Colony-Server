@@ -13,7 +13,19 @@ asserts on the first failure ("POO can't unlock in remap", line 1029; Lock line 
 893).  The assert handler writes `error.log` and shows a MessageBoxA that sits *behind* the
 exclusive-mode primary surface - hence the "hang".  One monitor: no re-layout, no loss.
 
-The fix is to make those four failures non-fatal.  The game already restores lost surfaces on
+A fifth site joined on 3 Oct 2026 (maintainer: "error on game startup"; two access violations at
+Ultimate `0x42EE50` in the Windows Application log, 35 s apart, after a two-monitor desktop change):
+the cursor set-up (`ddex4.c` 805-858) loads the 32 cursor bitmaps into surfaces, then LOCKS cursor
+surface 0 to read its top-left pixel as the colour key (line 836, "Couldn't lock mouse").  A lost
+surface fails that Lock, the message goes to the still-buffered `error.log` (lost in the crash, so
+the log stays empty) and the code reads the key through the NULL `lpSurface` anyway.  The fix
+replaces the 92-byte failure block with code that asks the surface for its pixel format
+(`GetPixelFormat`, which DirectDraw answers for a lost surface too) and takes the key from it -
+the cursor bitmaps' corner colour is palette entry 0 = RGB (109, 60, 0), which GDI's blit truncates
+to 0x69E0 in 565 and 0x35E0 in 555 - then skips the pixel read and the Unlock; the per-frame
+restore reloads the cursor bitmaps and the colour key set here stays with the surface objects.
+
+The fix is to make those five failures non-fatal.  The game already restores lost surfaces on
 its per-frame flip path (`0x0042E141` / `0x0042E291` -> `restore_surfaces` 0x0042E060, which
 also reloads the 32 cursor bitmaps), so the first frame after the intro repairs everything by
 itself; the remap loop only loses the 16-bit LUT entries of the palette indices it could not
@@ -28,9 +40,15 @@ Edits (Classic VAs; Council Wars at +0x60, everything pattern-located):
     0x0042F3F5  push fmt (Lock assert)            ->  jmp 0x0042F486
     0x0042F43E  push fmt (GetDC assert)           ->  jmp 0x0042F486
     0x0042F033  je  0x0042F090 (Flip ok)          ->  jmp 0x0042F090   (Flip failure not fatal)
+    0x0042ED8C  cursor key: 92-byte Lock-failure block (print + assert)  ->  51 bytes:
+                mov eax,[cursor_surface0]; lea edx,[ebp-5Eh] (= the DDSURFACEDESC's ddpfPixelFormat);
+                mov dword [edx],20h; GetPixelFormat(eax, edx); eax = (dwGBitMask == 7E0h) ? 69E0h : 35E0h;
+                mov [ebp+72h],eax; mov [ebp+76h],eax; jmp <after the Unlock block>   (+ NOPs)
 
-The three `push imm32` operands carried HIGHLOW `.reloc` entries; they become
-IMAGE_REL_BASED_ABSOLUTE padding (type 0, page offset kept so `verify` still finds them).
+The three `push imm32` operands of the remap sites and five of the six operands of the cursor
+block carried HIGHLOW `.reloc` entries; they become IMAGE_REL_BASED_ABSOLUTE padding (type 0,
+page offset kept so `verify` still finds them); the block's first operand (page offset +1) stays
+HIGHLOW because the new `mov eax,[imm32]` keeps its operand at the same place.
 Nothing is written unless every site holds its expected bytes.  Doc: DC16_DISPLAY_AND_RESOLUTION.md 10.16.
 
 CLI
@@ -102,6 +120,24 @@ def sites_for(img):
     if not (unlock < lock < getdc < nxt and getdc - unlock == 0xAA):
         raise SystemExit('remap layout differs: %#x %#x %#x %#x' % (unlock, lock, getdc, nxt))
     rel8 = d[img.va2file(flip_je) + 1]
+    # the cursor colour key (3 Oct 2026): the Lock of cursor surface 0 and its 92-byte failure block
+    # anchored on the Lock call BEFORE the block (push 0; push 1; lea edx,[ebp-0A6h]; push edx; mov eax,[surf0]; push 0;
+    # mov ebx,[eax]; push eax; call [ebx+64h]; test eax,eax; je +5Ch), which the patch leaves alone
+    cur_je = img.find('6A 00 6A 01 8D 95 5A FF FF FF 52 A1 ?? ?? ?? ?? 6A 00 8B 18 50 FF 53 64 85 C0 74 5C',
+                      'cursor colour-key Lock', 26)                                 # the `je` 0x42ED8A
+    cur_block = cur_je + 2                                                          # 0x42ED8C, 0x5C bytes
+    cur_ok = cur_block + 0x5C                                                       # 0x42EDE8: mov edx,[ebp-82h]
+    f_ok = img.va2file(cur_ok)
+    tail = bytes(d[f_ok:f_ok + 0x2A])
+    if not (tail[:11] == bytes.fromhex('8B957EFFFFFF31C0668B02') and tail[0x18:0x19] == b'\xA1'
+            and tail[0x1D:0x28] == bytes.fromhex('508B10FF92800000008 5C0'.replace(' ', '')) and tail[0x28:0x2A] == b'\x74\x5C'):
+        raise SystemExit('cursor colour-key code differs after the Lock')
+    surf0 = tail[0x19:0x1D]                                                         # the operand of `mov eax,[4DFE90h]`
+    cur_after_unlock = cur_ok + 0x2A + 0x5C                                         # 0x42EE6E: the `je` target after the Unlock block
+    cur_new = (b'\xA1' + surf0 + bytes.fromhex('8D55A2 C70220000000 52 50 8B18 FF5354 B8E0690000 817DB6E0070000 7405 B8E0350000 894572 894576'.replace(' ', ''))
+               + jmp(cur_block + 46, cur_after_unlock))
+    assert len(cur_new) == 51, len(cur_new)
+    cur_new += b'\x90' * (0x5C - len(cur_new))
     sites = []
     for name, va in (('remap: Unlock failure -> next index', unlock),
                      ('remap: Lock failure -> next index', lock),
@@ -110,9 +146,14 @@ def sites_for(img):
         old = cur if cur[:1] == b'\x68' else None        # the stock `push imm32` (operand read from the file)
         sites.append((name, va, old, jmp(va, nxt)))
     sites.append(('loading screen: Flip failure -> continue', flip_je, bytes([0x74, rel8]), bytes([0xEB, rel8])))
-    # .reloc: the three push operands
+    f_blk = img.va2file(cur_block)
+    cur_old = bytes(d[f_blk:f_blk + 0x5C])
+    sites.append(('cursor colour key: Lock failure -> key from the pixel format', cur_block,
+                  cur_old if cur_old[:1] == b'\x68' else None, cur_new))
+    # .reloc: the three push operands of the remap sites + five of the cursor block's six operands
+    # (block +1 keeps its HIGHLOW entry: the new `mov eax,[imm32]` operand sits there)
     va, rsize, rptr = img.secs['.reloc']
-    wanted = {unlock + 1, lock + 1, getdc + 1}
+    wanted = {unlock + 1, lock + 1, getdc + 1, cur_block + 0x15, cur_block + 0x1F, cur_block + 0x24, cur_block + 0x30, cur_block + 0x47}
     relocs = []
     i = 0
     while i + 8 <= rsize:
@@ -124,8 +165,8 @@ def sites_for(img):
             if IMAGE_BASE + page + (e & 0xFFF) in wanted and (e >> 12) in (0, 3):
                 relocs.append((rptr + i + j, (3 << 12) | (e & 0xFFF), e & 0xFFF))
         i += size
-    if len(relocs) != 3:
-        raise SystemExit('expected 3 .reloc entries, found %d' % len(relocs))
+    if len(relocs) != 8:
+        raise SystemExit('expected 8 .reloc entries, found %d' % len(relocs))
     return sites, relocs
 
 
@@ -147,7 +188,7 @@ def main(argv=None):
     for off, old, new in relocs:
         cur = struct.unpack_from('<H', data, off)[0]
         states.add('stock' if cur == old else 'patched' if cur == new else 'UNKNOWN')
-    print('  %-42s 3 entries' % '.reloc entries of the push operands')
+    print('  %-42s 8 entries' % '.reloc entries of the operands')
     overall = states.pop() if len(states) == 1 else 'MIXED'
     print('%s: %s' % (a.exe, overall))
     if a.command == 'verify':

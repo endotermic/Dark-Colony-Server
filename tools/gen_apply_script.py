@@ -39,7 +39,7 @@ OUT = sys.argv[2]
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '1.1'
+PATCHER_VERSION = '1.2'
 
 
 def _git_state(repo):
@@ -378,11 +378,13 @@ def blocks_ddraw(g):
     t = plan(g, 'ddraw_lost')
     out = []
     lens = {'remap: Unlock failure -> next index': 5, 'remap: Lock failure -> next index': 5,
-            'remap: GetDC failure -> next index': 5, 'loading screen: Flip failure -> continue': 2}
+            'remap: GetDC failure -> next index': 5, 'loading screen: Flip failure -> continue': 2,
+            'cursor colour key: Lock failure -> key from the pixel format': 92}
     for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+): stock', t, re.M):
         name = m.group(1).strip()
         out.append((int(m.group(2), 16), lens[name], name))
     out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 13, (g, len(out))                                  # 5 code sites + 8 .reloc entries (3 Oct 2026)
     return out
 
 def blocks_palette(g):
@@ -1210,9 +1212,10 @@ directory that lists them); their SHA-256 is checked like every other edit.'''),
 MULTI PLAYER WAR and ENCYCLOPEDIA move two rows down) and, since 2 Oct 2026, a twelfth right under it,
 REPLAY ONLINE GAME.  ONLINE WAR opens a room browser built from the LOAD GAME screen that lists the rooms of the Dark
 Colony Server relay - map, terrain, seats, players, bots, status - and joins the room you pick; the
-relay then chooses a free slot for you.  The address of the relay comes from DEFAULT_SERVER.TXT beside
-the exe (plain text with C++-style comments; the shipped file names dark-colony-server.fly.dev and
-explains how to point the game at another relay or at an unencrypted LAN relay).  The connection is
+relay then chooses a free slot for you.  The name and the address of the relay come from DEFAULT_SERVER.TXT
+beside the exe (plain text with C++-style comments, `name=` and `address=` lines; the shipped file names
+dark-colony-server.fly.dev and explains how to point the game at another relay or at an unencrypted LAN
+relay; both screens show the two values above the connection state).  The connection is
 TLS-encrypted with Windows' own Schannel (port 8889; the certificate is checked against the host
 name), and the game's stock lobby and battle code then run unchanged through a small loopback proxy
 inside the process, so MULTI PLAYER WAR and the network play itself are untouched.
@@ -1238,10 +1241,11 @@ that player's seat - his fog of war, his base, the whole battle as it happened; 
 but not act.  The same encrypted connection, the same module.
 
 Data: the screen scripts HD_<height>P\\ONLINE and REPLAYE (INTRFACE\ONLINE / REPLAYE at 640x480) are
-derived from LOADGE by this script (list widened to 56 columns, header and status lines, ENTER / BACK;
-the replay screen: a 40-column list and the participant pane), their backgrounds ONLINEBG.GIF /
-REPLAYBG.GIF from LOADER.GIF, and DEFAULT_SERVER.TXT is written beside the exe when it is missing - an
-existing file is never overwritten, so your own relay address stays.  The appended bytes are written
+derived from LOADGE by this script (list widened to 56 columns, header, name, server and status lines,
+ENTER / BACK; the replay screen: a 40-column list and the participant pane), their backgrounds ONLINEBG.GIF /
+REPLAYBG.GIF from LOADER.GIF, and DEFAULT_SERVER.TXT is written beside the exe when it is missing or still
+holds only the shipped address in its first, bare form - a file with your own relay address is never
+overwritten.  The appended bytes are written
 below in Base64 with their SHA-256; the C source they were compiled from is in the Dark-Colony-Server
 repository.'''),
 ]
@@ -3385,7 +3389,7 @@ function Write-MusicDialogs([string] $GameDir, [string] $Mode) {
 # line above the list and a status line below it (in_text 30 / 17), the title "Online War", the buttons
 # ENTER / BACK, the save-mode widgets (label 18, pushb 21, the groups, textmsg 4 / 5) and the scope
 # animations (gadgets 11 and 14, which repainted over the header and the status line) removed, the
-# background line pointing at ONLINEBG.GIF (LOADER.GIF with a grey frame around the text lines); a server line (in_text 31, "Server: host:port") above the status line and the title label centred in its panel (list x - 50, 318 wide).
+# background line pointing at ONLINEBG.GIF (LOADER.GIF with a grey frame around the text lines); a name line (in_text 49, "Name: <name= of DEFAULT_SERVER.TXT>", 3 Oct 2026) and a server line (in_text 31, "Server: host:port") above the status line and the title label centred in its panel (list x - 50, 318 wide).
 # Idempotent on its own output.
 function Edit-OnlineScript([string] $Text) {
     $m = [regex]::Match($Text, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s')
@@ -3403,7 +3407,7 @@ function Edit-OnlineScript([string] $Text) {
         if ($w.Success) {
             $kind = $w.Groups[1].Value; $id = [int]$w.Groups[2].Value
             $drop = ($kind -eq 'label' -and $id -eq 18) -or ($kind -eq 'pushb' -and $id -eq 21) -or ($kind -eq 'group') -or
-                    ($kind -eq 'textmsg' -and ($id -eq 4 -or $id -eq 5)) -or ($kind -eq 'in_text' -and ($id -eq 30 -or $id -eq 31)) -or ($kind -eq 'gadget' -and ($id -eq 11 -or $id -eq 14))
+                    ($kind -eq 'textmsg' -and ($id -eq 4 -or $id -eq 5)) -or ($kind -eq 'in_text' -and ($id -eq 30 -or $id -eq 31 -or $id -eq 49)) -or ($kind -eq 'gadget' -and ($id -eq 11 -or $id -eq 14))
             if ($drop) { continue }
             if ($kind -eq 'list' -and $id -eq 0) { $line = Set-ScriptTokens $line @{ 6 = '448' } }
             elseif ((-not $already) -and (($kind -eq 'scroll' -and $id -eq 1) -or ($kind -eq 'pushb' -and ($id -eq 2 -or $id -eq 3)) -or ($kind -eq 'gadget' -and ($id -eq 7 -or $id -eq 8)))) {
@@ -3411,8 +3415,9 @@ function Edit-OnlineScript([string] $Text) {
                 $line = Set-ScriptTokens $line @{ 4 = [string]($x + 56) }
             }
             elseif ($kind -eq 'in_text' -and $id -eq 17) {
-                $out.Add(('in_text  31  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 14)) + $cr)
-                $out.Add(('in_text  17  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 30)) + $cr)
+                $out.Add(('in_text  49  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 14)) + $cr)
+                $out.Add(('in_text  31  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 30)) + $cr)
+                $out.Add(('in_text  17  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly + $lh + 46)) + $cr)
                 $out.Add(('in_text  30  0  {0}  {1}   56    1  0  -  read_only' -f $lx, ($ly - 16)) + $cr)
                 continue
             }
@@ -3430,7 +3435,7 @@ function Edit-OnlineScript([string] $Text) {
 # of their stock LOADGE places, the header line 40 columns, the participant pane after it - eight `checkb` rows (cells
 # 149 off = the empty box / 8 on = the green cross of HD_SRC\KNOBR.SPR, `pictures hd_src/knobr`; slot 0, the lobby host, shows the grey dead box 150 for both states) 30 px apart from list
 # top + 6 at list x + 376, a 13-column read-only name right of each box, the heading in_text 48 above them - the title
-# "Replay Online Game", the button REPLAY and the background REPLAYBG.GIF.  Idempotent on its own output.
+# "Online Replay" ("Replay Online Game" overran the title panel, 3 Oct 2026), the button REPLAY and the background REPLAYBG.GIF.  Idempotent on its own output.
 function Edit-ReplayScript([string] $Text) {
     $m = [regex]::Match($Text, '(?m)^\s*list\s+0\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s')
     if (-not $m.Success) { throw 'ONLINE: no list 0 line' }
@@ -3462,7 +3467,7 @@ function Edit-ReplayScript([string] $Text) {
                 foreach ($e in $pane) { $out.Add($e + $cr) }
                 continue
             }
-            elseif ($kind -eq 'textmsg' -and $id -eq 1) { $line = Get-TextmsgLine 1 'Replay Online Game' }
+            elseif ($kind -eq 'textmsg' -and $id -eq 1) { $line = Get-TextmsgLine 1 'Online Replay' }
             elseif ($kind -eq 'textmsg' -and $id -eq 2) { $line = Get-TextmsgLine 2 'REPLAY' }
         }
         $out.Add($line + $cr)
@@ -3496,8 +3501,20 @@ function Get-FramedBackground($Im, $Rects) {
     return [DcGif]::Encode('GIF87a', $Im.Width, $Im.Height, $Im.Palette, $px)
 }
 
-# DEFAULT_SERVER.TXT as the repository ships it (the same bytes as patch_online.DEFAULT_SERVER_TEXT).
-$DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server that ONLINE WAR connects to.', ' *', ' * Dark Colony Ultimate reads this file when you press ONLINE WAR in the main menu.', ' * It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay, https://github.com/endotermic/Dark-Colony-Server), shows the rooms the', ' * relay offers - map, terrain, seats, players, bots, status - and joins the room you pick.', ' *', ' * Usage:', ' *   - one address, optionally with a port:      my.relay.example.org:8889', ' *   - the word "plain" after the address turns the encryption off, for a relay on your own', ' *     network without a certificate (the plain relay port is 8888):', ' *                                                 192.168.1.10 plain', ' *   - comments in the C++ style are ignored: "//" to the end of a line, or a block like this one.', ' *', ' * Keep one address in the file. MULTI PLAYER WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
+# DEFAULT_SERVER.TXT as the repository ships it (the same bytes as patch_online.DEFAULT_SERVER_TEXT; `name=` / `address=` lines since 3 Oct 2026).
+$DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server behind ONLINE WAR and REPLAY ONLINE GAME.', ' *', ' * Dark Colony Ultimate reads this file when you press one of those two buttons in the main', ' * menu. It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay), shows the rooms or the recorded battles the relay offers and joins the one', ' * you pick. Both screens show the name and the address from this file above the connection', ' * state.', ' *', ' * Fields, one per line:', ' *   name=<how the screens call this server>          any text; here the relay''s project page', ' *   address=<host or IP address>[:port]              the port defaults to 8889 (TLS)', ' *   plain                                            optional: no encryption, for a relay on', ' *                                                    your own network without a certificate', ' *                                                    (the plain relay port is 8888)', ' * Comments in the C++ style are ignored: "//" at the start of a line or after a space runs to', ' * the end of the line (so an address like https://... is kept), or a block like this one.', ' * A file holding only an address (the form before 3 Oct 2026) is still understood.', ' *', ' * Keep one server in the file. MULTI PLAYER WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'name=https://github.com/endotermic/Dark-Colony-Server', 'address=dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
+
+# Patching order (3 Oct 2026): of the executables that share the game folder, Dark Colony is patched first and Dark
+# Colony Ultimate LAST.  Every game build rebuilds the resolution's interface folder from scratch (Write-InterfaceSet),
+# and only the Ultimate step adds the ONLINE / REPLAYE screens with their backgrounds and the option-dialog copies with
+# the MUSIC row - a Classic build patched after it (the deprecated page ticked, or -All -IncludeDeprecated) dropped them.
+# The pages and the summary keep the BUILDS order; only the order of the runs changes.
+function Get-PatchOrder($Build) { if ($Build.Id -eq 'CouncilWars') { 1 } else { 0 } }
+function Sort-ForPatching([object[]] $Items, [scriptblock] $BuildOf) {
+    $first = @(); $last = @()
+    foreach ($i in $Items) { if ((Get-PatchOrder (& $BuildOf $i)) -eq 0) { $first += $i } else { $last += $i } }
+    return @($first + $last)
+}
 
 function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     $stock = ($Mode -eq '640x480')
@@ -3509,8 +3526,8 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     if (-not $dst) { $dst = Join-Path (Join-Path $GameDir $sub) 'ONLINE' }
     Write-Latin1 $dst $t
     $lines = @(('wrote {0}\ONLINE (the ONLINE WAR room screen, derived from LOADGE)' -f $sub))
-    # the background: LOADER.GIF with three grey frames - header + list, the scroll bar with its buttons, the server
-    # and status lines (patch_online.online_background / frame_rects)
+    # the background: LOADER.GIF with three grey frames - header + list, the scroll bar with its buttons, the name,
+    # server and status lines (patch_online.online_background / frame_rects; the text frame B+8 .. B+68 since 3 Oct 2026)
     $loader = Find-CI (Join-Path $GameDir $sub) 'LOADER.GIF'
     if (-not $loader) { throw 'LOADER.GIF is missing' }
     Initialize-GifCodec    # at 640x480 no interface set is built, so the codec may not be compiled yet
@@ -3519,7 +3536,7 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     $im = [DcGif]::Decode([System.IO.File]::ReadAllBytes($loader))
     $b = $ly + $lh; $ux = $lx + 448 + 12
     # every coordinate in its own parentheses: inside @( , ) the comma binds before + and -
-    $rects = @(@(($lx - 6), ($ly - 22), ($lx + 448 + 6), ($b + 3)), @(($ux - 4), $ly, ($ux + 26 + 4), ($b + 2)), @(($lx - 6), ($b + 8), ($lx + 448 + 6), ($b + 52)))
+    $rects = @(@(($lx - 6), ($ly - 22), ($lx + 448 + 6), ($b + 3)), @(($ux - 4), $ly, ($ux + 26 + 4), ($b + 2)), @(($lx - 6), ($b + 8), ($lx + 448 + 6), ($b + 68)))
     $bgDst = Find-CI (Join-Path $GameDir $sub) 'ONLINEBG.GIF'
     if (-not $bgDst) { $bgDst = Join-Path (Join-Path $GameDir $sub) 'ONLINEBG.GIF' }
     [System.IO.File]::WriteAllBytes($bgDst, (Get-FramedBackground $im $rects))
@@ -3532,14 +3549,27 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     Write-Latin1 $rDst $rt
     $lines += ('wrote {0}\REPLAYE (the REPLAY ONLINE GAME screen, derived from ONLINE)' -f $sub)
     $rux = $lx + 320 + 12
-    $rRects = @(@(($lx - 6), ($ly - 22), ($lx + 320 + 6), ($b + 3)), @(($rux - 4), $ly, ($rux + 26 + 4), ($b + 2)), @(($lx + 368), ($ly - 22), ($lx + 518), ($b + 3)), @(($lx - 6), ($b + 8), ($lx + 518), ($b + 52)))
+    $rRects = @(@(($lx - 6), ($ly - 22), ($lx + 320 + 6), ($b + 3)), @(($rux - 4), $ly, ($rux + 26 + 4), ($b + 2)), @(($lx + 368), ($ly - 22), ($lx + 518), ($b + 3)), @(($lx - 6), ($b + 8), ($lx + 518), ($b + 68)))
     $rBgDst = Find-CI (Join-Path $GameDir $sub) 'REPLAYBG.GIF'
     if (-not $rBgDst) { $rBgDst = Join-Path (Join-Path $GameDir $sub) 'REPLAYBG.GIF' }
     [System.IO.File]::WriteAllBytes($rBgDst, (Get-FramedBackground $im $rRects))
     $lines += ('wrote {0}\REPLAYBG.GIF (the replay screen background: frames around the list, the scroll bar, the participant pane and the text lines)' -f $sub)
-    if (-not (Find-CI $GameDir 'DEFAULT_SERVER.TXT')) {
-        Write-Latin1 (Join-Path $GameDir 'DEFAULT_SERVER.TXT') $DefaultServerText
-        $lines += 'wrote DEFAULT_SERVER.TXT (dark-colony-server.fly.dev; an existing file is never overwritten)'
+    # DEFAULT_SERVER.TXT: written when missing - and a file of the first form (before 3 Oct 2026) that still names only
+    # the shipped relay is upgraded to the name= / address= form (patch_online.bare_shipped_config: comments off, exactly
+    # one token, dark-colony-server.fly.dev); anything else is the player's own setting and stays
+    $cfgPath = Find-CI $GameDir 'DEFAULT_SERVER.TXT'
+    $writeCfg = -not $cfgPath
+    if ($cfgPath) {
+        $ct = Read-Latin1 $cfgPath
+        $ct = [regex]::Replace($ct, '(?s)/\*.*?\*/', ' ')
+        $ct = [regex]::Replace($ct, '(?m)(^|\s)//.*$', '$1')
+        $ctoks = @($ct -split '\s+' | Where-Object { $_ -ne '' })
+        if ($ctoks.Count -eq 1 -and $ctoks[0].ToLowerInvariant() -eq 'dark-colony-server.fly.dev') { $writeCfg = $true }
+    }
+    if ($writeCfg) {
+        if (-not $cfgPath) { $cfgPath = Join-Path $GameDir 'DEFAULT_SERVER.TXT' }
+        Write-Latin1 $cfgPath $DefaultServerText
+        $lines += 'wrote DEFAULT_SERVER.TXT (name= / address= dark-colony-server.fly.dev; a file with your own relay address is never overwritten)'
     }
     return $lines
 }
@@ -3614,7 +3644,7 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
         try { $generated += Write-MusicDialogs $dir $Mode } catch { $generated += 'options dialog copies NOT written: ' + $_.Exception.Message }
     }
-    # Dark Colony Ultimate's `online` fix: the ONLINE WAR screen for the size and DEFAULT_SERVER.TXT when missing
+    # Dark Colony Ultimate's `online` fix: the ONLINE WAR and REPLAY screens for the size and DEFAULT_SERVER.TXT when missing (or still the bare shipped address)
     if ($Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'online' })) {
         $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
         try { $generated += Write-OnlineScreen $dir $Mode } catch { $generated += 'ONLINE screen NOT written: ' + $_.Exception.Message }
@@ -4546,7 +4576,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         param([bool] $interactive)
         $c = $script:gui.Controls
         $g = $script:gui
-        $todo = @($g.Items | Where-Object { $_.Checked -and $_.Data })
+        $todo = @(Sort-ForPatching @($g.Items | Where-Object { $_.Checked -and $_.Data }) { param($i) $i.Build })   # Ultimate last (Get-PatchOrder)
         $refused = $null
         if ($todo.Count -eq 0) { $refused = 'No executable ticked - tick at least one (its original must be found).' }
         foreach ($it in $todo) {
@@ -4917,7 +4947,7 @@ if ($Output) { throw '-Output needs -Original (with -All alone each executable i
 $games = @($Builds | Where-Object { @($_.Modes).Count -gt 0 -and (-not $_.Deprecated -or $IncludeDeprecated) })
 if ($games.Count -gt 0) { $m0 = Resolve-Mode $games[0] $Resolution; [void] (Resolve-Theme $games[0] $m0 $Theme) }
 $failed = 0; $done = 0
-foreach ($b in $Builds) {
+foreach ($b in (Sort-ForPatching $Builds { param($i) $i })) {   # Ultimate last: its step adds files to the interface set that a later game build's rebuild would drop
     $p = Join-Path $PSScriptRoot $b.OriginalPath
     Write-Host ''
     Write-Host ('=== {0}  ({1} -> {2})' -f $b.ProductName, $b.OriginalPath, $b.OutputName) -ForegroundColor Cyan
