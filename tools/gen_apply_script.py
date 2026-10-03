@@ -39,7 +39,7 @@ OUT = sys.argv[2]
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '1.3'
+PATCHER_VERSION = '1.4'
 
 
 def _git_state(repo):
@@ -243,7 +243,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'speed': ('patch_speed.py', ['--percent', '150']),
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
-           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py',
+           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py',
            'movies': 'patch_movies.py', 'sounds': 'patch_wavprefix.py', 'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -261,7 +261,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'console': 'clock', 'speed': 'speed', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat',
+           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave',
            'movies': 'movies', 'sounds': 'wavprefix', 'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'race': 'maped', 'campaign': 'maped', 'medfiles': 'maped', 'blockmenu': 'maped', 'teamdialogs': 'maped',
@@ -372,6 +372,16 @@ def blocks_ozi(g):
     out = []
     for m in re.finditer(r'^\s+(.+?)\s+file\s+0x([0-9a-f]+)\s+VA 0x[0-9a-f]+\s+(\d+) bytes', t, re.M):
         out.append((int(m.group(2), 16), int(m.group(3)), m.group(1).strip()))
+    return out
+
+def blocks_netsave(g):
+    t = plan(g, 'netsave'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (19, 5, 55, 34), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 6, (g, len(out))                                   # two hooks, two stubs, two .reloc entries
     return out
 
 def blocks_ddraw(g):
@@ -957,6 +967,23 @@ bytes the "fast screen loads" fix (palette) frees inside the palette conversion,
 therefore required.  No absolute addresses are written, so the .reloc table is unchanged.  The six
 lines themselves are data: the HUD script HD_<height>P\\MAINE written with the display fix gets
 in_text 207..210 above the two stock chat lines (15 rows apart); the stock 640x480 MAINE keeps two.'''),
+ dict(id='netsave', name='No save in a network battle: the Save Game cell hidden, F11 inert', date='3 Oct 2026',
+      tool='tools/patch_netsave.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.68', blocks=blocks_netsave,
+      requires=['nocd'],
+      desc='''The Game Option tab of a network battle offered the same Save Game cell (and the F11 key) as a
+campaign battle, and the file it wrote (save\\<name>.dcg, game type 2 in its header) showed up in the
+main menu's LOAD GAME list as "Multiplayer".  Loading it never rejoined the relay game: the stock code
+resumes a network save as the host of an in-process network with the lobby skipped, so the battle came
+back with every other player's base standing still - a solo continuation against frozen opponents.
+This fix switches saving off while the game type is 2 (network game): at battle start the Save Game
+cell (widget 63) is disabled through the same per-widget flag the game uses to hide the Allies cell in
+campaign battles - the tab switch does not touch it, the cell is neither drawn nor clickable - and the
+save dialog's entry returns at once when the game type is 2, which covers F11 and the ? key as well.
+Campaign, skirmish and training battles save as before.  Two 5-byte jumps in place (the end of the
+game start's network branch, the dialog's first five bytes) and two small stubs (55 + 34 bytes) in the
+wave loader's CD attempt, dead code since the "No CD" fix (required); the displaced absolute operand's
+relocation entry is neutralised and the dead code's one entry is re-pointed to the stub's operand, so
+the relocation table stays exact.  Same bytes at +0x60 in Council Wars.'''),
  dict(id='movies', name='Classic movies under their own names: DCINTRO / DCAENDING / DCHENDING (Dark Colony only)', date='15 Sep 2026',
       tool='tools/patch_movies.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.18', blocks=blocks_movies, classic_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=movie_data,
@@ -1277,14 +1304,14 @@ repository.'''),
 # (maintainer: "remove already patched 'Dark Colony.exe' from repo by default") `shipped=False`: the repository no
 # longer carries the patched file, the patcher writes it on request.  The order of this list is the order of the
 # window's pages and of `-All`.
-CLASSIC_DEPRECATED = ('Dark Colony Ultimate.exe plays the whole Dark Colony campaign (DARK COLONY, LOAD GAME, ACADEMY in its '
-                      'main menu) with every fix, so a separate Dark Colony.exe is no longer needed; it is kept for players '
+CLASSIC_DEPRECATED = ('Dark Colony Ultimate.exe plays the whole Dark Colony campaign (ACADEMY and DARK COLONY in its main '
+                      'menu, saves under LOAD GAME) with every fix, so a separate Dark Colony.exe is no longer needed; it is kept for players '
                       'who want the Classic executable on its own.')
 BUILDS = [
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'ozi', 'icon', 'online']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'ozi', 'icon', 'online']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
@@ -1293,7 +1320,7 @@ BUILDS = [
       title='Dark Colony (Classic) dc16.exe, build linked 7 Jan 1998, 659456 bytes (patched build: "Dark Colony.exe", until 25 Sep 2026 dc16new.exe) - DEPRECATED since 1 Oct 2026',
       source='NOT from the Dark Colony CD: its DC\\DC16.EXE is the August 1997 build (660480 bytes), which these fixes do not fit - they need dc16.exe of the January 1998 update (659456 bytes), so take it from our repository.',
       deprecated=CLASSIC_DEPRECATED, shipped=False,
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'movies', 'sounds', 'icon']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'movies', 'sounds', 'icon']),
 ]
 
 def hexs(b):

@@ -6390,7 +6390,8 @@ dialog's 32 characters are skipped), reads each file's first 46 bytes for the ty
 first by `ftLastWriteTime` (at most 200), and `build_rows` formats **`dd.mm.yy hh:mm  <name, 26 columns>  <campaign>`**
 = 8 + 1 + 5 + 2 + 26 + 2 + up to 12 = the list's 56 columns, local time via `FileTimeToLocalFileTime`; the campaign
 is `Council wars` (esave), `Ozi missions` (ozisave), `Academy` (save, type 3), `Multiplayer` (save, type 2 - a
-network game saved in battle; the stock code resumes it through `0x40122C`), `Unknown` (no save header), else `Dark
+network game saved in battle; the stock code resumes it through `0x40122C` as a solo host game, §10.68 - since
+fix `netsave` of the same day such a save can no longer be made), `Unknown` (no save header), else `Dark
 Colony`. `load_screen` shows **`LOADALLE`** (`<folder>/loadall`, probed like ONLINE / REPLAYE, `intrface/loadall`
 at 640x480) = the ONLINE script with the title `Load Game` and the button `LOAD` (`patch_online.loadall_script`,
 the patcher's `Edit-LoadAllScript`; ONLINEBG.GIF is shared, no new picture), fills the header line `DATE TIME NAME
@@ -6441,3 +6442,72 @@ save, a multiplayer save.
 
 **Same day (maintainer: "rename 'multiplayer war' to 'CUSTOM NET WAR'"):** the button id 3 of the patched Ultimate menu is labelled **CUSTOM NET WAR** (`textmsg 4`; `OZI_LABELS[4]`, the patcher's `Edit-OziMenu` `$labels[4]`, the DEFAULT_SERVER.TXT comment) - a label only, the handler (`tramp_dc_net` -> the network screen) is unchanged; the stock `exp/intrface/bintroe` the untouched exe reads keeps MULTI PLAYER WAR. The six fixtures' and the game folder's menu scripts regenerated; docs written before this say MULTI PLAYER WAR for the same button. **Committed and pushed 3 Oct 2026 (both changes): Dark-Colony `4138b49`, Server `3c5723c`.**
 
+
+### 10.68 No save in a network battle: the Save Game cell hidden, F11 inert (3 Oct 2026)
+
+**Question (maintainer: "investigate - when playing network game there is a 'save' button available. is this
+saved mission visible in main menu 'LOAD GAME' form?"), then the instruction ("hide the save button in network
+battles and update patcher").** Yes, it was listed. The battlefield save dialog (`0x00432708`, Ultimate
+`0x00432768`; reached from F11 through the client's event table at `0x0040A63B` / `+0x60` and from the Game
+Option tab's cell 63 through the dialog handler's `cmp edx,3Fh` at `0x00433887` / `+0x60` - the `pushb` id
+doubles as the key code the handler switches on: `>` 62 quit, `?` 63 save, `@` 64 options) has no game-type
+check and sends nothing over the network; CUSTOM NET WAR and ONLINE WAR run in the Dark Colony mode, so the
+file landed in `save\<name>.dcg` with game type 2 at header offset 14, and the §10.67 picker labelled it
+`Multiplayer`.
+
+**What the stock code does with such a save.** The load routine `0x00403AA4` sets `gs+0x1580 = 1`, copies the
+path into `gs+0x1581` when the file holds a battle (`gs+0x1981`, set by the reader at `0x0040DCF9` for the
+`0x21340000` marker), and for a game type other than 0 / 3 takes the branch at `0x00403B30`:
+`0x0040122C(ui, addr = 0, gs, net = 0; push 1)`. A null net builds the in-process mailbox network
+(`0x0040BFB0`, `local.c`), the flag makes `0x0040B4B0` create the host's server object on it, the non-empty
+path skips the lobby and the start-position shuffle (`0x004014EB` -> `0x00401765`), the battle state is
+re-read at `0x004017C5` and the game starts at `0x0040195B` with every seat as saved - the other humans still
+human-typed, unconnected, never disconnected, so their bases stand still; the relay's bots are not in the file
+at all; no socket is opened and the CONNECT screen never appears. The wire protocol has no save or resume
+message, so the relay cannot know of it. A `Multiplayer` row in LOAD GAME was therefore a solo continuation
+against frozen opponents.
+
+**Fix `netsave`** (`tools/patch_netsave.py`, both games, `Requires nocd`, patcher order right after `chat`;
+6 edits per exe: two 5-byte hooks, two stubs, two `.reloc` words; Ultimate code at +0x60):
+
+* **The widget record** at `ip+0x88+0x34*id`: `+0` the greyed byte (`set_greyed` writes it, the drawer copies
+  it into the display's draw mode), `+1` the type, **`+2` shown**, **`+3` enabled**, `+5` a flag `0x00424468`
+  (Classic `0x00424408`) sets for the message bar 148. The group/tab switch (`0x004243CC` Ultimate / `0x0042436C`
+  Classic, called per member by `0x00424374`) writes `+2` only; **`0x00424488` (Classic `0x00424428`) =
+  `widget_enable(ip, id; bl)` writes `+3`** and erases or redraws as needed; the widget drawer `0x00421B04` /
+  `0x00421AA4` and the push-button hit test `0x00426D8C` / `0x00426D2C` both require `+2 && +3`. `MAINE`'s
+  `group 65 0 202 62 63 64 151 196 5` is the Game Option page; the game start already uses `+3` to hide the
+  Allies cell 151 in campaign games (`0x0041ECF4` / `0x0041EC94`). **Rule: hide a widget for good through `+3`;
+  `+2` comes back with the next tab switch.** (The 110-entry availability table at `.bss 0x5049F0`, 0x34 per
+  entry, drives `+3` of the production buttons from `0x00438018`; it never names cell 63.)
+* **Hook 1**, the end of the game start's network branch (`0x0041ECE1` Ultimate / `0x0041EC81` Classic:
+  `mov edx,94h ; mov eax,[hud_ip 0x4AB1C4] ; xor ebx,ebx ; call set_flag5 ; jmp +11h`, 19 bytes) -> `jmp stub_a ;
+  14 x nop`; the displaced operand's HIGHLOW `.reloc` entry becomes type 0. **`stub_a`** (55 bytes) repeats the
+  call and, when `[ebp-4]` (the battle state) `->+0x544` (the campaign record) `->+0x14F0 == 2`, calls
+  `widget_enable(ip, 63, 0)`, then jumps to the continuation (`0x0041ED05` / `0x0041ECA5`). Types 1 (skirmish)
+  and 2 share that branch; only 2 loses the cell.
+* **Hook 2**, the dialog's first five bytes (`push ebx,ecx,edx,esi,edi`) -> `jmp stub_b`. **`stub_b`** (34 bytes,
+  eax = client): `push ecx ; mov ecx,[eax+0Ch] (gs) ; mov ecx,[ecx+544h] ; cmp dword [ecx+14F0h],2 ; pop ecx ;
+  je ret ; the five pushes ; jmp dialog+5 ; ret` - F11, the `?` key and the cell all end here, and both callers
+  ignore the result (`0x0040A640` goes on to `0x00432314`, `0x00433893` clears `[esi+7F0h]`).
+* **Where the stubs live**: the wave loader's dead CD attempt, `0x00452B05..0x00452B5D` (Ultimate `+0x60`) -
+  dead since `nocd`'s `jmp` at `0x00452AE9`, the first 22 bytes taken by `longpath`'s `open_read`, 193 bytes
+  in all, nothing jumps into it (checked in both disassemblies), identical in both builds but for one rel32.
+  Its stock code held one absolute operand (`.reloc` HIGHLOW at `base+0x4B`); that entry is re-pointed to
+  `stub_a`'s `mov eax,[hud_ip]` operand at `base+1`, so the table stays exact. 109 dead bytes remain after
+  the stubs (`0x00452B5E..0x00452BC5` Classic).
+
+**Verified (3 Oct 2026).** `patch_netsave.py plan` on both stock exes, `apply` after `nocd` + `longpath`,
+re-run recognises its own bytes; the stubs disassembled with capstone; the tool on the published Ultimate
+`35346be9...` gives exactly the regenerated patcher's output. Patcher **1.4** (`gen_apply_script.py`:
+`TOOL_OF` / `PLAN_OF` / `blocks_netsave` / the `PATCHES` entry / `netsave` after `chat` in both game step lists).
+References: Ultimate 1024x768 dark **`b3d3ead8...`**, light `eb79fba7...`; Classic 1024x768 dark `739e1219...`
+(not shipped). A copy of the game folder on `subst X:` patched with pwsh 7 and with Windows PowerShell 5.1 under
+`tr-TR`: the same exe, the interface set unchanged between the runs. **In game, 1024x768 dark**
+(`smoke_rig/netsave_test.py`, a local relay with `LOG_LEVEL=debug`, `DEFAULT_SERVER.TXT` = `127.0.0.1:8888 plain`,
+`AVI\INTRO.AVI` renamed away - the first run clicked into the intro movie): ONLINE WAR -> room 1 -> READY (the
+seat read from the relay's `online -> room` line) -> battle -> Game Option tab: the Save cell's 59x41 rect is
+pure black (0 lit pixels; the Quit cell 982), F11 and a click on the cell's place open nothing, tabs 1 / 2 / 3 and
+back leave it black; ACADEMY -> battle -> the cell is drawn (1083 lit pixels) and F11 opens the Save Game
+dialog; `error.log` empty in both runs. **Second round the same day (maintainer: "run: other resolutions, 640x480, the Dark Colony build in game, the replay viewer"; `smoke_rig/netsave_all.py WxH THEME net|custom|camp|replay [--classic] [--letterbox]`):** Dark Colony Ultimate at 1280x720, 1280x800, 1280x1024, 1920x1200 dark, 1920x1080 light and 640x480 (stock metal HUD) - ONLINE WAR battle: Save cell 0 lit pixels, F11 and a click on it inert, still 0 after tabs 1/2/3; ACADEMY: cell drawn, F11 opens the dialog - and **3840x1080 dark through dgVoodoo 2** (second copy, `--letterbox`, clicks scaled 0.5 to the 1920x540 frame at y 330) the same; **Dark Colony (`Dark Colony.exe`, 1024x768 dark) through CUSTOM NET WAR / MULTI PLAYER WAR**: TCP/IP -> CONNECT TO SERVER -> 127.0.0.1 -> hall -> `/1` -> READY (join) -> READY (room) -> battle: cell blank, F11 inert, TRAINING: cell drawn, F11 opens the dialog; **the replay viewer** (REPLAY ONLINE GAME, a 76 s recording of the 1024x768 ONLINE WAR battle, WATCH AS the recorded seat, READY in the viewer lobby): cell blank, F11 inert, still blank after the tab switches. Every run with an empty `error.log`; every patched exe = its reference. Rig lessons: the hall's READY is the join press and the room needs a second one - test the relay log for a READY received in `"state":"LOBBY"`; the viewer room is an ordinary lobby, the viewer presses READY and the box of an EMPTY seat is ignored (REPLAY stays greyed) - tick the seat the relay gave the recorded client; the recorded lobby plays in real time before the battle. Nothing changed on the relay. A real resume of a relay battle would need
+a save upload and a rebuilt lobby on the relay - not planned.
