@@ -39,7 +39,10 @@ sections 10.13 and 10.36); the menu script rows come from tools/build_ozi_overla
    0x405083, but through `tramp_dc_campaign` since 23 Sep 2026: ACADEMY plays SCENARIO/TEST off
    the Classic training scene lists, so its saves belong in `save` and its briefings in MISSION/.
 3. LOAD GAME (button id 2, `call 0x403AA4` at 0x4050BF) goes through `tramp_cw_load`: it
-   always lists and loads Council Wars saves (`esave`).
+   always lists and loads Council Wars saves (`esave`).  Since 3 Oct 2026 this is the menu's ONE
+   load button again: fix online (patch_online.py) re-points 0x403AA4's picker call at a browser
+   over save/, esave/ and ozisave/ that switches the mode to the chosen save's folder (doc 10.67);
+   the LOAD DC GAME / LOAD OZI GAME buttons (7, 4) left the menu script, their handlers below stay.
 4. SINGLE PLAYER WAR (button id 4, `call 0x405AE4` at 0x4050AB, its only caller) becomes
    OZI LOAD through `tramp_pack_load`: pack strings, then the same load routine, so it always
    lists `ozisave`.  Both load buttons are therefore deterministic from the first screen; the

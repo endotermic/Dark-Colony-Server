@@ -63,8 +63,9 @@ entries must be named: DC, CW, ALL"; docs/DC16_DISPLAY_AND_RESOLUTION.md 10.41):
       would read exp/intrface/lopte, a file the ORIGINAL exe reads too, so the script name in DGROUP
       becomes `intrface/lopm` (+ language letter) and the stock dialog stays untouched.
     * the default per campaign is set by the OZI menu modes (patch_ozi_menu.py writes the byte in its
-      mode stubs): ACADEMY / DARK COLONY / LOAD DC GAME -> DC, COUNCIL WARS / LOAD CW GAME -> CW,
-      OZI MISSIONS / LOAD OZI GAME and MULTI PLAYER WAR -> ALL; the dialog changes it at any time.
+      mode stubs): ACADEMY / DARK COLONY -> DC, COUNCIL WARS -> CW, OZI MISSIONS and MULTI PLAYER WAR
+      -> ALL, and the one LOAD GAME button (3 Oct 2026) the mode of the chosen save's folder (save /
+      esave / ozisave = DC / CW / ALL); the dialog changes it at any time.
 
     --width W --height H   640x480 adds the DGROUP name site and writes the 640x480 copies
 

@@ -6343,3 +6343,101 @@ checked once with the thread culture set to `tr-TR`
 (`powershell -Command "[Threading.Thread]::CurrentThread.CurrentCulture='tr-TR'; & .\Apply-DarkColonyPatches.ps1 -All ..."`).
 (3) Inside a PowerShell function, `$args` is the automatic argument array - a parameter of that name is empty
 and the patcher started without arguments opens its window (one lost test run that evening).
+
+### 10.67 One LOAD GAME for every campaign: the saves of save/, esave/ and ozisave/ in one list, the menu five rows (3 Oct 2026)
+
+**Request** (maintainer): "main menu. we must have only one 'LOAD GAME' button which will serve for saves for all
+campaigns. place it as last button in left column. Game loading form use the same as 'online war' must have a format
+[date]+[time]+[name]+[campaign name('Academy','Dark Colony','Council wars','Ozi missions')]. savefiles must remain in
+they folders."
+
+**How the stock LOAD GAME works** (`main.c` / `proto.c`, Ultimate addresses; Classic is +0 below 0x405000). The button
+handler (id 2, `0x4050BF`) reaches `0x403AA4(ui, gs)` - through `tramp_cw_load` since §10.13, which sets the Council
+Wars mode first. That routine calls the **picker screen `0x40388C(eax = ui, edx = buf, ebx = 0x40; cl = 0)`** (`cl = 1`
+is the SAVE form the mission-won screen uses from `0x403B4C`): it lists the save folder named in the DGROUP slot
+`0x482344` through the game's own directory walker (`0x42B31C`: opendir, every name ending in the extension slot
+`0x482340` = `dcg`, extension stripped), shows `intrface/loadg` + E, and on LOAD returns `al = 1` with
+`<folder>/<name>.dcg` in `buf` (`0x406CB8` = `%s/%s`, the extension appended when the name has no dot). `0x403AA4`
+then opens that path through the mode prefix helper (`0x40E1F4` -> `0x406488` -> `0x4063E4`: prefix + path first,
+the bare path when that fails - the same helper the save writer `0x40D4C8` uses with `wb`, which is why every save
+sits in one of the three root folders: `exp/esave`, `dc/save`, `ozi_ns/ozisave` do not exist), reads it
+(`0x40DBFC`), and - `gs+0x14F0` being 0 or 3 - resumes the campaign through `0x401C08`; a failed read shows
+message 8 and returns to the menu. **The save header** (`0x40D4C8` / `0x429D2C` write it, `0x40DBFC` / `0x429EF8`
+read it): `"DCSF"`, `u16 0x1D`, `u32 0x21340003`, then nine dwords of the campaign record - `[0]` the race byte,
+**`[1]` `gs+0x14F0` = the game type (0 campaign, 2 network game, 3 training)**, `[2]` `gs+0x14E4` the side, `[3]`
+`gs+0x14FC` the mission, `[4..7]` the settings `gs+0x1984..0x1990`, `[8]` `gs+0x14F4` the pack flag - then the
+leader's strings and the per-mission records; an in-battle save continues with `0x21340000` and the battle state,
+a between-missions save ends with `0x2134FFFF`. So the campaign record IS restored from the file (the open question
+of §10.36 answered), and the first 46 bytes of a `.dcg` tell an ACADEMY save (type 3) from a DARK COLONY one (0) in
+the shared `save/` folder; the folder tells the rest.
+
+**Design.** The three campaign-specific load buttons (LOAD DC GAME 7, LOAD CW GAME 2, LOAD OZI GAME 4) differed only
+in the mode stub run before `0x403AA4` - `stub_dc_set` / `stub_cw_set` / `stub_pack`, which set the prefix, the save
+folder and the music source. One button therefore needs one picker that (a) lists all three folders, (b) labels each
+save by folder and game type, and (c) runs the chosen save's stub before returning the path. Everything after the
+picker - the open through the prefix helper (which falls back to the bare path, so the mode can be any), the read,
+the campaign runner, the "load failed" box, the network-save branch - stays the stock code. The picker is a third
+entry point of the `online` module (§10.51): **the one code edit is the rel32 of the `call 0x40388C` at `0x403ABC`
+-> `load_game_picker`** (`patch_online.py` `PICKER_CALL`; 6 edits + the appended section now), a naked thunk that
+hands the Watcom arguments to cdecl `load_picker(ui, buf, cap)` for `cl = 0` and jumps to the stock picker for the
+save form (`push 0x40388C; ret`, no register touched). The stock picker, the LOAD DC GAME / LOAD OZI GAME handlers
+and their trampolines stay in the exe, unreachable from the menu.
+
+**The module side** (`online.c`, 18 899 bytes, exports `load_game_picker +0x48F0`, `online_dispatch`, `online_war`,
+`replay_game`): `scan_saves` walks `save\*`, `esave\*`, `ozisave\*` with `FindFirstFileA` (the extension is checked
+in code - a `*.dcg` pattern would also match longer extensions through the 8.3 names; names longer than the in-game
+dialog's 32 characters are skipped), reads each file's first 46 bytes for the type, keeps the table sorted newest
+first by `ftLastWriteTime` (at most 200), and `build_rows` formats **`dd.mm.yy hh:mm  <name, 26 columns>  <campaign>`**
+= 8 + 1 + 5 + 2 + 26 + 2 + up to 12 = the list's 56 columns, local time via `FileTimeToLocalFileTime`; the campaign
+is `Council wars` (esave), `Ozi missions` (ozisave), `Academy` (save, type 3), `Multiplayer` (save, type 2 - a
+network game saved in battle; the stock code resumes it through `0x40122C`), `Unknown` (no save header), else `Dark
+Colony`. `load_screen` shows **`LOADALLE`** (`<folder>/loadall`, probed like ONLINE / REPLAYE, `intrface/loadall`
+at 640x480) = the ONLINE script with the title `Load Game` and the button `LOAD` (`patch_online.loadall_script`,
+the patcher's `Edit-LoadAllScript`; ONLINEBG.GIF is shared, no new picture), fills the header line `DATE TIME NAME
+CAMPAIGN`, the list, and the three text lines - `Saves: N (save a, esave b, ozisave c)`, `File: <folder>/<name>.dcg`
+of the selection, the state (`Select a save and press LOAD.` / `No saved game found.` / `Select a save first.` /
+`Loading <name>...`) - and on LOAD writes the path into the caller's buffer, calls the folder's stub and returns 1;
+BACK returns 0 and the stock code goes back to the menu. `ONLINE.LOG` gets `--- LOAD GAME pressed`, `saves found N`,
+`LOAD <path>`.
+
+**The menu.** `build_ozi_overlay.OZI_COLUMNS = ((1, 6, 0, 16, 2), (8, 9, 3, 5, 12))`, one gap after row 4
+(`OZI_GAP_AFTER`), `OZI_DROPPED_BUTTONS = (4, 7)`: their `pushb`, their plates (gadgets 10 and 22) and `textmsg 10`
+leave the script, `textmsg 3` is the stock `LOAD GAME` again, `textmsg 5` the stock `SINGLE PLAYER WAR` (so the tool
+on an older output and the patcher on the stock script give the same bytes), `banim` pairs ten plates in wave order
+(20 21 19 17 24 | 23 26 25 11 13); `menu_layout` accepts its own output (the dropped ids are not "missing", 10 pairs).
+The block rises 116 rows instead of 192, so it hangs from the title at every size and **the credits box keeps its
+stock 100 rows everywhere** (`patch_resolution.OZI_BLOCK_RISE` 116; `cw_credits_height` is 100 at every size and
+the `push 64h` site is skipped - the `resolution` fix of Ultimate lost that edit at 1024x768 and 1280x720, Classic
+is untouched). 1024x768: rows 495 / 521 / 547 / 573 / 611 at x 327 and 518, the box 386..485, 9 px above the first
+row. The patcher's `Edit-OziMenu` is the byte-identical port (checked against `menu_script` on the stock script and
+on the previous layout's output, pwsh 7 = PowerShell 5.1 under `tr-TR`). The 640x480 block keeps the box removed
+(§10.36; the five rows would leave room again - not changed).
+
+**Patcher 1.3** (`gen_apply_script.py`): `Write-OnlineScreen` writes `LOADALLE`, `$STOCK_COPIES` and `hd_data` know
+it, the `online` fix's name and description, the `ozi` and deprecation texts; `.gitignore` of the game repository
+lists the 640x480 copies `INTRFACE\LOADALLE` (and the `REPLAYE` / `REPLAYBG.GIF` copies that had been missing from
+it). References: Ultimate 1024x768 dark **`35346be9…`**, light `6accd206…`, the other sizes in the script;
+Dark Colony (`ae34e1d5…`) and the editor unchanged. A clean `git archive HEAD` copy patched with `-All -Resolution
+1024x768 -Theme dark -Overwrite` under pwsh 7 and under PowerShell 5.1 with the `tr-TR` culture gave the reference
+exe and identical 74-file sets (= the fixtures except the three `bintroe` and the new `LOADALLE`, which the fixtures
+of all six sizes took from these runs; HSCENE/GSCENE differ by the DC ending names as always).
+
+**In game (3 Oct 2026, 1024x768 dark, the clean copy on `subst X:`, `smoke_rig/saveload_test.py`).** Phase `make`:
+ACADEMY, DARK COLONY, COUNCIL WARS and OZI MISSIONS each entered to their first battle, F11, a name typed into the
+console save dialog, OK - `save/acad1.dcg` (header type 3), `save/dc1.dcg` (type 0), `esave/cw1.dcg`,
+`ozisave/ozi1.dcg` (both type 0, pack flag 1 - the COUNCIL WARS handler sets `gs+0x14F4 = 1` as OZI does, which is
+why the folder and not that flag decides the label). Phase `load`: LOAD GAME lists the four newest first
+(`03.10.26 14:32  ozi1  Ozi missions` / `cw1  Council wars` / `dc1  Dark Colony` / `acad1  Academy`, `Saves: 4 (save 2,
+esave 1, ozisave 1)`, `File: ozisave/ozi1.dcg` for the highlighted row; list rows 13-14 px apart), each row loaded
+in turn (`ONLINE.LOG`: `LOAD ozisave/ozi1.dcg`, `esave/cw1.dcg`, `save/dc1.dcg`, `save/acad1.dcg`), each battle
+came back as saved (the OZI landing squad, the Council Wars jungle start, the Dark Colony and Academy HQs), and a
+save made right after each load landed in the loaded save's folder (`ozisave/ld0`, `esave/ld1`, `save/ld2`,
+`save/ld3`) - the mode followed the pick; BACK returns to the menu; `error.log` empty throughout. Rig lessons: YES,
+QUIT in a campaign battle shows the Defeat screen, whose MENU goes back to the campaign's own race / name screen -
+its BACK reaches the main menu; the leader-name field keeps the previous text and typing appends; and a test that
+saves after every load must delete those saves before the next pick, or the newest-first list shifts under the row
+index (the first run loaded the same save four times). Not run: 640x480, other sizes in game, a between-missions
+save, a multiplayer save.
+
+**Same day (maintainer: "rename 'multiplayer war' to 'CUSTOM NET WAR'"):** the button id 3 of the patched Ultimate menu is labelled **CUSTOM NET WAR** (`textmsg 4`; `OZI_LABELS[4]`, the patcher's `Edit-OziMenu` `$labels[4]`, the DEFAULT_SERVER.TXT comment) - a label only, the handler (`tramp_dc_net` -> the network screen) is unchanged; the stock `exp/intrface/bintroe` the untouched exe reads keeps MULTI PLAYER WAR. The six fixtures' and the game folder's menu scripts regenerated; docs written before this say MULTI PLAYER WAR for the same button.
+

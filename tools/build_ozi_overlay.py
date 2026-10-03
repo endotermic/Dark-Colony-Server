@@ -145,11 +145,19 @@ BANIM_PAIRS = re.compile(rb'^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s', re.M)
 # ONLINE WAR (29 Sep 2026, patch_online.py): right column row 1, MULTI PLAYER WAR (3) and
 # ENCYCLOPEDIA (5) moved to rows 3 and 4; id 9 is REPLAY ONLINE GAME (2 Oct 2026, the same tool's
 # second entry point) in the row under it that had been reserved for it.
-OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (8, 9, 3, 5, None, None, 12))
-# ... and the maintainer's grouping: a gap of half a button's height (25 -> 13 px) after rows 1, 3
-# and 5, which separates ACADEMY, the two Dark Colony entries, the two Council Wars entries and the
-# two pack entries, and the same half-height gap between the two columns (1 px in the stock grid),
-# after which the block is re-centred on the screen.  Vertically (24 Sep 2026, maintainer: "return
+# 3 Oct 2026 (maintainer: "we must have only one 'LOAD GAME' button which will serve for saves for all campaigns.
+# place it as last button in left column"): the left column is the four campaigns and LOAD GAME (id 2, the stock
+# load button, whose picker fix online replaces by one that lists save/, esave/ and ozisave/ together, doc 10.67);
+# LOAD DC GAME (7) and LOAD OZI GAME (4) are gone from the menu (their handlers stay in the exe, unreachable).
+# Five rows, so the right column closes up: ONLINE WAR, REPLAY ONLINE GAME, CUSTOM NET WAR (button 3, MULTI PLAYER WAR
+# until 3 Oct 2026 - the label is the only change), ENCYCLOPEDIA, QUIT.
+OZI_COLUMNS = ((1, 6, 0, 16, 2), (8, 9, 3, 5, 12))
+OZI_DROPPED_BUTTONS = (4, 7)        # their `pushb`, their plates (OZI_GADGET) and their `textmsg` (OZI_LABEL_OF) leave the script
+# ... and the maintainer's grouping: a gap of half a button's height (25 -> 12 px) after row 4
+# (until 3 Oct 2026 after rows 1, 3 and 5 of the seven-row block: ACADEMY, the Dark Colony pair,
+# the Council Wars pair, the pack pair), which sets LOAD GAME and QUIT apart from the campaigns and
+# the three screens above them, and the same half-height gap between the two columns (1 px in the
+# stock grid), after which the block is re-centred on the screen.  Vertically (24 Sep 2026, maintainer: "return
 # back credentials [credits] for higher than 640x480 resolutions") the block's first row sits
 # OZI_CREDITS_ROOM rows under the DCUT title - 11 px, the stock 100-row credits box, 9 px - unless
 # that would take the bottom row past H-72 (the stock 640x480 bottom row 408, 2-3 px above the
@@ -161,7 +169,7 @@ OZI_COLUMNS = ((1, 6, 7, 0, 2, 16, 4), (8, 9, 3, 5, None, None, 12))
 # Wars cluster - title included, so the block follows - sits paint_intro.cw_menu_lift(H) rows higher
 # at the HD sizes (maintainer, same day: "... 15 points higher for resolutions except 640x480"), and
 # so does the H-72 cap.
-OZI_GAP_AFTER = (1, 3, 5)           # 1-based row numbers
+OZI_GAP_AFTER = (4,)                # 1-based row numbers
 OZI_GAP_OF_HEIGHT = 0.5             # of a button's height, between rows
 OZI_COL_GAP_OF_HEIGHT = 0.5         # of a button's height, between the columns
 OZI_CREDITS_ROOM = 11 + 100 + 9     # title -> first row at the HD sizes: 11 px, the stock 100-row credits box, 9 px
@@ -169,7 +177,7 @@ OZI_BOTTOM_MARGIN = 72              # the bottom row never passes H-72 (stock 64
 TITLE_GADGET = re.compile(rb'^\s*gadget\s+\d+\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)\s+DCUT\b', re.M | re.I)
 STOCK_BUTTONS = (0, 1, 2, 3, 4, 5, 12, 16)      # the stock script's `pushb` ids
 STOCK_GADGETS = (10, 11, 13, 17)                # ... and the gadgets that keep their id (8 and 9 are renumbered, see OZI_RENUM)
-OZI_NEW_BUTTONS = (6, 7, 8, 9)                  # the two Dark Colony buttons, ONLINE WAR and REPLAY ONLINE GAME
+OZI_NEW_BUTTONS = (6, 8, 9)                     # DARK COLONY, ONLINE WAR and REPLAY ONLINE GAME (7 = LOAD DC GAME until 3 Oct 2026)
 # Widget ids are one object space for every kind, so a new button id must not be a plate's id:
 # 6 and 7 were the plates of buttons 0 and 1 (-> 19 and 20), 8 was the plate of button 2 (-> 24;
 # 29 Sep 2026: the first ONLINE WAR build kept it and the menu asserted at load, widget.c line 377),
@@ -177,7 +185,7 @@ OZI_NEW_BUTTONS = (6, 7, 8, 9)                  # the two Dark Colony buttons, O
 OZI_RENUM = {6: 19, 7: 20, 8: 24, 9: 25}        # gadgets of buttons 0, 1, 2 and 3 -> free ids
 OZI_GADGET = {0: 19, 1: 20, 2: 24, 3: 25, 4: 10, 5: 11,
               6: 21, 7: 22, 8: 23, 9: 26, 12: 13, 16: 17}     # pushb -> its LARGEBUTTON
-OZI_LABEL_OF = {6: 9, 7: 10, 8: 11, 9: 12}      # the new buttons -> their `textmsg` number
+OZI_LABEL_OF = {6: 9, 7: 10, 8: 11, 9: 12}      # the new buttons -> their `textmsg` number (7's line is dropped from an older output)
 OZI_TEMPLATE = {'pushb': 16, 'gadget': 17, 'textmsg': 8}   # lines the new ones are cloned after
 OZI_BANIM = 18                                  # the `banim` object id (unchanged)
 # The `banim` widget (button.c `create_banim` 0x427854 / update 0x4279EC in Classic) is the
@@ -193,11 +201,12 @@ PLATE_FIRST, PLATE_REST = b'anim_oneoff', b'anim_stopped'   # the plate gadgets'
 OZI_LABELS = {                                  # `textmsg` number (button id) -> new text
     1: b'COUNCIL WARS',                         # button 0, was NEW CAMPAIGN
     2: b'ACADEMY',                              # button 1, was TRAINING
-    3: b'LOAD CW GAME',                         # button 2, was LOAD GAME
-    5: b'LOAD OZI GAME',                        # button 4, was SINGLE PLAYER WAR / OZI LOAD
+    3: b'LOAD GAME',                            # button 2: the stock text again (LOAD CW GAME from 23 Sep to 3 Oct 2026) - one load button for every campaign
+    4: b'CUSTOM NET WAR',                       # button 3, was MULTI PLAYER WAR (maintainer, 3 Oct 2026: "rename 'multiplayer war' to 'CUSTOM NET WAR'")
+    5: b'SINGLE PLAYER WAR',                    # button 4's stock text: the button is gone (LOAD OZI GAME until 3 Oct 2026), an older output gets the stock line back
     8: b'OZI MISSIONS',                         # button 16, was PLAY INTRO
     9: b'DARK COLONY',                          # button 6, new
-    10: b'LOAD DC GAME',                        # button 7, new
+    10: b'LOAD DC GAME',                        # button 7 (dropped 3 Oct 2026; the text is kept for the drop list)
     11: b'ONLINE WAR',                          # button 8, new (29 Sep 2026)
     12: b'REPLAY ONLINE GAME',                  # button 9, new (2 Oct 2026)
 }
@@ -319,7 +328,7 @@ def base_set(game, pack, plan):
                % (len(OZI_COLUMNS[0]), place[1][0], place[3][0],
                   '/'.join(str(place[i][1]) for i in OZI_COLUMNS[0]),
                   ', '.join(t.decode() for t in OZI_LABELS.values())))
-    if LABEL_NEW not in new or b'LOAD OZI GAME' not in new or b'DARK COLONY' not in new:
+    if LABEL_NEW not in new or b'LOAD GAME' not in new or b'DARK COLONY' not in new:
         plan.notes.append('WARNING exp/%s/bintroe: menu rows not recognised, edit by hand' % HD_DIR)
     # The Dark Colony mode reads every file through its own prefix `dc/` (patch_ozi_menu.py) and
     # falls back to the game root, which holds Classic's own data - including Classic's own menu
@@ -351,22 +360,23 @@ def menu_layout(data):
 
     The stock script (`exp/intrface/bintroe`, Classic's 2x4 grid since 23 Sep 2026, doc 10.35)
     is what the *untouched* exe reads; the patched builds read a copy of it in which this
-    function arranges the ten buttons in the order the maintainer asked for - the Dark Colony,
-    Council Wars and pack campaigns one under the other, each with its load button, and the
-    three screens that are not a campaign in the second column:
+    function arranges the buttons in the order the maintainer asked for - the four campaigns one
+    under the other with the one LOAD GAME button last (3 Oct 2026), and the screens that are not
+    a campaign in the second column:
 
         ACADEMY       (1)   ONLINE WAR         (8)
         DARK COLONY   (6)   REPLAY ONLINE GAME (9)
-        LOAD DC GAME  (7)   MULTI PLAYER WAR   (3)
-        COUNCIL WARS  (0)   ENCYCLOPEDIA     (5)
-        LOAD CW GAME  (2)
-        OZI MISSIONS (16)
-        LOAD OZI GAME (4)   QUIT            (12)
+        COUNCIL WARS  (0)   CUSTOM NET WAR     (3)
+        OZI MISSIONS (16)   ENCYCLOPEDIA       (5)
 
-    Ids are the exe's button numbers, which decide the handler (patch_ozi_menu.py rewires 16 and
-    4 to the pack and adds 6 and 7 for Dark Colony; patch_online.py adds 8 = ONLINE WAR, 29 Sep
-    2026, doc 10.51: right column row 1, MULTI PLAYER WAR and ENCYCLOPEDIA two rows down, and
-    9 = REPLAY ONLINE GAME in row 2, 2 Oct 2026, doc 10.65), so only the positions and the labels move.
+        LOAD GAME     (2)   QUIT              (12)
+
+    Ids are the exe's button numbers, which decide the handler (patch_ozi_menu.py rewires 16 to the
+    pack and adds 6 for Dark Colony; patch_online.py adds 8 = ONLINE WAR, 29 Sep 2026, doc 10.51,
+    9 = REPLAY ONLINE GAME, 2 Oct 2026, doc 10.65, and replaces button 2's picker by one that lists
+    every campaign's saves, doc 10.67), so only the positions and the labels move.  Until 3 Oct 2026
+    the block had seven rows: a load button under each campaign (LOAD DC GAME 7, LOAD CW GAME 2,
+    LOAD OZI GAME 4); 7 and 4 are dropped from the script (OZI_DROPPED_BUTTONS), their handlers stay.
     Columns, pitch and button size are read off the grid; the rows hang from the DCUT title: the
     first row OZI_CREDITS_ROOM (120) rows under it, leaving the code-drawn credits box its stock
     100 rows, unless the bottom row would pass H-72 - then the block stops there (94-row box at
@@ -378,15 +388,18 @@ def menu_layout(data):
     Returns ({id: (x, y)}, pitch)."""
     xy = {int(m.group(1)): (int(m.group(2)), int(m.group(3))) for m in LIVE_PUSHB.finditer(data)}
     gadgets = {int(m.group(1)) for m in LIVE_GADGET.finditer(data)}
-    missing = [str(n) for n in STOCK_BUTTONS if n not in xy]
-    missing += ['gadget %d' % n for n in STOCK_GADGETS if n not in gadgets]
+    # this function's own output lacks the dropped buttons and their plates (3 Oct 2026)
+    dropped_gadgets = {OZI_GADGET[i] for i in OZI_DROPPED_BUTTONS}
+    missing = [str(n) for n in STOCK_BUTTONS if n not in xy and n not in OZI_DROPPED_BUTTONS]
+    missing += ['gadget %d' % n for n in STOCK_GADGETS if n not in gadgets and n not in dropped_gadgets]
     # the stock grid has the plates as 6, 7, 8 and 9, this function's output as 19, 20, 24 and 25 (the 23 Sep
     # form as 19, 20, 8, 9; the 29 Sep form as 19, 20, 24, 9): each pair needs one of its two ids
     missing += ['gadget %d/%d' % (a, b) for a, b in sorted(OZI_RENUM.items()) if a not in gadgets and b not in gadgets]
     m = BANIM_PAIRS.search(data)
     # the stock grid (8 pairs), the 23 Sep form (10: + the two Dark Colony buttons), the 29 Sep form (11: + ONLINE
-    # WAR) or this form (12: + REPLAY ONLINE GAME)
-    pairs = (len(STOCK_BUTTONS), len(STOCK_BUTTONS) + 2, len(STOCK_BUTTONS) + 3, len(STOCK_BUTTONS) + len(OZI_NEW_BUTTONS))
+    # WAR), the 2 Oct form (12: + REPLAY ONLINE GAME) or this form (10: without the two dropped load buttons)
+    pairs = (len(STOCK_BUTTONS), len(STOCK_BUTTONS) + 2, len(STOCK_BUTTONS) + 3, len(STOCK_BUTTONS) + 4,
+             len(STOCK_BUTTONS) + len(OZI_NEW_BUTTONS) - len(OZI_DROPPED_BUTTONS))
     if missing or not m or m.group(1) != m.group(2) or int(m.group(1)) not in pairs:
         raise SystemExit('exp/%s/bintroe: not Classic\'s 2x4 button grid (missing %s, banim %s) - '
                          'rebuild the HD set from exp/intrface/bintroe (doc 10.35)'
@@ -449,8 +462,10 @@ def menu_script(data):
     first_plate = OZI_GADGET[order[0]]
     move = dict(place)
     move.update({OZI_GADGET[i]: xy for i, xy in place.items()})   # each gadget follows its button
-    generated = {b'pushb': set(OZI_NEW_BUTTONS),
-                 b'gadget': {OZI_GADGET[i] for i in OZI_NEW_BUTTONS},
+    # the lines that are re-emitted after their template line, and (3 Oct 2026) the two dropped load buttons'
+    # lines - `pushb`, plate and label - which simply leave the script
+    generated = {b'pushb': set(OZI_NEW_BUTTONS) | set(OZI_DROPPED_BUTTONS),
+                 b'gadget': {OZI_GADGET[i] for i in OZI_NEW_BUTTONS + OZI_DROPPED_BUTTONS},
                  b'textmsg': set(OZI_LABEL_OF.values())}
     out = []
     for raw in data.split(b'\n'):

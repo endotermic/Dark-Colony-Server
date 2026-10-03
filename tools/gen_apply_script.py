@@ -39,7 +39,7 @@ OUT = sys.argv[2]
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '1.2'
+PATCHER_VERSION = '1.3'
 
 
 def _git_state(repo):
@@ -158,8 +158,8 @@ def hd_data(g, mode=None):
             continue                                    # the briefing lists come from GAMESTAT (below)
         if name.upper().endswith('.SPR'):
             continue                                    # the console-style banks belong to the dark theme (console_data)
-        if name.upper() in ('ONLINE', 'ONLINEBG.GIF', 'REPLAYE', 'REPLAYBG.GIF'):
-            continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51 / 10.65)
+        if name.upper() in ('ONLINE', 'ONLINEBG.GIF', 'REPLAYE', 'REPLAYBG.GIF', 'LOADALLE'):
+            continue                                    # written by Write-OnlineScreen from LOADGE / LOADER.GIF (fix online, doc 10.51 / 10.65 / 10.67)
         src = os.path.join(GAME_DIR[g], 'INTRFACE', name)
         assert os.path.exists(src), src
         files.append('INTRFACE\\' + name)
@@ -562,8 +562,8 @@ def blocks_icon(g):
     return blocks_appending(g, 'icon', 'icon', 4, 'the resource directory and the images of DC_HD.ICO')
 
 def blocks_online(g):
-    # 3 header edits + the menu id filter byte + the id chain tail jump
-    return blocks_appending(g, 'online', 'online', 5, 'the ONLINE WAR module, compiled from tools/online/online.c (see the fix description)')
+    # 3 header edits + the menu id filter byte + the id chain tail jump + the LOAD GAME picker call (3 Oct 2026)
+    return blocks_appending(g, 'online', 'online', 6, 'the ONLINE WAR / REPLAY ONLINE GAME / LOAD GAME module, compiled from tools/online/online.c (see the fix description)')
 
 APPENDS = {}   # (build) -> step -> the appended section of an appending fix
 
@@ -909,7 +909,7 @@ Dark Colony Ultimate (since 25 Sep 2026) plays both discs and lets you choose: i
 options dialog (the Options button of the Game Option tab) gets a MUSIC row with "-" / "+" and the
 values DC (the Dark Colony disc), CW (the Council Wars disc) and ALL (all eight tracks in a random
 order, reshuffled after each round).  The campaign you start sets the default - ACADEMY and DARK
-COLONY play DC, COUNCIL WARS plays CW, OZI MISSIONS and MULTI PLAYER WAR play ALL (the menu fix writes it) - and the
+COLONY play DC, COUNCIL WARS plays CW, OZI MISSIONS and CUSTOM NET WAR (MULTI PLAYER WAR until 3 Oct 2026) play ALL (the menu fix writes it) - and the
 dialog changes it at any time, with the music switching at once.  Two small in-place edits route
 the dialog's new buttons and value text into the rewritten routines; the dialog script with the
 new row is written beside the exe for the three campaign modes (exp\\, dc\\ and ozi_ns\\ copies
@@ -1023,10 +1023,12 @@ itself uses.  Two buttons are added for it:
     them to 19 and 20 and gives the new buttons the plates 21 and 22
   * the two handlers go into the 59 NOP bytes the old PLAY INTRO body left behind: DARK COLONY
     sets "campaign, not training" and enters the campaign runner through tramp_dc_campaign,
-    LOAD DC GAME goes through tramp_dc_load, so it always lists the SAVE/ folder.  The stub and
+    LOAD DC GAME goes through tramp_dc_load, so it always lists the SAVE/ folder (since 3 Oct 2026
+    the menu has ONE load button, id 2, whose picker fix online replaces by a browser over all three
+    save folders; the handlers of ids 7 and 4 stay in the exe, unreachable).  The stub and
     the two trampolines are 97 more bytes of the code section's zero tail (VA 0x47F340..0x47F3AA),
     and their four absolute slot addresses add four more entries to the .reloc insert
-  * MULTI PLAYER WAR goes through a fourth trampoline, tramp_dc_net (25 Sep 2026; 10 bytes at
+  * MULTI PLAYER WAR (labelled CUSTOM NET WAR since 3 Oct 2026) goes through a fourth trampoline, tramp_dc_net (25 Sep 2026; 10 bytes at
     VA 0x47F3B0, relative operands only): a network game always starts in the Dark Colony mode, so
     it reads the Classic balance tables from the game root like dc16.exe and the relay server do.
     The menu's mode is sticky, and after OZI MISSIONS a network game loaded the pack's tables and
@@ -1037,12 +1039,14 @@ itself uses.  Two buttons are added for it:
     commanders of all three campaigns now rally in their STAND pose, as in Dark Colony
   * at 640x480 only, the scrolling credits box is removed (main.c bintro's TTY create, 45 bytes
     -> NOPs, the call is `ret 20h` so the stack balances, and the matching destroy count 1 -> 0):
-    the seven-row menu is 217 rows tall and the black band of the 640x480 backdrop between the
-    planet's crescent and the artwork is exactly 217 rows.  The two string operands the call
-    carried become type 0 relocation padding.  At the HD sizes the box stays (24 Sep 2026): the
-    menu block is placed 120 rows under the title instead - 11 px, the stock 100-row box, 9 px -
-    or as low as H-72 allows, and the `resolution` fix writes the box's height (94 rows at
-    1024x768, 76 at 1280x720, the stock 100 from 1280x800 up).  The whole Council Wars menu
+    the seven-row menu of 23 Sep - 3 Oct 2026 was 217 rows tall and the black band of the 640x480
+    backdrop between the planet's crescent and the artwork is exactly 217 rows (the five-row menu
+    since 3 Oct 2026 would leave room again; the box stays removed there).  The two string operands
+    the call carried become type 0 relocation padding.  At the HD sizes the box stays (24 Sep 2026):
+    the menu block is placed 120 rows under the title instead - 11 px, the stock 100-row box, 9 px -
+    or as low as H-72 allows, and the `resolution` fix writes the box's height where the block
+    shortens it (the seven-row block: 94 rows at 1024x768, 76 at 1280x720; the five-row block fits
+    everywhere, so the box keeps its stock 100 rows at every size).  The whole Council Wars menu
     cluster - logo, title, box, buttons - sits 15 rows higher than the letterbox rule at the HD
     sizes (same day; 0 at 1280x720, where the DC logo already touches the planet's crescent).
 REQUIRES the "DC - Council wars/ozi_ns/" overlay folder, exp/animozi.dat, exp/animate/tranozi.fin,
@@ -1204,12 +1208,12 @@ No code changes.  The file grows by the new section (about 75 KB), which is why 
 last - after it only `online` (Dark Colony Ultimate), which appends its own section behind this one.
 The appended bytes are written below in Base64 (they are the icon images, the manifest and the
 directory that lists them); their SHA-256 is checked like every other edit.'''),
- dict(id='online', name='ONLINE WAR and REPLAY ONLINE GAME: a room browser and a replay browser for the relay server in the main menu, TLS to port 8889 (Dark Colony Ultimate only)', date='29 Sep 2026 (REPLAY ONLINE GAME 2 Oct 2026)',
+ dict(id='online', name='ONLINE WAR, REPLAY ONLINE GAME and one LOAD GAME for every campaign: a room browser and a replay browser for the relay server, TLS to port 8889, and a save browser over save/, esave/ and ozisave/ (Dark Colony Ultimate only)', date='29 Sep 2026 (REPLAY ONLINE GAME 2 Oct 2026, LOAD GAME 3 Oct 2026)',
       tool='tools/patch_online.py (module: tools/online/online.c, built by tools/online/build.cmd)',
-      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.51 and 10.65; docs/RELAY_SERVER_PLAN.md sections 20 and 21; docs/DC16_NETWORK_PROTOCOL.md sections 4.4, 4.5, 6.9 and 6.10',
+      doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.51, 10.65 and 10.67; docs/RELAY_SERVER_PLAN.md sections 20 and 21; docs/DC16_NETWORK_PROTOCOL.md sections 4.4, 4.5, 6.9 and 6.10',
       blocks=blocks_online, cw_only=True, requires=['ozi', 'icon'], data=online_data,
       desc='''The main menu of Dark Colony Ultimate gets an eleventh button, ONLINE WAR (top of the right column;
-MULTI PLAYER WAR and ENCYCLOPEDIA move two rows down) and, since 2 Oct 2026, a twelfth right under it,
+MULTI PLAYER WAR - CUSTOM NET WAR since 3 Oct 2026 - and ENCYCLOPEDIA move two rows down) and, since 2 Oct 2026, a twelfth right under it,
 REPLAY ONLINE GAME.  ONLINE WAR opens a room browser built from the LOAD GAME screen that lists the rooms of the Dark
 Colony Server relay - map, terrain, seats, players, bots, status - and joins the room you pick; the
 relay then chooses a free slot for you.  The name and the address of the relay come from DEFAULT_SERVER.TXT
@@ -1218,7 +1222,7 @@ dark-colony-server.fly.dev and explains how to point the game at another relay o
 relay; both screens show the two values above the connection state).  The connection is
 TLS-encrypted with Windows' own Schannel (port 8889; the certificate is checked against the host
 name), and the game's stock lobby and battle code then run unchanged through a small loopback proxy
-inside the process, so MULTI PLAYER WAR and the network play itself are untouched.
+inside the process, so CUSTOM NET WAR (the former MULTI PLAYER WAR button) and the network play itself are untouched.
 
 What is changed in the exe:
   * a NEW SECTION ".dccode" is appended at the end of the file (after fix icon's ".dcicon", which is
@@ -1230,7 +1234,18 @@ What is changed in the exe:
     section (section count, section header, image size).
   * the menu's accepted-id filter `cmp edx,7` -> `cmp edx,9` (button ids 8 = ONLINE WAR, 9 = REPLAY
     ONLINE GAME), and the seven NOP bytes at the end of the menu's id chain become a jump into the
-    section (ids other than 8 and 9 return to the menu loop as before).  Nothing else in the code changes.
+    section (ids other than 8 and 9 return to the menu loop as before).
+  * the stock LOAD GAME code's call of its one-folder picker screen (0x403ABC) is pointed at the
+    module's save browser (3 Oct 2026).  Nothing else in the code changes.
+
+LOAD GAME (3 Oct 2026) is the ONE load button of the menu, last in the left column: it lists the saves
+of every campaign together - the folders save\\ (ACADEMY and DARK COLONY), esave\\ (COUNCIL WARS) and
+ozisave\\ (OZI MISSIONS) stay as they are, every save keeps its folder - newest first, one row per save:
+date, time, the name you gave it and the campaign (Academy, Dark Colony, Council wars, Ozi missions;
+the game type in the save's header tells an ACADEMY save from a DARK COLONY one, a multiplayer game
+saved in battle says Multiplayer).  LOAD switches the game to the save's campaign mode and the stock
+code loads the file and resumes exactly as the three former load buttons did.  The buttons LOAD DC GAME
+and LOAD OZI GAME are gone from the menu (their handlers stay in the exe, unreachable).
 
 REPLAY ONLINE GAME lists the battles the relay recorded (date and time, map, terrain, seats, players,
 computer players, length - the relay keeps the newest 50) and, right of the list, the eight players of
@@ -1240,9 +1255,10 @@ watched - its client would control the lobby); tick one and REPLAY makes the rel
 that player's seat - his fog of war, his base, the whole battle as it happened; you can scroll the map
 but not act.  The same encrypted connection, the same module.
 
-Data: the screen scripts HD_<height>P\\ONLINE and REPLAYE (INTRFACE\ONLINE / REPLAYE at 640x480) are
-derived from LOADGE by this script (list widened to 56 columns, header, name, server and status lines,
-ENTER / BACK; the replay screen: a 40-column list and the participant pane), their backgrounds ONLINEBG.GIF /
+Data: the screen scripts HD_<height>P\\ONLINE, REPLAYE and LOADALLE (INTRFACE\ONLINE / REPLAYE / LOADALLE at
+640x480) are derived from LOADGE by this script (list widened to 56 columns, header, name, server and status
+lines, ENTER / BACK; the replay screen: a 40-column list and the participant pane; the load screen: ONLINE
+with the title Load Game and the button LOAD), their backgrounds ONLINEBG.GIF /
 REPLAYBG.GIF from LOADER.GIF, and DEFAULT_SERVER.TXT is written beside the exe when it is missing or still
 holds only the shipped address in its first, bare form - a file with your own relay address is never
 overwritten.  The appended bytes are written
@@ -1261,7 +1277,7 @@ repository.'''),
 # (maintainer: "remove already patched 'Dark Colony.exe' from repo by default") `shipped=False`: the repository no
 # longer carries the patched file, the patcher writes it on request.  The order of this list is the order of the
 # window's pages and of `-All`.
-CLASSIC_DEPRECATED = ('Dark Colony Ultimate.exe plays the whole Dark Colony campaign (DARK COLONY, LOAD DC GAME, ACADEMY in its '
+CLASSIC_DEPRECATED = ('Dark Colony Ultimate.exe plays the whole Dark Colony campaign (DARK COLONY, LOAD GAME, ACADEMY in its '
                       'main menu) with every fix, so a separate Dark Colony.exe is no longer needed; it is kept for players '
                       'who want the Classic executable on its own.')
 BUILDS = [
@@ -1882,7 +1898,7 @@ $HD_SRC = 'HD_SRC'
 $HD_FOLDER_RE = [regex] '^(?i)(HD|UW)_\d{4}P$'
 # the copies the 640x480 build reads (fixes movies / ozi / music / online at the original size)
 $STOCK_COPIES = @('exp\intrface\bintoze', 'dc\intrface\bintoze', 'ozi_ns\intrface\bintoze', 'exp\intrface\lopme', 'dc\intrface\lopme', 'ozi_ns\intrface\lopme',
-                  'GAMESTAT\HSCNDC.TXT', 'GAMESTAT\GSCNDC.TXT', 'INTRFACE\ONLINE', 'INTRFACE\ONLINEBG.GIF', 'INTRFACE\REPLAYE', 'INTRFACE\REPLAYBG.GIF')
+                  'GAMESTAT\HSCNDC.TXT', 'GAMESTAT\GSCNDC.TXT', 'INTRFACE\ONLINE', 'INTRFACE\ONLINEBG.GIF', 'INTRFACE\REPLAYE', 'INTRFACE\REPLAYBG.GIF', 'INTRFACE\LOADALLE')
 
 # What a run for $Keep (a folder name, or '' for a 640x480 build) deletes: every other resolution's folder under the
 # game folder and under exp\, dc\, ozi_ns\ (HD_*P / UW_*P and the pre-October INTRF_HD / intrf_hd), plus - for an
@@ -2715,36 +2731,41 @@ function Edit-DatList([string] $Text) {
     return ($out -join "`n")
 }
 
-# build_ozi_overlay.menu_layout (23 Sep 2026, maintainer's order): the patched Council Wars menu has
-# five rows, the second column only on rows 1, 3 and 5.  The numbers are the exe's button ids, which
-# pick the handler (patch_ozi_menu.py rewires 16 and 4 to the pack), so only positions and labels move:
+# build_ozi_overlay.menu_layout (23 Sep 2026, maintainer's order; 3 Oct 2026: one LOAD GAME button):
+# the patched Council Wars menu has five rows.  The numbers are the exe's button ids, which pick the
+# handler (patch_ozi_menu.py rewires 16 to the pack and adds 6; patch_online.py adds 8 and 9 and
+# replaces button 2's picker by the save browser over every campaign's folder), so only positions
+# and labels move:
 #
-#     ACADEMY       (1)   MULTI PLAYER WAR (3)
-#     COUNCIL WARS  (0)
-#     LOAD CW GAME  (2)   ENCYCLOPEDIA     (5)
-#     OZI MISSIONS (16)
-#     LOAD OZI GAME (4)   QUIT            (12)
-# The patched Council Wars main menu (doc 10.35 and 10.36), the PowerShell twin of
-# tools/build_ozi_overlay.py menu_layout()/menu_script(): Classic's 2x4 button grid becomes seven
-# rows in the left column - ACADEMY, the two Dark Colony entries, the two Council Wars entries and
-# the two pack entries - with MULTI PLAYER WAR and ENCYCLOPEDIA at the top of the second column and
-# QUIT on its last row, a gap of half a button height (12 px) after rows 1, 3 and 5 and the same
+#     ACADEMY       (1)   ONLINE WAR         (8)
+#     DARK COLONY   (6)   REPLAY ONLINE GAME (9)
+#     COUNCIL WARS  (0)   CUSTOM NET WAR     (3)
+#     OZI MISSIONS (16)   ENCYCLOPEDIA       (5)
+#
+#     LOAD GAME     (2)   QUIT              (12)
+# The patched Council Wars main menu (doc 10.35, 10.36 and 10.67), the PowerShell twin of
+# tools/build_ozi_overlay.py menu_layout()/menu_script(): Classic's 2x4 button grid becomes five
+# rows per column - the four campaigns and the one LOAD GAME button on the left, the three screens
+# that are not a campaign, ENCYCLOPEDIA and QUIT on the right (from 23 Sep to 3 Oct 2026 seven rows:
+# a load button under each campaign; LOAD DC GAME 7 and LOAD OZI GAME 4 leave the script, their
+# plates and labels with them) - a gap of half a button height (12 px) after row 4 and the same
 # gap between the columns, after which the block is re-centred on the screen.  Vertically the rows
 # hang from the DCUT title gadget (24 Sep 2026, maintainer: "return back credentials [credits] for
 # higher than 640x480 resolutions"): the first row 120 rows under it - 11 px, the stock 100-row
 # credits box, 9 px - unless the bottom row would pass H-72 (the stock 640x480 bottom row 408,
 # 2-3 px above the bottom artwork every backdrop starts at H-45); then the block stops there and
-# the box gets shorter (the `resolution` fix writes its height: 94 rows at 1024x768, 76 at
-# 1280x720, 100 from 1280x800 up).  At 640x480 that is the whole 217-row band, so the block grows
-# upwards from row 408, the `ozi` fix removes the box, and the gap shrinks by a pixel so that the
-# first row still clears the planet's crescent (rows 198..217).  Both anchors depend only on the
+# the box gets shorter (the `resolution` fix writes its height; the seven-row block needed 94 rows
+# at 1024x768 and 76 at 1280x720, the five-row block fits under the stock 100 everywhere).  At
+# 640x480 the block grows upwards from row 408, the `ozi` fix removes the box (the seven-row block
+# filled the 217-row band), and the gap shrinks by a pixel if the first row would touch the planet's
+# crescent (rows 198..217).  Both anchors depend only on the
 # title and the screen size, so applying this twice changes nothing.  The whole Council Wars cluster
 # (title included, so the block follows) and the H-72 cap sit Get-MenuLift rows higher at the HD sizes.
-# The two Dark Colony buttons are ids 6 and 7, which the stock script used for the LARGEBUTTON
-# gadgets of buttons 0 and 1; those move to 19 and 20, the new plates are 21 and 22, and `banim`
-# pairs all ten.  The new lines are cloned from the script's own `pushb 16` / `gadget 17` /
-# `textmsg 8` so they keep its field layout.  The untouched exe keeps Classic's 2x4 grid and labels
-# in exp\intrface\bintroe (doc 10.35).
+# DARK COLONY is id 6, which the stock script used for the LARGEBUTTON gadget of button 0; the plates
+# of buttons 0..3 move to 19, 20, 24 and 25, the new plates are 21 (DARK COLONY), 23 (ONLINE WAR) and
+# 26 (REPLAY ONLINE GAME), and `banim` pairs all ten.  The new lines are cloned from the script's own
+# `pushb 16` / `gadget 17` / `textmsg 8` so they keep its field layout.  The untouched exe keeps
+# Classic's 2x4 grid and labels in exp\intrface\bintroe (doc 10.35).
 function Set-ScriptTokens([string] $Line, $Changes) {
     $toks = @($TOKENS.Matches($Line) | ForEach-Object { $_.Value })
     $n = 0
@@ -2762,12 +2783,14 @@ function Get-TextmsgLine([int] $N, [string] $Text) {
 }
 
 function Edit-OziMenu([string] $Text) {
-    # right column: ONLINE WAR (8, 29 Sep 2026), REPLAY ONLINE GAME (9, 2 Oct 2026), MULTI PLAYER WAR, ENCYCLOPEDIA, QUIT
-    $cols = @(@(1, 6, 7, 0, 2, 16, 4), @(8, 9, 3, 5, $null, $null, 12))
-    $gapAfter = @(1, 3, 5)
+    # left column: the four campaigns and LOAD GAME (2); right column: ONLINE WAR (8, 29 Sep 2026), REPLAY ONLINE GAME
+    # (9, 2 Oct 2026), CUSTOM NET WAR (= MULTI PLAYER WAR, renamed 3 Oct 2026), ENCYCLOPEDIA, QUIT (3 Oct 2026: one load button, build_ozi_overlay.OZI_COLUMNS)
+    $cols = @(@(1, 6, 0, 16, 2), @(8, 9, 3, 5, 12))
+    $gapAfter = @(4)
     $stockButtons = @(0, 1, 2, 3, 4, 5, 12, 16)
     $stockGadgets = @(10, 11, 13, 17)   # 8 and 9 are renumbered (see $renum)
-    $newButtons = @(6, 7, 8, 9)
+    $newButtons = @(6, 8, 9)
+    $droppedButtons = @(4, 7)           # LOAD OZI GAME and LOAD DC GAME: their pushb, plate and label leave the script (3 Oct 2026)
     # widget ids are one object space for every kind: the plates 6, 7, 8 and 9 of buttons 0, 1, 2 and 3 move to
     # 19, 20, 24 and 25 so that the button ids 6, 7 (Dark Colony), 8 (ONLINE WAR) and 9 (REPLAY ONLINE GAME) are free
     $renum = @{ 6 = 19; 7 = 20; 8 = 24; 9 = 25 }
@@ -2781,20 +2804,28 @@ function Edit-OziMenu([string] $Text) {
     $plateFirst = 'anim_oneoff'; $plateRest = 'anim_stopped'
     $textTemplate = 8
     $stockTopLimit = 218
-    $labels = @{ 1 = 'COUNCIL WARS'; 2 = 'ACADEMY'; 3 = 'LOAD CW GAME'; 5 = 'LOAD OZI GAME'
+    # 3 = the stock LOAD GAME text again (LOAD CW GAME from 23 Sep to 3 Oct 2026); 5 = button 4's stock text, so that an
+    # older output gets the stock line back; 10 = LOAD DC GAME, kept only for the drop list
+    # 4 = CUSTOM NET WAR (was MULTI PLAYER WAR; maintainer, 3 Oct 2026: "rename 'multiplayer war' to 'CUSTOM NET WAR'")
+    $labels = @{ 1 = 'COUNCIL WARS'; 2 = 'ACADEMY'; 3 = 'LOAD GAME'; 4 = 'CUSTOM NET WAR'; 5 = 'SINGLE PLAYER WAR'
                  8 = 'OZI MISSIONS'; 9 = 'DARK COLONY'; 10 = 'LOAD DC GAME'; 11 = 'ONLINE WAR'; 12 = 'REPLAY ONLINE GAME' }
     $xy = @{}
     foreach ($m in ([regex] '(?m)^\s*pushb\s+(\d+)\s+\d+\s+(\d+)\s+(\d+)\s').Matches($Text)) { $xy[[int]$m.Groups[1].Value] = @([int]$m.Groups[2].Value, [int]$m.Groups[3].Value) }
     $gadgets = @{}
     foreach ($m in ([regex] '(?m)^\s*gadget\s+(\d+)\s').Matches($Text)) { $gadgets[[int]$m.Groups[1].Value] = $true }
     $missing = @()
-    foreach ($need in $stockButtons) { if (-not $xy.ContainsKey($need)) { $missing += "pushb $need" } }
-    foreach ($need in $stockGadgets) { if (-not $gadgets.ContainsKey($need)) { $missing += "gadget $need" } }
+    $droppedGadgets = @($droppedButtons | ForEach-Object { [int] $gadgetOf[[int]$_] })
+    # this function's own output lacks the dropped buttons and their plates
+    foreach ($need in $stockButtons) { if (-not $xy.ContainsKey($need) -and -not ($droppedButtons -contains $need)) { $missing += "pushb $need" } }
+    foreach ($need in $stockGadgets) { if (-not $gadgets.ContainsKey($need) -and -not ($droppedGadgets -contains $need)) { $missing += "gadget $need" } }
     # the stock grid has the plates as 6, 7, 8 and 9, this function's own output as 19, 20, 24 and 25 (the 23 Sep
     # form as 19, 20, 8, 9; the 29 Sep form as 19, 20, 24, 9): each pair needs one of its two ids
     foreach ($k in @($renum.Keys | Sort-Object)) { if (-not ($gadgets.ContainsKey([int]$k) -or $gadgets.ContainsKey([int]$renum[$k]))) { $missing += ('gadget {0}/{1}' -f $k, $renum[$k]) } }
     $b = ([regex] '(?m)^\s*banim\s+18\s+\d+\s+(\d+)\s+(\d+)\s').Match($Text)
-    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + 2), [string] ($stockButtons.Count + 3), [string] ($stockButtons.Count + $newButtons.Count))   # stock grid, the 23 Sep form, the 29 Sep form, this form
+    $placed = 0
+    foreach ($col in $cols) { foreach ($id in $col) { if ($null -ne $id) { $placed++ } } }
+    # stock grid (8), the 23 Sep form (10), the 29 Sep form (11), the 2 Oct form (12), this form (10 placed buttons)
+    $pairs = @([string] $stockButtons.Count, [string] ($stockButtons.Count + 2), [string] ($stockButtons.Count + 3), [string] ($stockButtons.Count + 4), [string] $placed)
     if (-not $b.Success -or $b.Groups[1].Value -ne $b.Groups[2].Value -or -not ($pairs -contains $b.Groups[1].Value)) { $missing += 'banim 18 with 8, 10, 11 or 12 pairs' }
     if ($missing.Count) { throw ("bintroe: not Classic's 2x4 button grid (missing " + ($missing -join ', ') + ')') }
     $xs = @($xy.Values | ForEach-Object { $_[0] } | Sort-Object -Unique)
@@ -2849,9 +2880,10 @@ function Edit-OziMenu([string] $Text) {
     # the wave order: by column x, then by row y (one integer key so 5.1 and 7 sort alike)
     $banimOrder = @(@($place.Keys) | Sort-Object { $place[[int]$_][0] * 100000 + $place[[int]$_][1] } | ForEach-Object { [int] $_ })
     $firstPlate = [int] $gadgetOf[[int]$banimOrder[0]]
-    $dropPushb = @($newButtons)
-    $dropGadget = @($newButtons | ForEach-Object { [int] $gadgetOf[[int]$_] })
-    $dropText = @($newButtons | ForEach-Object { [int] $labelOf[[int]$_] })
+    # the lines re-emitted after their template line, and the two dropped load buttons' lines, which simply leave
+    $dropPushb = @($newButtons + $droppedButtons)
+    $dropGadget = @(($newButtons + $droppedButtons) | ForEach-Object { [int] $gadgetOf[[int]$_] })
+    $dropText = @(($newButtons + $droppedButtons) | Where-Object { $labelOf.ContainsKey([int]$_) } | ForEach-Object { [int] $labelOf[[int]$_] })
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($raw in $Text.Split("`n")) {
         $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
@@ -3502,7 +3534,7 @@ function Get-FramedBackground($Im, $Rects) {
 }
 
 # DEFAULT_SERVER.TXT as the repository ships it (the same bytes as patch_online.DEFAULT_SERVER_TEXT; `name=` / `address=` lines since 3 Oct 2026).
-$DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server behind ONLINE WAR and REPLAY ONLINE GAME.', ' *', ' * Dark Colony Ultimate reads this file when you press one of those two buttons in the main', ' * menu. It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay), shows the rooms or the recorded battles the relay offers and joins the one', ' * you pick. Both screens show the name and the address from this file above the connection', ' * state.', ' *', ' * Fields, one per line:', ' *   name=<how the screens call this server>          any text; here the relay''s project page', ' *   address=<host or IP address>[:port]              the port defaults to 8889 (TLS)', ' *   plain                                            optional: no encryption, for a relay on', ' *                                                    your own network without a certificate', ' *                                                    (the plain relay port is 8888)', ' * Comments in the C++ style are ignored: "//" at the start of a line or after a space runs to', ' * the end of the line (so an address like https://... is kept), or a block like this one.', ' * A file holding only an address (the form before 3 Oct 2026) is still understood.', ' *', ' * Keep one server in the file. MULTI PLAYER WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'name=https://github.com/endotermic/Dark-Colony-Server', 'address=dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
+$DefaultServerText = (@('/*', ' * DEFAULT_SERVER.TXT - the relay server behind ONLINE WAR and REPLAY ONLINE GAME.', ' *', ' * Dark Colony Ultimate reads this file when you press one of those two buttons in the main', ' * menu. It connects to the address below with TLS encryption on port 8889 (the Dark Colony', ' * Server relay), shows the rooms or the recorded battles the relay offers and joins the one', ' * you pick. Both screens show the name and the address from this file above the connection', ' * state.', ' *', ' * Fields, one per line:', ' *   name=<how the screens call this server>          any text; here the relay''s project page', ' *   address=<host or IP address>[:port]              the port defaults to 8889 (TLS)', ' *   plain                                            optional: no encryption, for a relay on', ' *                                                    your own network without a certificate', ' *                                                    (the plain relay port is 8888)', ' * Comments in the C++ style are ignored: "//" at the start of a line or after a space runs to', ' * the end of the line (so an address like https://... is kept), or a block like this one.', ' * A file holding only an address (the form before 3 Oct 2026) is still understood.', ' *', ' * Keep one server in the file. CUSTOM NET WAR (the in-game host / CONNECT TO SERVER', ' * screens) does not read this file.', ' */', '', 'name=https://github.com/endotermic/Dark-Colony-Server', 'address=dark-colony-server.fly.dev') -join "`r`n") + "`r`n"
 
 # Patching order (3 Oct 2026): of the executables that share the game folder, Dark Colony is patched first and Dark
 # Colony Ultimate LAST.  Every game build rebuilds the resolution's interface folder from scratch (Write-InterfaceSet),
@@ -3514,6 +3546,22 @@ function Sort-ForPatching([object[]] $Items, [scriptblock] $BuildOf) {
     $first = @(); $last = @()
     foreach ($i in $Items) { if ((Get-PatchOrder (& $BuildOf $i)) -eq 0) { $first += $i } else { $last += $i } }
     return @($first + $last)
+}
+
+# The LOAD GAME screen of every campaign (3 Oct 2026, doc 10.67): ONLINE -> LOADALLE, the same edit as
+# patch_online.loadall_script (byte-identical output): the title "Load Game" and the button LOAD; the list, the
+# header line, the three text lines and the background ONLINEBG.GIF stay ONLINE's.  Idempotent on its own output.
+function Edit-LoadAllScript([string] $Text) {
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in $Text.Split("`n")) {
+        $cr = if ($raw.EndsWith("`r")) { "`r" } else { '' }
+        $line = if ($cr) { $raw.Substring(0, $raw.Length - 1) } else { $raw }
+        $t = [regex]::Match($line, '^\s*textmsg\s+(\d+)\s')
+        if ($t.Success -and $t.Groups[1].Value -eq '1') { $line = Get-TextmsgLine 1 'Load Game' }
+        elseif ($t.Success -and $t.Groups[1].Value -eq '2') { $line = Get-TextmsgLine 2 'LOAD' }
+        $out.Add($line + $cr)
+    }
+    return ($out -join "`n")
 }
 
 function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
@@ -3554,6 +3602,11 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
     if (-not $rBgDst) { $rBgDst = Join-Path (Join-Path $GameDir $sub) 'REPLAYBG.GIF' }
     [System.IO.File]::WriteAllBytes($rBgDst, (Get-FramedBackground $im $rRects))
     $lines += ('wrote {0}\REPLAYBG.GIF (the replay screen background: frames around the list, the scroll bar, the participant pane and the text lines)' -f $sub)
+    # LOAD GAME (3 Oct 2026, doc 10.67): the third screen from the ONLINE script; it shares ONLINEBG.GIF
+    $lDst = Find-CI (Join-Path $GameDir $sub) 'LOADALLE'
+    if (-not $lDst) { $lDst = Join-Path (Join-Path $GameDir $sub) 'LOADALLE' }
+    Write-Latin1 $lDst (Edit-LoadAllScript $t)
+    $lines += ('wrote {0}\LOADALLE (the LOAD GAME screen of every campaign, derived from ONLINE)' -f $sub)
     # DEFAULT_SERVER.TXT: written when missing - and a file of the first form (before 3 Oct 2026) that still names only
     # the shipped relay is upgraded to the name= / address= form (patch_online.bare_shipped_config: comments off, exactly
     # one token, dark-colony-server.fly.dev); anything else is the player's own setting and stays

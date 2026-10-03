@@ -30,6 +30,18 @@
  * 0x58 RPLAY (recording id, slot) and 0x59 REPLAYING hands the connection over exactly like
  * ENTERING: the relay seats the viewer in a private room that plays the recorded frames back.
  *
+ * LOAD GAME (3 Oct 2026; display doc 10.67) is the third entry point, `load_game_picker`: the ONE load
+ * button of the menu (id 2) for the saves of every campaign.  The stock LOAD GAME code 0x403AA4 calls the
+ * picker screen 0x40388C(ui, buf, cap; cl = 0) and then loads the file the picker named into `buf`; fix
+ * online points that call at the naked thunk below, which runs `load_screen`: the three save folders
+ * (`save` = ACADEMY and DARK COLONY, `esave` = COUNCIL WARS, `ozisave` = OZI MISSIONS - the folders the
+ * fix ozi mode stubs name; a save stays where the game wrote it) are listed through FindFirstFileA,
+ * every `.dcg` file's header is read for its game type, the rows `dd.mm.yy hh:mm  name  campaign` (newest
+ * first) go into the LOADALLE screen (ONLINE with the title Load Game and the button LOAD), and LOAD puts
+ * `<folder>/<name>.dcg` into `buf`, switches the game to that folder's mode (the same stubs the three former
+ * load buttons called) and returns 1 - the stock code then opens the file through the mode's prefix helper
+ * (which falls back to the bare path), restores the campaign record from it and resumes the campaign.
+ *
  * Build: build.cmd (MSVC x86, no C run-time: /O1 /Oi- /GS- /Zl, linked as a relocatable DLL with
  * .rdata/.data/.bss merged into .text; the tool rebases .text to the section's VA). The only
  * imports taken from the exe are LoadLibraryA and GetProcAddress (their IAT slots); everything
@@ -58,6 +70,9 @@
 #define GAME_POOL_MARK      0x40C0FC   /* f(pool, 0, name)   smalloc bookmark, as the picker      */
 #define GAME_POOL_FREE      0x40C26C   /* f(pool, name)                                          */
 #define GAME_STUB_DC_SET    0x47F340   /* fix ozi: prefix `dc/`, save folder `save`, music DC     */
+#define GAME_STUB_CW_SET    0x47F290   /* fix ozi: prefix `exp/`, save folder `esave`, music CW   */
+#define GAME_STUB_PACK      0x47F240   /* fix ozi: prefix `ozi_ns/`, save folder `ozisave`, music ALL */
+#define GAME_STOCK_PICKER   0x40388C   /* the stock LOAD GAME / SAVE GAME picker: al = f(eax ui, edx buf, ebx cap; cl 1 = the save form) */
 #define GAME_NET_ENTRY      0x40122C   /* al = f(ui, &addr, gs, net; push flag 0): connect, lobby, battle       */
 #define GAME_GET_TCP_NET    0x42E024   /* net = f(): the TCP network object (vtable +0x64 = connect 0x42DCEC); with net = 0 the entry makes the in-process mailbox network = the host's own connection */
 #define GAME_MENU_LOOP_HEAD 0x40513D   /* where the id chain of the main menu continues           */
@@ -157,6 +172,11 @@ typedef DWORD (WINAPI* PFN_GetLastError)(void);
 typedef LPVOID (WINAPI* PFN_VirtualAlloc)(LPVOID, SIZE_T, DWORD, DWORD);
 typedef BOOL (WINAPI* PFN_WriteFile)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
 typedef DWORD (WINAPI* PFN_SetFilePointer)(HANDLE, LONG, PLONG, DWORD);
+typedef HANDLE (WINAPI* PFN_FindFirstFileA)(LPCSTR, LPWIN32_FIND_DATAA);
+typedef BOOL (WINAPI* PFN_FindNextFileA)(HANDLE, LPWIN32_FIND_DATAA);
+typedef BOOL (WINAPI* PFN_FindClose)(HANDLE);
+typedef BOOL (WINAPI* PFN_FileTimeToLocalFileTime)(const FILETIME*, LPFILETIME);
+typedef BOOL (WINAPI* PFN_FileTimeToSystemTime)(const FILETIME*, LPSYSTEMTIME);
 
 typedef int (WSAAPI* PFN_WSAStartup)(WORD, LPWSADATA);
 typedef SOCKET (WSAAPI* PFN_socket)(int, int, int);
@@ -188,6 +208,8 @@ typedef SECURITY_STATUS (WINAPI* PFN_FreeCredentialsHandle)(PCredHandle);
 static struct {
     PFN_CreateFileA CreateFileA; PFN_ReadFile ReadFile; PFN_CloseHandle CloseHandle; PFN_GetTickCount GetTickCount;
     PFN_CreateThread CreateThread; PFN_Sleep Sleep; PFN_GetLastError GetLastError; PFN_VirtualAlloc VirtualAlloc; PFN_WriteFile WriteFile; PFN_SetFilePointer SetFilePointer;
+    PFN_FindFirstFileA FindFirstFileA; PFN_FindNextFileA FindNextFileA; PFN_FindClose FindClose;
+    PFN_FileTimeToLocalFileTime FileTimeToLocalFileTime; PFN_FileTimeToSystemTime FileTimeToSystemTime;
     PFN_WSAStartup WSAStartup; PFN_socket socket; PFN_connect connect; PFN_send send; PFN_recv recv; PFN_select select;
     PFN_closesocket closesocket; PFN_gethostbyname gethostbyname; PFN_inet_addr inet_addr; PFN_htons htons; PFN_ntohs ntohs;
     PFN_bind bind; PFN_listen listen; PFN_accept accept; PFN_getsockname getsockname; PFN_WSAGetLastError WSAGetLastError;
@@ -225,6 +247,11 @@ static int resolve_imports(void) {
     W.VirtualAlloc = (PFN_VirtualAlloc)need(gpa, k32, "VirtualAlloc", &ok);
     W.WriteFile = (PFN_WriteFile)need(gpa, k32, "WriteFile", &ok);
     W.SetFilePointer = (PFN_SetFilePointer)need(gpa, k32, "SetFilePointer", &ok);
+    W.FindFirstFileA = (PFN_FindFirstFileA)need(gpa, k32, "FindFirstFileA", &ok);
+    W.FindNextFileA = (PFN_FindNextFileA)need(gpa, k32, "FindNextFileA", &ok);
+    W.FindClose = (PFN_FindClose)need(gpa, k32, "FindClose", &ok);
+    W.FileTimeToLocalFileTime = (PFN_FileTimeToLocalFileTime)need(gpa, k32, "FileTimeToLocalFileTime", &ok);
+    W.FileTimeToSystemTime = (PFN_FileTimeToSystemTime)need(gpa, k32, "FileTimeToSystemTime", &ok);
     W.WSAStartup = (PFN_WSAStartup)need(gpa, ws, "WSAStartup", &ok);
     W.socket = (PFN_socket)need(gpa, ws, "socket", &ok);
     W.connect = (PFN_connect)need(gpa, ws, "connect", &ok);
@@ -454,6 +481,32 @@ static __declspec(naked) void g_stub_dc_set(void) {
             push esi
             push edi
             mov esi, GAME_STUB_DC_SET
+            call esi
+            pop edi
+            pop esi
+            pop ebx
+            ret
+    }
+}
+static __declspec(naked) void g_stub_cw_set(void) {
+    __asm {
+            push ebx
+            push esi
+            push edi
+            mov esi, GAME_STUB_CW_SET
+            call esi
+            pop edi
+            pop esi
+            pop ebx
+            ret
+    }
+}
+static __declspec(naked) void g_stub_pack(void) {
+    __asm {
+            push ebx
+            push esi
+            push edi
+            mov esi, GAME_STUB_PACK
             call esi
             pop edi
             pop esi
@@ -1043,19 +1096,24 @@ static int open_loopback(unsigned short* port) {
 /* ------------------------------------------------------------------ the screen */
 static const char SCRIPT_STOCK[] = "intrface/onlin";       /* 640x480: INTRFACE\ONLINE (load_interface appends the language letter) */
 static const char SCRIPT_STOCK_R[] = "intrface/replay";     /* 640x480: INTRFACE\REPLAYE */
-static char g_script_hd[20];          /* "<folder>/onlin" or "<folder>/replay": the folder copied from the exe's loadg string */
-static char g_probe_hd[20];           /* "<folder>\\ONLINE" or "<folder>\\REPLAYE" */
+static const char SCRIPT_STOCK_L[] = "intrface/loadall";    /* 640x480: INTRFACE\LOADALLE (LOAD GAME, 3 Oct 2026) */
+static char g_script_hd[20];          /* "<folder>/onlin", "<folder>/replay" or "<folder>/loadall": the folder copied from the exe's loadg string */
+static char g_probe_hd[20];           /* "<folder>\\ONLINE", "<folder>\\REPLAYE" or "<folder>\\LOADALLE" */
+#define SCREEN_ONLINE  0
+#define SCREEN_REPLAY  1
+#define SCREEN_LOADALL 2
 
 /* The compiler must not fold "exe address - module address" into one relocated operand (patch_online.py rebases
    only operands that point into the module): the exe string is read through a volatile pointer, unoptimised. */
 #pragma optimize("", off)
-static void init_screen_names(int replay) {
+static void init_screen_names(int screen) {
     const char* volatile dir_p = (const char*)GAME_LOADG_STRING;
     const char* dir = dir_p;
     static const char tail_script[] = "/onlin", tail_probe[] = "\\ONLINE";
     static const char tail_script_r[] = "/replay", tail_probe_r[] = "\\REPLAYE";
-    const char* ts = replay ? tail_script_r : tail_script;
-    const char* tp = replay ? tail_probe_r : tail_probe;
+    static const char tail_script_l[] = "/loadall", tail_probe_l[] = "\\LOADALLE";
+    const char* ts = screen == SCREEN_REPLAY ? tail_script_r : screen == SCREEN_LOADALL ? tail_script_l : tail_script;
+    const char* tp = screen == SCREEN_REPLAY ? tail_probe_r : screen == SCREEN_LOADALL ? tail_probe_l : tail_probe;
     volatile char* s = g_script_hd;
     volatile char* q = g_probe_hd;
     int i;
@@ -1112,7 +1170,7 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
     empty[0] = "";
     g_room_count = 0; g_replay_count = 0; g_replay_total = -1; g_rheader[0] = 0; g_rx_len = 0; g_seq = 0; g_chosen = -1;
     g_pool_mark(pool, POOL_NAME);
-    init_screen_names(replay);
+    init_screen_names(replay ? SCREEN_REPLAY : SCREEN_ONLINE);
     logf2("screen: ", file_exists(g_probe_hd) ? g_script_hd : (replay ? SCRIPT_STOCK_R : SCRIPT_STOCK));
     ip = g_load_interface(ui, file_exists(g_probe_hd) ? g_script_hd : (replay ? SCRIPT_STOCK_R : SCRIPT_STOCK));
     g_draw(ip);
@@ -1234,13 +1292,206 @@ static int room_screen(void* ui, ServerConfig* c, int cfg_err, const char* cfg_m
     return result;
 }
 
+/* ------------------------------------------------------------------ LOAD GAME: every campaign's saves in one list (3 Oct 2026) */
+/* A save is `<folder>/<name>.dcg` (the in-game dialog's name field holds 32 characters, LSGE in_text 54); the game
+   writes it through the mode prefix helper, which falls back to the bare path, so every save sits in one of the three
+   root folders the fix ozi mode stubs name.  Its header (save writer 0x40D4C8 / 0x429D2C, reader 0x40DBFC / 0x429EF8):
+   "DCSF", u16 version 0x1D, u32 0x21340003, then nine dwords of the campaign record - [0] race byte, [1] gs+0x14F0
+   = the game type (0 campaign, 2 network game, 3 training), [2] gs+0x14E4 the side, [3] gs+0x14FC the mission,
+   [4..7] the settings, [8] gs+0x14F4 the pack flag - so the first 46 bytes give the label. */
+#define MAX_SAVES        200
+#define SAVE_NAME_CHARS  32
+#define SAVE_FOLDERS     3
+#define SAVE_HEADER_LEN  46
+#define SAVE_TYPE_OFF    14
+#define SAVE_MARK_OFF    6
+#define SAVE_MARK        0x21340003u
+#define GAME_TYPE_NETWORK  2
+#define GAME_TYPE_TRAINING 3
+#define FOLDER_DC   0   /* save    = ACADEMY (type 3), DARK COLONY (0), a network game saved in battle (2)   */
+#define FOLDER_CW   1   /* esave   = COUNCIL WARS                                                            */
+#define FOLDER_OZI  2   /* ozisave = OZI MISSIONS                                                            */
+typedef struct { unsigned char folder; int type; FILETIME when; char name[SAVE_NAME_CHARS + 1]; char row[ROW_CHARS + 1]; } SaveEntry;
+static const char* const SAVE_FOLDER_NAME[SAVE_FOLDERS] = { "save", "esave", "ozisave" };
+static const char SAVE_EXT[] = ".dcg";
+static SaveEntry* g_saves;          /* MAX_SAVES entries in Work */
+static const char* g_srowptr[MAX_SAVES];
+static int g_save_count;
+static int g_save_per[SAVE_FOLDERS];
+/* the row: `dd.mm.yy hh:mm  <name, 26 columns>  <campaign>` = 8 + 1 + 5 + 2 + 26 + 2 + up to 12 = 56 columns */
+#define ROW_NAME_CHARS 26
+static const char LHEADER_TEXT[] = "DATE     TIME   NAME                        CAMPAIGN";
+
+static void scat_2d(char* d, unsigned v, int cap) { char t[3]; t[0] = (char)('0' + (v / 10) % 10); t[1] = (char)('0' + v % 10); t[2] = 0; scat(d, t, cap); }
+static void scat_pad(char* d, const char* s, int width, int cap) {
+    int i = 0, n = slen(d);
+    while (s[i] && i < width && n + i < cap - 1) { d[n + i] = s[i]; i++; }
+    while (i < width && n + i < cap - 1) { d[n + i] = ' '; i++; }
+    d[n + i] = 0;
+}
+
+/* The campaign a save belongs to - the folder decides the mode, the game type tells ACADEMY from DARK COLONY in save/ */
+static const char* save_campaign(const SaveEntry* e) {
+    if (e->folder == FOLDER_CW) return "Council wars";
+    if (e->folder == FOLDER_OZI) return "Ozi missions";
+    if (e->type == GAME_TYPE_TRAINING) return "Academy";
+    if (e->type == GAME_TYPE_NETWORK) return "Multiplayer";
+    if (e->type < 0) return "Unknown";
+    return "Dark Colony";
+}
+
+/* The game type of a save file, -1 when the header is not a save's */
+static int save_type(const char* path) {
+    unsigned char h[SAVE_HEADER_LEN]; HANDLE f; DWORD got = 0;
+    f = W.CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (f == INVALID_HANDLE_VALUE) return -1;
+    if (!W.ReadFile(f, h, sizeof h, &got, 0)) got = 0;
+    W.CloseHandle(f);
+    if (got < sizeof h || h[0] != 'D' || h[1] != 'C' || h[2] != 'S' || h[3] != 'F') return -1;
+    if (*(unsigned*)(h + SAVE_MARK_OFF) != SAVE_MARK) return -1;
+    return *(int*)(h + SAVE_TYPE_OFF);
+}
+
+static int later(const FILETIME* a, const FILETIME* b) {
+    return a->dwHighDateTime > b->dwHighDateTime || (a->dwHighDateTime == b->dwHighDateTime && a->dwLowDateTime > b->dwLowDateTime);
+}
+
+static void save_path(char* d, int cap, const SaveEntry* e) {
+    scopy(d, SAVE_FOLDER_NAME[e->folder], cap); scat(d, "/", cap); scat(d, e->name, cap); scat(d, SAVE_EXT, cap);
+}
+
+/* One folder's `*.dcg` files into the table, kept sorted newest first (FindFirstFile's `*.dcg` would also match
+   longer extensions through the short names, so the extension is checked here). */
+static void scan_folder(int folder) {
+    WIN32_FIND_DATAA fd; HANDLE h; char pattern[64];
+    scopy(pattern, SAVE_FOLDER_NAME[folder], sizeof pattern); scat(pattern, "\\*", sizeof pattern);
+    h = W.FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        int n = slen(fd.cFileName), pos;
+        SaveEntry e;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (n <= 4 || !ieq(fd.cFileName + n - 4, SAVE_EXT)) continue;
+        if (n - 4 > SAVE_NAME_CHARS) continue;                   /* not a name the game's own dialog can have written */
+        if (g_save_count >= MAX_SAVES) break;
+        memset(&e, 0, sizeof e);
+        e.folder = (unsigned char)folder;
+        memcpy(e.name, fd.cFileName, n - 4); e.name[n - 4] = 0;
+        e.when = fd.ftLastWriteTime;
+        save_path(e.row, sizeof e.row, &e);                      /* the row buffer serves as the path for a moment */
+        e.type = save_type(e.row);
+        for (pos = g_save_count; pos > 0 && later(&e.when, &g_saves[pos - 1].when); pos--) g_saves[pos] = g_saves[pos - 1];
+        g_saves[pos] = e;
+        g_save_count++; g_save_per[folder]++;
+    } while (W.FindNextFileA(h, &fd));
+    W.FindClose(h);
+}
+
+static void build_rows(void) {
+    int i;
+    for (i = 0; i < g_save_count; i++) {
+        SaveEntry* e = &g_saves[i]; FILETIME lt; SYSTEMTIME st;
+        memset(&st, 0, sizeof st);
+        if (!W.FileTimeToLocalFileTime(&e->when, &lt) || !W.FileTimeToSystemTime(&lt, &st)) memset(&st, 0, sizeof st);
+        e->row[0] = 0;
+        scat_2d(e->row, st.wDay, sizeof e->row); scat(e->row, ".", sizeof e->row);
+        scat_2d(e->row, st.wMonth, sizeof e->row); scat(e->row, ".", sizeof e->row);
+        scat_2d(e->row, st.wYear, sizeof e->row); scat(e->row, " ", sizeof e->row);
+        scat_2d(e->row, st.wHour, sizeof e->row); scat(e->row, ":", sizeof e->row);
+        scat_2d(e->row, st.wMinute, sizeof e->row); scat(e->row, "  ", sizeof e->row);
+        scat_pad(e->row, e->name, ROW_NAME_CHARS, sizeof e->row); scat(e->row, "  ", sizeof e->row);
+        scat(e->row, save_campaign(e), sizeof e->row);
+        g_srowptr[i] = e->row;
+    }
+}
+
+static void scan_saves(void) {
+    int f;
+    g_save_count = 0;
+    for (f = 0; f < SAVE_FOLDERS; f++) { g_save_per[f] = 0; scan_folder(f); }
+    build_rows();
+}
+
+/* The LOAD GAME screen: returns 1 with `<folder>/<name>.dcg` in `out` and the game switched to that folder's mode,
+   0 after BACK.  The three text lines under the list: the count per folder, the selected file, the state. */
+static int load_screen(void* ui, char* out, int cap) {
+    void* pool = *(void**)((unsigned char*)ui + GAME_UI_POOL_OFF);
+    void* ip; const char* empty[1]; char line[ROW_CHARS + 1];
+    int result = 0, arg = 0, last_sel = -2;
+    empty[0] = "";
+    g_pool_mark(pool, POOL_NAME);
+    init_screen_names(SCREEN_LOADALL);
+    logf2("screen: ", file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK_L);
+    ip = g_load_interface(ui, file_exists(g_probe_hd) ? g_script_hd : SCRIPT_STOCK_L);
+    g_draw(ip);
+    scan_saves();
+    logu("saves found ", (unsigned)g_save_count);
+    g_set_text(ip, W_HEADER, LHEADER_TEXT);
+    g_list_set(ip, W_LIST, g_save_count ? g_srowptr : empty, g_save_count);
+    scopy(line, "Saves: ", sizeof line); scat_uint(line, (unsigned)g_save_count, sizeof line);
+    scat(line, " (save ", sizeof line); scat_uint(line, (unsigned)g_save_per[FOLDER_DC], sizeof line);
+    scat(line, ", esave ", sizeof line); scat_uint(line, (unsigned)g_save_per[FOLDER_CW], sizeof line);
+    scat(line, ", ozisave ", sizeof line); scat_uint(line, (unsigned)g_save_per[FOLDER_OZI], sizeof line); scat(line, ")", sizeof line);
+    if (has_in_text(ip, W_NAME)) g_set_text(ip, W_NAME, line);
+    g_set_text(ip, W_SERVER, "File: -");
+    status(ip, g_save_count ? "Select a save and press LOAD." : "No saved game found.");
+    for (;;) {
+        int kind, sel = g_list_sel(ip, W_LIST);
+        if (sel != last_sel) {
+            last_sel = sel;
+            scopy(line, "File: ", sizeof line);
+            if (sel >= 0 && sel < g_save_count) save_path(line + 6, (int)sizeof line - 6, &g_saves[sel]); else scat(line, "-", sizeof line);
+            g_set_text(ip, W_SERVER, line);
+        }
+        kind = g_pump(ip, &arg);
+        if (kind == 1) {
+            if (arg == W_BACK) break;
+            if (arg == W_ENTER) {
+                if (sel < 0 || sel >= g_save_count) { status(ip, "Select a save first."); continue; }
+                save_path(out, cap, &g_saves[sel]);
+                scopy(line, "Loading ", sizeof line); scat(line, g_saves[sel].name, sizeof line); scat(line, "...", sizeof line);
+                status(ip, line);
+                g_pump(ip, &arg);       /* paint the line before the load */
+                /* the folder's mode: prefix, save folder and music source, as the three former load buttons set them */
+                if (g_saves[sel].folder == FOLDER_CW) g_stub_cw_set();
+                else if (g_saves[sel].folder == FOLDER_OZI) g_stub_pack();
+                else g_stub_dc_set();
+                logf2("LOAD ", out);
+                result = 1;
+                break;
+            }
+        } else if (kind == 0) {
+            W.Sleep(1);
+        }
+    }
+    g_unload(&ip);
+    g_pool_free(pool, POOL_NAME);
+    return result;
+}
+
 /* ------------------------------------------------------------------ entry points */
 #pragma pack(push, 1)
 typedef struct { unsigned short port; unsigned short pad; const char* host; } NetAddress;   /* the game reads the host pointer at +4 (0x405BEB..0x405C16) */
 #pragma pack(pop)
 
-typedef struct { Stream stream; unsigned char rx[RX_CAP]; unsigned char pbuf[PBUF_CAP]; unsigned char frame[1030]; char cfgbuf[CFGBUF_CAP]; ReplayEntry replays[MAX_REPLAYS]; } Work;
+typedef struct { Stream stream; unsigned char rx[RX_CAP]; unsigned char pbuf[PBUF_CAP]; unsigned char frame[1030]; char cfgbuf[CFGBUF_CAP]; ReplayEntry replays[MAX_REPLAYS]; SaveEntry saves[MAX_SAVES]; } Work;
 static Work* g_work;
+
+static int ensure_work(void) {
+    if (g_work) return 1;
+    g_work = (Work*)W.VirtualAlloc(0, sizeof(Work), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!g_work) { logf("VirtualAlloc failed"); return 0; }
+    g_st = &g_work->stream; g_rx = g_work->rx; g_pbuf = g_work->pbuf; g_frame = g_work->frame; g_cfgbuf = g_work->cfgbuf; g_replays = g_work->replays; g_saves = g_work->saves;
+    return 1;
+}
+
+/* The picker the stock LOAD GAME code 0x403AA4 calls (cdecl side of the thunk below): al = f(ui, buf, cap). */
+static int __cdecl load_picker(void* ui, char* buf, int cap) {
+    if (!resolve_imports()) return 0;
+    logf("--- LOAD GAME pressed");
+    if (!ensure_work()) return 0;
+    return load_screen(ui, buf, cap);
+}
 
 /* Both buttons: the screen, then - after ENTERING / REPLAYING - the loopback proxy and the game's own network entry. */
 static int run(void* ui, void* gs, int replay) {
@@ -1249,11 +1500,7 @@ static int run(void* ui, void* gs, int replay) {
     if (!resolve_imports()) return 0;
     logf(replay ? "--- REPLAY ONLINE GAME pressed" : "--- ONLINE WAR pressed");
     g_viewer = replay; g_last_spent = 0; g_money_logged = 0;
-    if (!g_work) {
-        g_work = (Work*)W.VirtualAlloc(0, sizeof(Work), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (!g_work) { logf("VirtualAlloc failed"); return 0; }
-        g_st = &g_work->stream; g_rx = g_work->rx; g_pbuf = g_work->pbuf; g_frame = g_work->frame; g_cfgbuf = g_work->cfgbuf; g_replays = g_work->replays;
-    }
+    if (!ensure_work()) return 0;
     /* the same mode MULTI PLAYER WAR sets: Classic tables through the dc/ prefix, music source ALL */
     g_stub_dc_set();
     *(unsigned char*)GAME_MUSIC_SRC = 2;
@@ -1285,6 +1532,28 @@ static int run(void* ui, void* gs, int replay) {
 
 __declspec(dllexport) int __cdecl online_war(void* ui, void* gs) { return run(ui, gs, 0); }
 __declspec(dllexport) int __cdecl replay_game(void* ui, void* gs) { return run(ui, gs, 1); }
+
+/* LOAD GAME (3 Oct 2026): the `call 0x40388C` at 0x403ABC in the stock LOAD GAME code lands here with the
+   Watcom arguments eax = ui, edx = the 64-byte path buffer, ebx = its size, cl = 0 (the load form; the save
+   form of 0x403B4C still calls the stock picker directly, and would get it from here too).  Returns al.
+   cdecl preserves ebx/esi/edi/ebp, and a Watcom callee may clobber the registers it received, so nothing
+   else needs saving. */
+__declspec(dllexport) __declspec(naked) void load_game_picker(void) {
+    __asm {
+        test cl, cl
+        jnz stock
+        push ebx            ; cap
+        push edx            ; buf
+        push eax            ; ui
+        call load_picker
+        add esp, 12
+        and eax, 0xFF
+        ret
+    stock:
+        push GAME_STOCK_PICKER
+        ret                 ; a jump that touches no register
+    }
+}
 
 /* The main menu's id chain jumps here from the seven NOP bytes at 0x405136 (fix ozi's tail) with
    eax = the game state, edi = the button id and [ebp-4] = the screen (see patch_ozi_menu.py):

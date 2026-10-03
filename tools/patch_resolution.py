@@ -105,7 +105,9 @@ ANCHOR_PREFIX = bytes.fromhex('4f016e01')
 CREDITS_W = 280
 CREDITS_H = 100                 # the stock box height (`push 64h`)
 LOGO_CLEARANCE = 20
-OZI_BLOCK_RISE = 192            # seven-row menu block, first row to bottom row: 6 x pitch 26 + 3 x 12 px gap
+OZI_BLOCK_RISE = 116            # five-row menu block, first row to bottom row: 4 x pitch 26 + 1 x 12 px gap (3 Oct 2026:
+                                # one LOAD GAME button, doc 10.67; the seven-row block of 23 Sep - 3 Oct 2026 rose 192 rows,
+                                # which shortened the box to 94 rows at 1024x768 and 76 at 1280x720 - now the stock 100 everywhere)
 MENU_BOTTOM_ROW_MARGIN = 72     # the block's bottom row is H-72 at most (stock 640x480 row 408; artwork from H-45)
 CREDITS_TO_BUTTONS = 9          # black rows between the box and the first button row
 
@@ -115,9 +117,11 @@ def credits_y(stock_y, cluster_centre):
 
 
 def cw_credits_height(g):
-    """Rows of the Council Wars credits box above the patched seven-row menu (doc 10.36): the stock
-    100 where the block can sit 120 rows under the title, less on short screens (94 at 1024x768,
-    76 at 1280x720). Must agree with build_ozi_overlay.menu_layout and the patcher's Edit-OziMenu."""
+    """Rows of the Council Wars credits box above the patched menu block (doc 10.36): the stock
+    100 where the block can sit 120 rows under the title, less on short screens (with the seven-row
+    block 94 at 1024x768 and 76 at 1280x720; the five-row block since 3 Oct 2026 fits everywhere, so
+    the site is a no-op and skipped at every size). Must agree with build_ozi_overlay.menu_layout and
+    the patcher's Edit-OziMenu."""
     lift = cw_menu_lift(g.h)
     y = credits_y(203, 296)(g) - lift
     return min(CREDITS_H, g.h - MENU_BOTTOM_ROW_MARGIN - lift - OZI_BLOCK_RISE - CREDITS_TO_BUTTONS - y)
