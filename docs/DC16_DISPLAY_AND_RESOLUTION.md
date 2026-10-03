@@ -6644,7 +6644,7 @@ pointer move to the view's edge did not start the edge scroll" and, meanwhile, "
   downscaled, this one upscales - the proxy / `CaptureMouse` interplay differs; left as is). A true test needs a
   monitor with a >60 Hz mode or a virtual display driver (an IddCx driver such as the open-source "Virtual Display
   Driver", installed as admin with its certificate - a system change left to the maintainer); the Wine rig remains
-  the one presenter without a vblank wait, and there the cap holds (57-60 frames per second, 350-380 before).
+  the one presenter without a vblank wait, and there the cap holds (57-60 frames per second, 350-380 before). **Committed and pushed 3 Oct 2026: Dark-Colony `ef41557`, Server `98f5e88`.**
 
 ### 10.70 Battlefield pointer animation at the menus' pace (fix `pointer`, 3 Oct 2026)
 
@@ -6688,4 +6688,4 @@ alone; a `pointer` applied without `fps` works on the stock tails too.
 
 **Rule.** Two fixes sharing one dead region split it at an instruction boundary of the NEW code, not of the
 old: the gate's first range starts two bytes into a dead instruction, which is harmless (nothing executes
-there) but must be in the stock pattern.
+there) but must be in the stock pattern. **Committed and pushed 3 Oct 2026: Dark-Colony `ef41557`, Server `98f5e88`.**
