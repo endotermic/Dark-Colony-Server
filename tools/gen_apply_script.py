@@ -51,7 +51,7 @@ MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='u
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '2.1'   # 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs
+PATCHER_VERSION = '2.2'   # 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried
 
 
 def _git_state(repo):
@@ -244,13 +244,15 @@ def console_data(g, mode=None):
 
 
 def ozi_data(g, mode=None):
-    """Data files the OZI MISSIONS mode needs: the whole ozi_ns/ overlay, the pack's base-set
-    additions in exp/ (animozi.dat, the new units, the tranozi transport) and the ozisave marker."""
+    """Data files the OZI MISSIONS mode needs: the whole ozi_ns/ overlay and the pack's base-set
+    additions in exp/ (animozi.dat, the new units, the tranozi transport).  NOT ozisave\\ozisave.txt: the
+    save folder's marker is created by the patcher itself (Write-OziSaveFolder) - "patcher must not
+    carry ozisave, ozisave.txt must be created from scratch" (maintainer, 5 Oct 2026)."""
     # not the pack's interface set copies ozi_ns\HD_0768P\ (the patcher writes them per resolution and deletes the other
     # sizes' folders - 2 Oct 2026): a Data file that a run deletes would make the fix "unavailable" at every other size
     # since 5 Oct 2026 the pack's own files are resources (patcher/game/ozi_ns ...); the ozi_ns files that are copies of
     # stock files (terrains, ambience, sounds) stay in the game folder, where a disc install extracts them
-    files = sorted({f for f in _tree(g, 'ozi_ns') + _rtree(g, 'ozi_ns') if not re.match(r'(?i)ozi_ns\\((?:HD|UW)_\d{4}P|intrf_hd)\\', f)}, key=str.lower) + _rtree(g, 'ozisave')   # the game folder and the patcher copies name the same files once
+    files = sorted({f for f in _tree(g, 'ozi_ns') + _rtree(g, 'ozi_ns') if not re.match(r'(?i)ozi_ns\\((?:HD|UW)_\d{4}P|intrf_hd)\\', f)}, key=str.lower)   # the game folder and the patcher copies name the same files once
     files += _rtree(g, 'exp', pattern=r'^animozi\.dat$')
     files += _rtree(g, 'exp', 'animate', pattern=r'^(dalg|spyo|reae|tranozi)\.fin$')
     files += _rtree(g, 'exp', 'sprites', pattern=r'^(dalg|spyo|reae|tranozi)\.spr$')
@@ -1663,7 +1665,8 @@ W(r'''.SYNOPSIS
         editor's folder before a build is patched - the repository's game folders hold the same files
         already, so there the copy changes nothing; a fix's data file counts as present when the
         resource folder holds it.  INSTALL.CMD + PATCH_HOWTO.TXT + patcher\ is the installer package
-        published on ModDB: it holds nothing of the game itself
+        published on ModDB: it holds nothing of the game itself.  The OZI save folder ozisave\ and
+        its marker file ozisave.txt are not resources: the ozi step creates them when they are missing
       * a player without a game folder installs the game from the two ORIGINAL DISCS first (the
         welcome page's checkbox, ticked by itself when no game folder is found beside the package;
         -InstallDir with -CouncilWarsDisc and -DarkColonyDisc on the command line): the Council Wars
@@ -3275,6 +3278,20 @@ function Write-StockOziMenu([string] $GameDir) {
     }
     return $lines
 }
+# ozi: the OZI MISSIONS save folder.  stub_pack points the two save-folder slots at `ozisave`, and the game writes a save
+# as ozisave\<name>.dcg without creating the folder - so the folder must exist before the first OZI save.  The marker
+# file ozisave.txt (the same line the repository's game folder carries) is written from scratch here; it is not a
+# resource of this script ("patcher must not carry ozisave" - maintainer, 5 Oct 2026).  Nothing is overwritten.
+function Write-OziSaveFolder([string] $GameDir) {
+    $lines = @()
+    $d = Join-Path $GameDir 'ozisave'
+    if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; $lines += 'created ozisave\ (the OZI MISSIONS save folder)' }
+    if (-not (Find-CI $d 'ozisave.txt')) {
+        Write-Latin1 (Join-Path $d 'ozisave.txt') "Save games of the OZI MISSIONS campaign mode (ozi_ns mission pack).`r`n"
+        $lines += 'wrote ozisave\ozisave.txt (the save folder''s marker, created from scratch)'
+    }
+    return $lines
+}
 
 # The battlefield options dialog with the MUSIC row (Dark Colony Ultimate, fix `music`, doc 10.41): the port of
 # patch_music.music_row(), byte-identical.  The GAME DETAIL row (pushb 44/45, in_text 48, label 63, cell picture
@@ -3857,6 +3874,11 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
         try { $generated += Remove-OtherInterfaceSets $dir '' } catch { $generated += ('interface folders NOT deleted: ' + $_.Exception.Message) }
         if ($ordered | Where-Object { $_.Id -eq 'movies' }) { try { $generated += Write-StockEndingLists $dir } catch { $generated += 'GAMESTAT lists NOT written: ' + $_.Exception.Message } }
         if ($ordered | Where-Object { $_.Id -eq 'ozi' })    { try { $generated += Write-StockOziMenu $dir } catch { $generated += 'bintoze NOT written: ' + $_.Exception.Message } }
+    }
+    # Dark Colony Ultimate's `ozi` fix: the OZI MISSIONS save folder and its marker file, created when missing
+    if ($Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'ozi' })) {
+        $dir = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
+        try { $generated += Write-OziSaveFolder $dir } catch { $generated += 'ozisave NOT created: ' + $_.Exception.Message }
     }
     # Dark Colony Ultimate's `music` fix: the options dialog with the MUSIC row for its three campaign modes
     if ($Mode -and $Build.Id -eq 'CouncilWars' -and ($ordered | Where-Object { $_.Id -eq 'music' })) {

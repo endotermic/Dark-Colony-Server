@@ -6718,7 +6718,7 @@ size, the console banks, KNOBR), `SPRITES/DC??_HD.SPR` + `CLOCK.SPR` + `TRAC.SPR
 FIN/SPR, the two modified stock files `exp/intrface/bintroe` and `exp/gamestat/weapstat.txt` (kept in the game folder as
 well - the untouched ENGEXP16.EXE reads them), the pack's own `ozi_ns/gamestat`, `intrface/astory|hstory.txt`,
 `mission/*.wav` (the pack's real briefings, 23 files, 50 MB - not silent placeholders; only `h80.wav` is), `scenario/
-council|globo`, `jubjub.bts`, `special.bts`, seven sounds, `ozisave/ozisave.txt`; for the editor the Borland runtimes
+council|globo`, `jubjub.bts`, `special.bts`, seven sounds (not `ozisave/ozisave.txt` - see the end of this section); for the editor the Borland runtimes
 `BWCC.DLL`, `BWCC32.DLL`, `CW3215MT.DLL` (the disc has them only inside the InstallShield `DATA.Z`) and
 `scenario/atlantis.set`. A first form moved them out of the game folders with `git mv`; the maintainer's second
 instruction the same day ("don't delete files from where they was! You must use 'patcher' directory as a source from where
@@ -6801,3 +6801,5 @@ files); PowerShell variable names are case-insensitive, so a local `$dir` clobbe
 derived files landed under `SCENARIO\HUMAN\`; `` `u001a `` is a parse error in pwsh 7 and silently `u001a` in 5.1 -
 `[char] 0x1A`. Package: `tools/make_installer_zip.py` (`INSTALL.CMD` + `PATCH_HOWTO.TXT` + `patcher/`, every file
 checked against the index).
+
+**`ozisave` is not carried; `ozisave.txt` is created from scratch (5 Oct 2026, maintainer: "patcher must not carry 'ozisave'. ozisave.txt must be created from scratch"; patcher 2.2).** `patcher/game/ozisave/ozisave.txt` is removed from the repository (`git rm`) and `tools/discs.py` classes `ozisave/ozisave.txt` as an OUTPUT (`OUTPUT_RE`), so it left the manifest's resource list (365 resources) and the installer zip (368 entries); `gen_apply_script.ozi_data` no longer lists it as a `Data` file. The generated script's `Write-OziSaveFolder` runs after every Dark Colony Ultimate build with the `ozi` fix (any resolution, the disc install too): it creates `ozisave\` when missing (stub_pack points both save-folder slots at it and the game writes `ozisave\<name>.dcg` without creating the folder) and writes `ozisave\ozisave.txt` with the one line the game folder's marker carries when no such file exists; nothing is overwritten (a second run writes nothing, saves beside it stay). Verified on a clean copy of the index with `ozisave\` deleted before each run: pwsh 7 and PowerShell 5.1 `tr-TR` at 1024x768 dark = `3cba8b55…` / `de8076dc…`, set = fixture, marker byte-identical to the repository's; 640x480 = `be1b3fa0…`; the disc install from `.iso` + folder = `b21baac1…`, 2263 disc files identical, `ozisave\ozisave.txt` present. The game folder's own `DC - Council wars/ozisave/ozisave.txt` stays tracked (an output now, like the HD sets).

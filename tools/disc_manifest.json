@@ -11501,6 +11501,7 @@
   "game:ozi_ns/HD_0768P/introe",
   "game:ozi_ns/HD_0768P/lopte",
   "game:ozi_ns/HD_0768P/shumane",
+  "game:ozisave/ozisave.txt",
   "editor:Dark Colony Map Editor.exe"
  ],
  "local": [
@@ -11884,7 +11885,6 @@
   "game:ozi_ns/sound/KOMANDWE.wav",
   "game:ozi_ns/sound/KOMANWEA.wav",
   "game:ozi_ns/sound/slist.dat",
-  "game:ozisave/ozisave.txt",
   "editor:BWCC.DLL",
   "editor:BWCC32.DLL",
   "editor:CW3215MT.DLL",

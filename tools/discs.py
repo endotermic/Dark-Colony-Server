@@ -122,7 +122,9 @@ def md5(data):
 # --- what a tracked file of the game repository is -------------------------------------------------------------
 GAME_FOLDER = 'DC - Council wars'
 EDITOR_FOLDER = 'Dark Colony - Map editor'
-OUTPUT_RE = re.compile(r'(?i)^(?:(?:exp|dc|ozi_ns)/)?(?:HD|UW)_\d{4}P/|^Dark Colony( Ultimate| Map Editor)?\.exe$|^INTRFACE/(ONLINE|ONLINEBG\.GIF|REPLAYE|REPLAYBG\.GIF|LOADALLE)$')
+# (ozisave/ozisave.txt: the OZI save folder's marker is created by the patcher from scratch, never carried as a
+# resource - maintainer, 5 Oct 2026)
+OUTPUT_RE = re.compile(r'(?i)^(?:(?:exp|dc|ozi_ns)/)?(?:HD|UW)_\d{4}P/|^Dark Colony( Ultimate| Map Editor)?\.exe$|^INTRFACE/(ONLINE|ONLINEBG\.GIF|REPLAYE|REPLAYBG\.GIF|LOADALLE)$|^ozisave/ozisave\.txt$')
 # repository-only files: not on a disc, not the project's resources, never in the installer package
 LOCAL_RE = re.compile(r'(?i)^(?:MUSIC/|exp/music/).*\.mp3$|^dc16\.exe$|^DeIsL\d\.isu$|^readme\.doc$|^ERROR\.LOG$|^HBNFUFL\.A0[12]$|^hbnfufl\.a01$')
 # files the installer derives: the 1998 update's typo fix in mission 9's trigger file (the disc has the 1997 text)
