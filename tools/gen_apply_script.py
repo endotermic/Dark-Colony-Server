@@ -25,13 +25,25 @@ ONE patch, `nocd` (patch_nocd.py; maintainer requirement 18 Sep 2026): it carrie
 hand-patched 2025 bytes (formerly `cdcheck`) and the removal of the whole CD path; it goes first,
 and patch_resolution.py accepts the resulting exe by size (its MD5 table only knows the 2025 state).
 """
-import re, struct, hashlib, sys, os, shutil, subprocess, tempfile, base64
+import re, struct, hashlib, sys, os, shutil, subprocess, tempfile, base64, json
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS)
 from hdfolder import hd_folder, hd_token, SRC_DIR     # one interface folder per resolution (2 Oct 2026, doc 10.61)
+import gen_disc_install                                # the disc install and the resource copy (5 Oct 2026)
+import resources as resmod                            # where the patcher's resources live (patcher/game, patcher/editor)
 GAME = sys.argv[1]
 OUT = sys.argv[2]
+# Since 5 Oct 2026 (maintainer: "put all patcher's resources and scripts (except installer.cmd and PATCH_HOWTO.TXT)
+# into a separate folder", then "don't delete files from where they was! You must use 'patcher' directory as a source
+# from where you take resources and copy to the places where they must reside") the generated script lives in
+# <repo>/patcher/ with a COPY of the project's own data files beside it: patcher/game/<rel> is copied into the game
+# folder, patcher/editor/<rel> into the map editor's folder, before a build is patched.  The game folders of the
+# repository keep every file where it was (the checkout stays playable); tools/resources.py sync|check keep the two
+# sides equal.  Data lists are enumerated from the game folders (_tree) and the copies (_rtree) alike.
+RES_DIR = {'classic': os.path.join(GAME, resmod.PATCHER_DIR, 'game'), 'cw': os.path.join(GAME, resmod.PATCHER_DIR, 'game'),
+           'maped': os.path.join(GAME, resmod.PATCHER_DIR, 'editor')}
+MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='utf-8'))   # which disc holds which stock file (tools/discs.py)
 
 # Version and build number of the generated installer (maintainer, 2 Oct 2026: "add version number and build
 # number to the installer").  PATCHER_VERSION is set by hand here whenever the patcher's behaviour changes (its
@@ -39,7 +51,7 @@ OUT = sys.argv[2]
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '1.6'
+PATCHER_VERSION = '2.1'   # 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs
 
 
 def _git_state(repo):
@@ -140,6 +152,31 @@ def _tree(g, *parts, pattern=None):
     return sorted(out, key=str.lower)
 
 
+def _rtree(g, *parts, pattern=None):
+    """Like _tree, for the patcher's resource folder of the build (patcher/game | patcher/editor)."""
+    key = 'res:' + g
+    if key not in _LS_FILES:
+        sub = os.path.relpath(RES_DIR[g], GAME).replace('\\', '/')
+        r = subprocess.run(['git', '-C', GAME, 'ls-files', '--', sub], capture_output=True, text=True, check=True)
+        _LS_FILES[key] = [l[len(sub) + 1:] for l in r.stdout.splitlines() if l.startswith(sub + '/')]
+    prefix = '/'.join(parts) + '/' if parts else ''
+    out = []
+    for rel in _LS_FILES[key]:
+        if not rel.lower().startswith(prefix.lower()):
+            continue
+        name = rel.rsplit('/', 1)[-1]
+        if pattern and not re.search(pattern, name, re.I):
+            continue
+        out.append(rel.replace('/', '\\'))
+    return sorted(out, key=str.lower)
+
+
+def has_data(g, rel):
+    """A fix's data file exists in the repository's game folder or among the resources (the patcher checks both)."""
+    r = rel.replace('\\', os.sep)
+    return os.path.exists(os.path.join(GAME_DIR[g], r)) or os.path.exists(os.path.join(RES_DIR[g], r))
+
+
 def hd_data(g, mode=None):
     """Data files the 1024x768 exe needs (patches `resolution` + `hdpaths`): the INTRF_HD tree, the
     re-baked logo banks and their FINs, and Council Wars' exp/intrf_hd overrides.  Enumerated from
@@ -164,13 +201,13 @@ def hd_data(g, mode=None):
         assert os.path.exists(src), src
         files.append('INTRFACE\\' + name)
     files += ['GAMESTAT\\' + x for x in ('HSCENE.TXT', 'GSCENE.TXT', 'HTSCENE.TXT', 'GTSCENE.TXT')]
-    files += _tree(g, 'SPRITES', pattern=r'_HD\.SPR$') + _tree(g, 'ANIMATE', pattern=r'_HD\.FIN$')
+    files += _rtree(g, 'SPRITES', pattern=r'_HD\.SPR$') + _rtree(g, 'ANIMATE', pattern=r'_HD\.FIN$')   # the re-baked logo banks are resources (5 Oct 2026)
     if g == 'cw':
         files += ['exp\\intrface\\' + x for x in ('bintroe', 'introe', 'shumane')]
         files += ['exp\\gamestat\\' + x for x in ('hxscene.txt', 'gxscene.txt')]
         files += ['ozi_ns\\gamestat\\' + x for x in ('hxscene.txt', 'gxscene.txt')]
     for f in files:
-        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+        assert has_data(g, f), (g, f)
     assert 55 <= len(files) <= 75, (g, len(files))
     return files
 
@@ -184,7 +221,7 @@ def set_sources(g, mode):
     doc 10.56) and the spliced HUD frame, shipped as HD_SRC\\<WxH>\\*.GIF (until 1 Oct 2026 INTRF_HD\\<WxH>)."""
     out = ['%s\\%s\\%s' % (SRC_DIR, mode, x) for x in SHIPPED_PICTURES]
     for f in out:
-        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+        assert os.path.exists(os.path.join(RES_DIR[g], f.replace('\\', os.sep))), (g, f)   # a resource (patcher/game) since 5 Oct 2026
     return out
 
 
@@ -193,7 +230,7 @@ def online_data(g, mode=None):
     (patch_online.py bank: KNOBE + the empty box), read by the REPLAYE screen as `pictures hd_src/knobr`."""
     out = [SRC_DIR + '\\KNOBR.SPR']
     for f in out:
-        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+        assert os.path.exists(os.path.join(RES_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
 
 
@@ -202,7 +239,7 @@ def console_data(g, mode=None):
     redrawn clock dial the exe reads as sprites/clock (hud_console.py, doc 10.49)."""
     out = [SRC_DIR + '\\MAINBUT.SPR', SRC_DIR + '\\POPP.SPR', 'SPRITES\\CLOCK.SPR']
     for f in out:
-        assert os.path.exists(os.path.join(GAME_DIR[g], f.replace('\\', os.sep))), (g, f)
+        assert os.path.exists(os.path.join(RES_DIR[g], f.replace('\\', os.sep))), (g, f)
     return out
 
 
@@ -211,10 +248,12 @@ def ozi_data(g, mode=None):
     additions in exp/ (animozi.dat, the new units, the tranozi transport) and the ozisave marker."""
     # not the pack's interface set copies ozi_ns\HD_0768P\ (the patcher writes them per resolution and deletes the other
     # sizes' folders - 2 Oct 2026): a Data file that a run deletes would make the fix "unavailable" at every other size
-    files = [f for f in _tree(g, 'ozi_ns') if not re.match(r'(?i)ozi_ns\\((?:HD|UW)_\d{4}P|intrf_hd)\\', f)] + _tree(g, 'ozisave')
-    files += _tree(g, 'exp', pattern=r'^animozi\.dat$')
-    files += _tree(g, 'exp', 'animate', pattern=r'^(dalg|spyo|reae|tranozi)\.fin$')
-    files += _tree(g, 'exp', 'sprites', pattern=r'^(dalg|spyo|reae|tranozi)\.spr$')
+    # since 5 Oct 2026 the pack's own files are resources (patcher/game/ozi_ns ...); the ozi_ns files that are copies of
+    # stock files (terrains, ambience, sounds) stay in the game folder, where a disc install extracts them
+    files = sorted({f for f in _tree(g, 'ozi_ns') + _rtree(g, 'ozi_ns') if not re.match(r'(?i)ozi_ns\\((?:HD|UW)_\d{4}P|intrf_hd)\\', f)}, key=str.lower) + _rtree(g, 'ozisave')   # the game folder and the patcher copies name the same files once
+    files += _rtree(g, 'exp', pattern=r'^animozi\.dat$')
+    files += _rtree(g, 'exp', 'animate', pattern=r'^(dalg|spyo|reae|tranozi)\.fin$')
+    files += _rtree(g, 'exp', 'sprites', pattern=r'^(dalg|spyo|reae|tranozi)\.spr$')
     # 375 since 21 Sep 2026: the 19 `.o16` minimap caches of the pack maps were untracked (game-written,
     # `*.o16` is gitignored in Dark-Colony; the game recreates them on first load).
     assert len(files) >= 370, (g, len(files))
@@ -222,8 +261,8 @@ def ozi_data(g, mode=None):
     files += ['dc\\intrface\\credits.txt']   # the DARK COLONY mode's overlay: the Council Wars credits (its menu and dialog copies are written per resolution)
     # tracer bullets (tracer.py, 2 Oct 2026): the TRAC bank the patched exe loads through animozi.dat and the
     # weapon-table overlays (human trooper -> TRAC, upgraded Gray trooper -> GRAY); the root tables stay stock
-    files += _tree(g, 'ANIMATE', pattern=r'^trac\.fin$') + _tree(g, 'SPRITES', pattern=r'^trac\.spr$')
-    files += _tree(g, 'dc', 'gamestat', pattern=r'^weapstat\.txt$') + _tree(g, 'exp', 'gamestat', pattern=r'^weapstat\.txt$')
+    files += _rtree(g, 'ANIMATE', pattern=r'^trac\.fin$') + _rtree(g, 'SPRITES', pattern=r'^trac\.spr$')
+    files += _rtree(g, 'dc', 'gamestat', pattern=r'^weapstat\.txt$') + _rtree(g, 'exp', 'gamestat', pattern=r'^weapstat\.txt$')
     assert {f.lower() for f in files} >= {'animate\\trac.fin', 'sprites\\trac.spr', 'dc\\gamestat\\weapstat.txt',
                                           'exp\\gamestat\\weapstat.txt'}, 'tracer files missing from the index (git add them)'
     if mode == STOCK_MODE:
@@ -232,7 +271,7 @@ def ozi_data(g, mode=None):
 
 
 # the icon every patched exe gets (fix `icon`, 25 Sep 2026): made by make_dc_icon.py from DC.ICO's geometry
-ICON_FILE = os.path.join(GAME, 'DC - Council wars', 'DC_HD.ICO')
+ICON_FILE = os.path.join(RES_DIR['cw'], 'DC_HD.ICO')      # a resource (patcher/game) since 5 Oct 2026
 
 TOOL_OF = {'nocd': 'patch_nocd.py',
            'resolution': 'patch_resolution.py', 'hdpaths': 'patch_hd_paths.py', 'cursor': 'patch_cursor.py',
@@ -1616,6 +1655,29 @@ W(r'''.SYNOPSIS
         the DC*.AVI movies, the ozi_ns overlay) are not in the target folder is marked
         "RESOURCES NOT FOUND", its checkbox cannot be ticked and -All skips it; a fix that depends
         on such a fix is marked the same way
+      * since 5 Oct 2026 this script lives in the folder patcher\ of the repository together with a
+        copy of the project's own data files: patcher\game\ (the painted backdrops and HUD frames per
+        size, the console banks, the re-baked logo banks, the tracer bullets, the icon, the ozi_ns
+        mission pack, the DARK COLONY mode's tables, DEFAULT_SERVER.TXT) is copied into the game folder
+        and patcher\editor\ (the map editor's Borland runtime DLLs, the Atlantis block set) into the
+        editor's folder before a build is patched - the repository's game folders hold the same files
+        already, so there the copy changes nothing; a fix's data file counts as present when the
+        resource folder holds it.  INSTALL.CMD + PATCH_HOWTO.TXT + patcher\ is the installer package
+        published on ModDB: it holds nothing of the game itself
+      * a player without a game folder installs the game from the two ORIGINAL DISCS first (the
+        welcome page's checkbox, ticked by itself when no game folder is found beside the package;
+        -InstallDir with -CouncilWarsDisc and -DarkColonyDisc on the command line): the Council Wars
+        disc (ENGEXP16.EXE, the expansion, the shared Classic data) and the Dark Colony disc (the
+        missions, encyclopedia, cursors, briefings, the Classic movies, the map editor) are read as
+        disc images (.iso, .bin, .cue) or from a drive, the game is copied into the install folder
+        ("Dark Colony" in Documents by default, the map editor in its "Map editor" sub-folder), the
+        resources are added and the executables are built there.  Which disc holds which file is the
+        list $DiscFiles below (tools/discs.py); the disc reader is C# text in this file like the GIF
+        codec.  The soundtrack - audio tracks 2-5 of both mixed-mode CDs - is ripped from a .bin / .cue
+        image or a real drive and encoded to MP3 (192 kbit/s) with Windows' own encoder (WinRT
+        MediaTranscoder; the "N" editions need the Media Feature Pack) into MUSIC\ and exp\music\, so
+        fix music has its files; an .iso holds the data track only.  Not on the discs: the January 1998
+        dc16.exe of the deprecated Dark Colony build
 
     The originals, both in the "DC - Council wars" folder (since 15 Sep 2026 the one folder both games
     run from): "ENGEXP16.EXE" (ENGEXP16.EXE from the Council Wars CD; patched build "Dark Colony
@@ -1689,6 +1751,19 @@ W(r'''.SYNOPSIS
     as well.  Without it that build is skipped with a note; -Original "DC - Council wars\dc16.exe"
     always patches it.
 
+.PARAMETER InstallDir
+    Install the game from the two original discs into this folder first (created if missing; the map
+    editor goes into its "Map editor" sub-folder), then patch Dark Colony Ultimate and the map editor
+    there.  Needs -CouncilWarsDisc, -DarkColonyDisc and -All (with -Resolution and -Theme).  Files
+    already in the folder with the right size are kept, so an interrupted install can be resumed.
+
+.PARAMETER CouncilWarsDisc
+    The Council Wars disc: a disc image (.iso, .bin, .cue) or the drive / folder holding it.  Must
+    carry EXPENG\ENGEXP16.EXE (the English expansion; the exe is verified by SHA-256).
+
+.PARAMETER DarkColonyDisc
+    The Dark Colony disc: a disc image or drive with DC\GAMESTAT, DC\SCENARIO and DC\MAPED.EXE.
+
 .PARAMETER DesktopShortcut
     After a successful write, put a shortcut to the patched exe on the desktop ("Dark Colony",
     "Dark Colony - Council Wars" or "Dark Colony Map Editor"; start folder = the game folder, which
@@ -1711,9 +1786,11 @@ W(r'''.SYNOPSIS
     .\Apply-DarkColonyPatches.ps1 -Original "DC - Council wars\dc16.exe" -All -Resolution 1024x768 -Theme dark     (the deprecated Classic build)
     .\Apply-DarkColonyPatches.ps1 -Original "Dark Colony - Map editor\maped.exe" -All     (-> "Dark Colony Map Editor.exe")
     .\Apply-DarkColonyPatches.ps1 -Verify "DC - Council wars\Dark Colony Ultimate.exe"
+    .\Apply-DarkColonyPatches.ps1 -InstallDir "$env:USERPROFILE\Documents\Dark Colony" -CouncilWarsDisc D:\ -DarkColonyDisc "E:\Dark Colony.iso" -All -Resolution 1920x1080 -Theme dark -DesktopShortcut
+        (the game from the two discs into a new folder, then Dark Colony Ultimate and the map editor built there)
 
 .NOTES
-    Double-click INSTALL.CMD beside this file: it starts this script with Windows
+    Double-click INSTALL.CMD in the folder above this one (the package / repository root): it starts this script with Windows
     PowerShell 5.1 and -ExecutionPolicy Bypass for that one run (Windows' own "Run with PowerShell"
     obeys the execution policy, which refuses a script from a downloaded ZIP), and passes any
     command-line options on.  Without it, if Windows refuses to run the script ("running scripts is
@@ -1738,6 +1815,9 @@ param(
     [Parameter(ParameterSetName = 'Apply')] [switch] $IgnoreMissingData,
     [Parameter(ParameterSetName = 'Apply')] [switch] $DesktopShortcut,
     [Parameter(ParameterSetName = 'Apply')] [switch] $IncludeDeprecated,
+    [Parameter(ParameterSetName = 'Apply')] [string] $InstallDir,
+    [Parameter(ParameterSetName = 'Apply')] [string] $CouncilWarsDisc,
+    [Parameter(ParameterSetName = 'Apply')] [string] $DarkColonyDisc,
     [Parameter(ParameterSetName = 'List')] [switch] $List,
     [Parameter(ParameterSetName = 'List')] [switch] $Detail,
     [Parameter(ParameterSetName = 'Verify')] [string] $Verify
@@ -3743,6 +3823,9 @@ function New-GameShortcut([string] $ExePath, $Build) {
 # shows it in its "patching in progress" box; the command line passes nothing.
 function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [string] $OutputPath, [string] $Mode, [string] $Theme, [scriptblock] $Progress) {
     $data = [System.IO.File]::ReadAllBytes($OriginalPath)
+    # the patcher's resources (patcher\game | patcher\editor beside this script) into the folder the exe is written to,
+    # before anything else: the interface set is built from them, and the exe reads them (5 Oct 2026)
+    $generated = @(Copy-Resources $Build (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Progress)
     $effective = @(Get-BuildPatches $Build $Mode $Theme)
     $ordered = @($effective | Where-Object { $p = $_; ($Chosen | Where-Object { $_.Id -eq $p.Id -and $_.Mode -eq $p.Mode }) })
     $result = $data
@@ -3758,15 +3841,14 @@ function Invoke-PatchRun([string] $OriginalPath, $Build, [object[]] $Chosen, [st
     $ref = if ($Mode) { $Build.ReferenceSha256[$Mode + $(if ($Theme -eq 'light') { '/light' } else { '' })] } else { $Build.PatchedSha256 }
     # an HD display fix was applied: build the INTRF_HD interface set for the chosen size (scripts,
     # briefing lists, letterboxed backgrounds, loading screens; the Council Wars and OZI copies too)
-    $generated = @()
     if ($Mode -and $Mode -ne '640x480' -and ($ordered | Where-Object { $_.ContainsKey('SetSources') })) {
         $movies = [bool] ($ordered | Where-Object { $_.Id -eq 'movies' })
         $console = [bool] ($ordered | Where-Object { $_.Id -eq 'console' })
         if ($Progress) { & $Progress ("Writing the {0} interface set ({1} battlefield interface) into {2} (scripts, backgrounds, loading screens; other resolutions' folders are deleted) - this takes a few seconds..." -f $Mode, $(if ($console) { 'dark' } else { 'light' }), (Get-HdFolder $Mode)) }
         try {
-            $generated = @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies $console)
+            $generated += @(Write-InterfaceSet (Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))) $Mode $movies $console)
         } catch {
-            $generated = @('INTERFACE SET NOT WRITTEN: ' + $_.Exception.Message)
+            $generated += @('INTERFACE SET NOT WRITTEN: ' + $_.Exception.Message)
         }
     }
     if ($Mode -eq '640x480') {
@@ -3816,12 +3898,13 @@ function Get-DataProblems($Build, [object[]] $Chosen, [string] $GameDir, [string
             }
         }
         $missing = @()
-        foreach ($rel in @($p.Data)) { if (-not (Test-Path -LiteralPath (Join-Path $GameDir $rel))) { $missing += $rel } }
+        foreach ($rel in @($p.Data)) { if (-not (Test-DataFile $Build $GameDir $rel)) { $missing += $rel } }
         if ($missing.Count -gt 0) {
             $total = 0; foreach ($d in @($p.Data)) { $total++ }
             $shown = @($missing | Select-Object -First 8) -join ', '
             if ($missing.Count -gt 8) { $shown += (', ... ({0} more)' -f ($missing.Count - 8)) }
-            $problems += ("fix '{0}' ({1}) needs {2} data files under '{3}', {4} are missing: {5}. Copy the game folder from the repository " +
+            $problems += ("fix '{0}' ({1}) needs {2} data files under '{3}' (or in the patcher's resource folder beside this script), {4} are missing: {5}. " +
+                          "Install the game from your discs (the welcome page's checkbox), copy the game folder from the repository " +
                           "(https://github.com/endotermic/Dark-Colony) or write the exe into the game folder there.") -f $p.Id, $p.Name, $total, $GameDir, $missing.Count, $shown
         }
     }
@@ -3837,7 +3920,7 @@ function Get-UnavailableFixes($Build, [string] $GameDir, [string] $Mode, [string
     $effective = @(Get-BuildPatches $Build $Mode $Theme)
     foreach ($p in $effective) {
         $missing = @(); $total = 0
-        foreach ($rel in @($p.Data)) { $total++; if (-not (Test-Path -LiteralPath (Join-Path $GameDir $rel))) { $missing += $rel } }
+        foreach ($rel in @($p.Data)) { $total++; if (-not (Test-DataFile $Build $GameDir $rel)) { $missing += $rel } }
         if ($missing.Count -gt 0) {
             $tops = @{}
             foreach ($m in $missing) { $top = ($m -split '\\')[0]; if ($tops.ContainsKey($top)) { $tops[$top]++ } else { $tops[$top] = 1 } }
@@ -3907,6 +3990,11 @@ function Write-PatchList([switch] $WithEdits) {
     Write-Host ''
 }
 
+''')
+W(gen_disc_install.DISC_READER)
+W(gen_disc_install.disc_data(MANIFEST))
+W(gen_disc_install.DISC_LOGIC)
+W(r'''
 # =================================================================================================
 #  WINDOW - the installer front end (Windows Forms, part of every Windows PowerShell)
 # =================================================================================================
@@ -3964,7 +4052,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
     }
     $script:gui = @{ Items = $items; Sel = -1; Step = 0; Syncing = $false; Mode = ''; Theme = ''; IncludeDeprecated = $false
                      ModeList = @(); Patches = @(); Monitor = (Get-MonitorSize); Visible = @(); Last = 0
-                     Here = $PSScriptRoot; Results = $null }     # Here = the folder this script sits in = the repository root
+                     Here = (Split-Path -Parent $PSScriptRoot); Results = $null      # Here = the parent of patcher\ = the repository root (or the unpacked installer package)
+                     Disc = $false; DiscCw = ''; DiscDc = ''; DiscDir = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Dark Colony'); Base = 1 }
     foreach ($b in $Builds) { if (@($b.Modes).Count -gt 0) { $script:gui.ModeList = @($b.Modes); break } }
     $n = $items.Count
     $mono = New-Object System.Drawing.Font('Consolas', 9)
@@ -4018,14 +4107,70 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $lblLnk = New-Object System.Windows.Forms.Label
     $lblLnk.Location = '44,334'; $lblLnk.Size = '900,36'
     $lblLnk.Text = 'Named "Dark Colony Ultimate", "Dark Colony Map Editor" (and "Dark Colony" if you patch it); each starts in its game folder, where the game finds its files.  An older shortcut of the same name is replaced.'
+    # the disc install (5 Oct 2026, maintainer: "add a checkbox that adds a form to select both discs and installation
+    # directory"): ticked, the wizard gets a "Game discs" page and copies the game from the player's own discs first
+    $chkDisc = New-Object System.Windows.Forms.CheckBox
+    $chkDisc.Text = 'Install the game first, from my original Dark Colony and Council Wars discs  (no game folder yet)'; $chkDisc.Location = '24,372'; $chkDisc.AutoSize = $true
+    $chkDisc.Font = $bold
+    $lblDisc = New-Object System.Windows.Forms.Label
+    $lblDisc.Location = '44,396'; $lblDisc.Size = '900,40'
+    $lblDisc.Text = ('Adds a page where you pick the two discs (a disc image .iso / .bin / .cue, or the drive of a mounted image or a real CD) and the ' +
+                     'install folder (a "Dark Colony" folder in your Documents by default).  The game is copied from the discs, this patcher''s own files ' +
+                     'are added and the executables are built there.  Ticked by itself when no game folder was found beside this installer.')
     $lblNext = New-Object System.Windows.Forms.Label
-    $lblNext.Location = '24,540'; $lblNext.Size = '936,20'; $lblNext.Text = "Press Next to continue.          Dark Colony patcher $PatcherVersion, build $PatcherBuild (generated $PatcherGenerated)"
+    $lblNext.Location = '24,556'; $lblNext.Size = '936,20'; $lblNext.Text = "Press Next to continue.          Dark Colony patcher $PatcherVersion, build $PatcherBuild (generated $PatcherGenerated)"
     # a missing or wrong original: a big red banner here, the details and the remedies on its page
     $lblProblem = New-Object System.Windows.Forms.Label
-    $lblProblem.Location = '24,378'; $lblProblem.Size = '936,156'; $lblProblem.Visible = $false
+    $lblProblem.Location = '24,440'; $lblProblem.Size = '936,112'; $lblProblem.Visible = $false
     $lblProblem.BackColor = [System.Drawing.Color]::FromArgb(192, 0, 0); $lblProblem.ForeColor = [System.Drawing.Color]::White
     $lblProblem.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold); $lblProblem.Padding = '12,8,12,8'
-    $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $lblNext, $lblProblem))
+    $pWelcome.Controls.AddRange(@($lblHello, $lblFound, $chkLnk, $lblLnk, $chkDisc, $lblDisc, $lblNext, $lblProblem))
+
+    # --- page "Game discs" (5 Oct 2026): shown as step 1 while the welcome checkbox is ticked - the two original discs
+    # and the install folder.  Next checks the discs and takes the two originals (ENGEXP16.EXE, maped.exe) from them;
+    # the whole game is copied at the Patch step.
+    $pDisc = New-Object System.Windows.Forms.Panel
+    $pDisc.Location = '0,66'; $pDisc.Size = '984,580'; $pDisc.Visible = $false
+    $lblDiscIntro = New-Object System.Windows.Forms.Label
+    $lblDiscIntro.Location = '24,14'; $lblDiscIntro.Size = '936,56'
+    $lblDiscIntro.Text = ('The game is copied from your two original discs into the install folder (about 480 MB), this patcher''s own files are added and ' +
+                          'the executables are built there.  A disc is a disc image file (.iso, .bin or .cue) or the drive letter of a mounted image or a real CD.  ' +
+                          'Both discs are needed: the Council Wars disc holds the expansion and ENGEXP16.EXE, the Dark Colony disc the missions, the ' +
+                          'encyclopedia, the Classic movies and the map editor.  Nothing is downloaded; the discs are read on this PC only.')
+    $discRows = @()
+    $y = 84
+    foreach ($row in @(@('cw', 'Council Wars disc  (the "Dark Colony: The Council Wars" CD, volume COUNCILWARS):'),
+                       @('dc', 'Dark Colony disc  (the original "Dark Colony" CD, volume DCUK):'),
+                       @('dir', 'Install into  (a new or empty folder; an interrupted install can be resumed into the same folder):'))) {
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $row[1]; $l.Location = "40,$y"; $l.AutoSize = $true; $l.Font = $bold
+        $t = New-Object System.Windows.Forms.TextBox
+        $t.Location = "40,$($y + 22)"; $t.Size = '660,23'; $t.Tag = $row[0]
+        $b1 = New-Object System.Windows.Forms.Button
+        $b2 = New-Object System.Windows.Forms.Button
+        if ($row[0] -eq 'dir') {
+            $b1.Text = 'Browse...'; $b1.Location = "836,$($y + 20)"; $b1.Size = '128,27'; $b1.Tag = 'dir'
+            $b2.Visible = $false
+        } else {
+            $b1.Text = 'Image file...'; $b1.Location = "712,$($y + 20)"; $b1.Size = '116,27'; $b1.Tag = $row[0] + ':file'
+            $b2.Text = 'Drive / folder...'; $b2.Location = "836,$($y + 20)"; $b2.Size = '128,27'; $b2.Tag = $row[0] + ':folder'
+        }
+        $pDisc.Controls.AddRange(@($l, $t, $b1, $b2))
+        $discRows += @{ Key = $row[0]; Text = $t; File = $b1; Folder = $b2 }
+        $y += 66
+    }
+    $lblDiscNote = New-Object System.Windows.Forms.Label
+    $lblDiscNote.Location = '40,290'; $lblDiscNote.Size = '920,110'; $lblDiscNote.ForeColor = [System.Drawing.Color]::DimGray
+    $lblDiscNote.Text = (@('The soundtrack: both CDs carry the music as audio tracks 2-5.  From a .bin / .cue image or a real CD in a drive they are ripped',
+                          'and encoded to MP3 (192 kbit/s) with Windows'' own encoder into MUSIC\ and exp\music\ - the "music" fix plays them.  An .iso image and a',
+                          'mounted .iso hold the data track only, so there the music is left out (copy the eight MP3 files from the repository instead).',
+                          'Not on the discs at all: the January 1998 dc16.exe of the deprecated Dark Colony build (the Dark Colony CD carries the 1997 build).',
+                          'Files already in the install folder with the right size are kept, so a second run after an interruption only fills the gaps.',
+                          'Press Next: the discs are checked and ENGEXP16.EXE and maped.exe are taken from them; the rest is copied when you press Patch.') -join "`r`n")
+    $lblDiscStatus = New-Object System.Windows.Forms.Label
+    $lblDiscStatus.Location = '24,520'; $lblDiscStatus.Size = '936,52'; $lblDiscStatus.Font = $bold
+    $lblDiscStatus.Text = 'Pick both discs and the install folder, then press Next.'
+    $pDisc.Controls.AddRange(@($lblDiscIntro, $lblDiscNote, $lblDiscStatus))
 
     # --- page 1: options - the resolution drop-down, the battlefield interface theme, the deprecated build.
     # NOTHING is preselected (maintainer, 1 Oct 2026): Next stays disabled until the resolution and - at an
@@ -4185,12 +4330,14 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $btnCancel.Text = 'Cancel'; $btnCancel.Location = '864,658'; $btnCancel.Size = '104,30'
     $form.AcceptButton = $btnNext; $form.CancelButton = $btnCancel
 
-    $form.Controls.AddRange(@($header, $sepTop, $pWelcome, $pRes) + $pages + @($pReady, $pDone, $sepBot, $btnVerify, $lblLog, $btnBack, $btnNext, $btnCancel))
+    $form.Controls.AddRange(@($header, $sepTop, $pWelcome, $pDisc, $pRes) + $pages + @($pReady, $pDone, $sepBot, $btnVerify, $lblLog, $btnBack, $btnNext, $btnCancel))
     # All / List / Info / Out are re-pointed to the current page's controls by Select
     $script:gui.Controls = @{ Form = $form; Title = $lblTitle; Sub = $lblSub; Welcome = $pWelcome; Found = $lblFound; Problem = $lblProblem
                               Options = $pRes; ModeBox = $cmbRes; ThemeLight = $rbLight; ThemeDark = $rbDark; DepBox = $chkDep; ModePick = $lblResPick
                               Ready = $pReady; ReadyText = $txtReady
                               Done = $pDone; DoneText = $txtDone; DoneNote = $lblDone; Shortcut = $chkLnk
+                              DiscBox = $chkDisc; Discs = $pDisc; DiscStatus = $lblDiscStatus; DiscRows = $discRows
+                              DiscCw = ($discRows | Where-Object { $_.Key -eq 'cw' }).Text; DiscDc = ($discRows | Where-Object { $_.Key -eq 'dc' }).Text; DiscDir = ($discRows | Where-Object { $_.Key -eq 'dir' }).Text
                               Back = $btnBack; Next = $btnNext; Cancel = $btnCancel; Apply = $btnNext
                               Verify = $btnVerify; Log = $lblLog; All = $items[0].UI.All; List = $items[0].UI.List; Info = $items[0].UI.Info
                               Out = $items[0].UI.Out; Status = $items[0].UI.Status; Res = $items[0].UI.Res }
@@ -4204,14 +4351,15 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $vis = @()
         for ($i = 0; $i -lt $g.Items.Count; $i++) { if (-not $g.Items[$i].Build.Deprecated -or $g.IncludeDeprecated) { $vis += $i } }
         $g.Visible = $vis
-        $g.Last = $vis.Count + 2
+        $g.Base = if ($g.Disc) { 2 } else { 1 }        # the options page's step: the "Game discs" page is step 1 while the disc install is on
+        $g.Last = $vis.Count + $g.Base + 1
     }
     # the wizard step of executable $index, or -1 when its page is not shown
     $script:gui.StepOf = {
         param([int] $index)
         $k = [Array]::IndexOf(@($script:gui.Visible), $index)
         if ($k -lt 0) { return -1 }
-        return $k + 2
+        return $k + $script:gui.Base + 1
     }
     & $script:gui.Layout
 
@@ -4240,7 +4388,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $u.Dep.Visible = (-not $it.Error) -and [bool] $it.Build.Deprecated
         if ($it.Error) { $u.ErrorTitle.Text = $it.Error.Title; $u.ErrorBody.Text = $it.Error.Body; $u.Error.BringToFront() }
         $g.Syncing = $false
-        $bad = @($g.Items | Where-Object { $_.Error -and (-not $_.Build.Deprecated -or $g.IncludeDeprecated) })
+        $bad = @($g.Items | Where-Object { $_.Error -and (-not $_.Build.Deprecated -or $g.IncludeDeprecated) -and -not ($g.Disc -and $_.Error.Kind -eq 'missing') })
         $g.Controls.Problem.Visible = ($bad.Count -gt 0)
         if ($bad.Count -gt 0) {
             $g.Controls.Problem.Text = (@('PROBLEM - these originals cannot be used as they are:', '') +
@@ -4257,7 +4405,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
             if ($shown -and $root -and $shown.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $shown = $shown.Substring($root.Length) }
             elseif ($shown -and $shown.Length -gt 48) { $parts = $shown.Split($sep); if ($parts.Count -gt 2) { $shown = '...' + $sep + $parts[-2] + $sep + $parts[-1] } }
             $tail = if ($x.Build.Deprecated) { '  DEPRECATED - only if ticked on the options page' } else { '' }
-            $lines += ('  {0} {1,-28} {2}{3}' -f $mark, $x.Build.ProductName, $(if ($shown) { "$shown  ($($x.Status))" } else { "not found ($($x.Build.OriginalPath)) - you can pick it on its page" }), $tail)
+            $lines += ('  {0} {1,-28} {2}{3}' -f $mark, $x.Build.ProductName, $(if ($shown) { "$shown  ($($x.Status))" } elseif ($g.Disc -and -not $x.Build.Deprecated) { 'taken from the discs (next page)' } else { "not found ($($x.Build.OriginalPath)) - you can pick it on its page" }), $tail)
         }
         $g.Controls.Found.Text = $lines -join "`r`n"
     }
@@ -4293,6 +4441,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $it.Status = $status
         $it.Detail = "$title - see the red box below."
         $it.Error = @{
+            Kind  = $kind
             Title = $title
             Body  = (@(
                 "Found:      $found",
@@ -4534,6 +4683,83 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.ShowFix $g.Items[[int] $sender.Tag]
     }
 
+    # The disc install (5 Oct 2026).  SetDiscMode: the welcome checkbox = a "Game discs" page as step 1 and the originals
+    # from the discs.  PrepareDiscs (Next on that page): opens both discs, checks them, extracts the two originals into
+    # the install folder and loads them like browsed originals - the executable pages then work as always; the rest of
+    # the game is copied at Patch (Apply).  SetDiscPaths is the test hook for the three text boxes.
+    $script:gui.SetDiscMode = {
+        param([bool] $on)
+        $g = $script:gui
+        $c = $g.Controls
+        $g.Disc = $on
+        if (-not $on) { $script:DiscInstall = $null }
+        $g.Syncing = $true; $c.DiscBox.Checked = $on; $g.Syncing = $false
+        & $g.Layout
+        foreach ($x in $g.Items) { & $g.ShowRow $x }
+        if ($g.Step -gt 0) { & $g.GoTo $g.Step }
+    }
+    $script:gui.SetDiscPaths = {
+        param([string] $cw, [string] $dc, [string] $dir)
+        $g = $script:gui
+        $c = $g.Controls
+        $g.DiscCw = $cw; $g.DiscDc = $dc; $g.DiscDir = $dir
+        $c.DiscCw.Text = $cw; $c.DiscDc.Text = $dc; $c.DiscDir.Text = $dir
+    }
+    $script:gui.PrepareDiscs = {
+        $g = $script:gui
+        $c = $g.Controls
+        $g.DiscCw = $c.DiscCw.Text.Trim(); $g.DiscDc = $c.DiscDc.Text.Trim(); $g.DiscDir = $c.DiscDir.Text.Trim()
+        $c.DiscStatus.ForeColor = [System.Drawing.Color]::Firebrick
+        if (-not $g.DiscCw -or -not $g.DiscDc -or -not $g.DiscDir) { $c.DiscStatus.Text = 'Pick both discs and the install folder first.'; return $false }
+        if ($g.DiscCw -eq $g.DiscDc) { $c.DiscStatus.Text = 'The two discs are the same file or drive - the Council Wars and the Dark Colony disc are two different CDs.'; return $false }
+        $c.DiscStatus.ForeColor = [System.Drawing.Color]::Black; $c.DiscStatus.Text = 'Reading the discs...'; $c.DiscStatus.Refresh()
+        try {
+            $g.DiscDir = Get-AbsolutePath $g.DiscDir
+            [void] [System.IO.Directory]::CreateDirectory($g.DiscDir)
+            $orig = Install-DiscOriginals $g.DiscCw $g.DiscDc $g.DiscDir
+        } catch {
+            $c.DiscStatus.ForeColor = [System.Drawing.Color]::Firebrick
+            $c.DiscStatus.Text = 'Cannot install from these discs: ' + $_.Exception.Message
+            return $false
+        }
+        $script:DiscInstall = @{ Dir = $g.DiscDir; Cw = $g.DiscCw; Dc = $g.DiscDc; Audio = [bool] $orig['Audio'] }    # the fixes' data files will be there at Patch
+        foreach ($id in @($orig.Keys | Where-Object { $_ -ne 'Audio' -and $_ -ne 'AudioNote' })) { & $g.Load $orig[$id] $false }
+        $c.DiscStatus.ForeColor = [System.Drawing.Color]::DarkGreen
+        $c.DiscStatus.Text = ('Both discs are fine.  ENGEXP16.EXE and maped.exe were taken from them into {0}; the game itself ({1} files) is copied when you press Patch.  {2}' -f $g.DiscDir, $DiscFiles.Count,
+            $(if ($orig['Audio']) { 'The soundtrack (4 + 4 audio tracks) will be ripped and encoded to MP3.' } else { 'No soundtrack from these discs: ' + $orig['AudioNote'] + ' - fix music is left out.' }))
+        & $g.Refresh
+        return $true
+    }
+    $c.DiscBox.Add_CheckedChanged({
+        param($sender, $e)
+        $g = $script:gui
+        if ($g.Syncing) { return }
+        & $g.SetDiscMode ([bool] $sender.Checked)
+    })
+    $discBrowse = {
+        param($sender, $e)
+        $c = $script:gui.Controls
+        $parts = ([string] $sender.Tag).Split(':')
+        $row = $c.DiscRows | Where-Object { $_.Key -eq $parts[0] }
+        if ($parts[0] -eq 'dir') {
+            $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dlg.Description = 'The folder to install the game into (a new or empty folder)'
+            if ($row.Text.Text -and (Test-Path -LiteralPath $row.Text.Text)) { $dlg.SelectedPath = $row.Text.Text }
+            if ($dlg.ShowDialog($c.Form) -eq 'OK') { $row.Text.Text = $dlg.SelectedPath }
+        } elseif ($parts[1] -eq 'file') {
+            $dlg = New-Object System.Windows.Forms.OpenFileDialog
+            $dlg.Title = $(if ($parts[0] -eq 'cw') { 'The Council Wars disc image' } else { 'The Dark Colony disc image' })
+            $dlg.Filter = 'Disc images (*.iso;*.bin;*.cue;*.img)|*.iso;*.bin;*.cue;*.img|All files (*.*)|*.*'
+            if ($dlg.ShowDialog($c.Form) -eq 'OK') { $row.Text.Text = $dlg.FileName }
+        } else {
+            $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dlg.Description = $(if ($parts[0] -eq 'cw') { 'The drive (or folder) holding the Council Wars disc' } else { 'The drive (or folder) holding the Dark Colony disc' })
+            $dlg.RootFolder = 'MyComputer'
+            if ($dlg.ShowDialog($c.Form) -eq 'OK') { $row.Text.Text = $dlg.SelectedPath }
+        }
+    }
+    foreach ($row in $c.DiscRows) { $row.File.Add_Click($discBrowse); $row.Folder.Add_Click($discBrowse) }
+
     # The options page.  Refresh: every executable page is refilled for the choices (its unticked fixes
     # survive), the theme radios are live only at an HD size, Next follows the state, the status line says
     # what is still missing.  SetMode / SetTheme / SetDeprecated are the handlers' work and the test hooks.
@@ -4550,7 +4776,7 @@ function Show-PatcherWindow([string] $PreloadPath) {
                            elseif (-not $ready) { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + '.  Now choose the battlefield interface (light or dark) to continue.' }
                            elseif (-not $hd) { 'Screen resolution: 640x480 (original) - the game keeps its own interface.  Press Next to continue.' }
                            else { 'Screen resolution: ' + (Format-ModeLabel $g.Mode $g.Monitor) + ', ' + $g.Theme + ' battlefield interface.  Press Next to continue.' }
-        if ($g.Step -eq 1) { $c.Next.Enabled = $ready }
+        if ($g.Step -eq $g.Base) { $c.Next.Enabled = $ready }
     }
     $script:gui.SetMode = {
         param([string] $mode)
@@ -4660,6 +4886,11 @@ function Show-PatcherWindow([string] $PreloadPath) {
         $g = $script:gui
         $c = $g.Controls
         $lines = @()
+        if ($g.Disc) {
+            $lines += 'Game install:            from the discs ' + $g.DiscCw + '  and  ' + $g.DiscDc
+            $lines += ('{0,-24} into {1}  ({2} files, about 480 MB; files already there with the right size are kept)' -f '', $g.DiscDir, $DiscFiles.Count)
+            $lines += ''
+        }
         $lines += 'Screen resolution:       ' + $(if ($g.Mode) { Format-ModeLabel $g.Mode $g.Monitor } else { 'NOT CHOSEN - go back to the options page' })
         $lines += 'Battlefield interface:   ' + $(if ($g.Mode -eq '640x480') { 'the original (640x480 keeps the stock interface)' } elseif ($g.Theme -eq 'light') { 'light (classic) - the original metal interface' } elseif ($g.Theme -eq 'dark') { 'dark - the console style of the menus' } else { 'NOT CHOSEN - go back to the options page' })
         $lines += ''
@@ -4779,6 +5010,20 @@ function Show-PatcherWindow([string] $PreloadPath) {
         }
         $results = @()
         try {
+            if ($g.Disc) {
+                $g.StepPrefix = 'Discs: '
+                try {
+                    $dr = Install-GameFromDiscs $g.DiscCw $g.DiscDc $g.DiscDir $g.Progress
+                    $line = 'Game installed from the discs into {0}: {1} files copied ({2} MB){3}' -f $g.DiscDir, $dr.Files, [int][Math]::Round($dr.Bytes / 1MB), $(if ($dr.Skipped) { ", $($dr.Skipped) already there" } else { '' })
+                    $kind = 'ok'
+                    foreach ($ml in @($dr.Music)) { $line += "`r`n    " + $ml; if ($ml -match 'NOT written') { $kind = 'warning' } }
+                    if (@($dr.Missing).Count -gt 0) { $kind = 'warning'; $line += "`r`n    NOT on your discs ({0} files - another pressing?): {1}" -f @($dr.Missing).Count, (@($dr.Missing | Select-Object -First 6) -join ', ') }
+                    $results += @{ Item = $null; R = $null; Error = $null; Shortcut = $null; Kind = $kind; Line = $line }
+                } catch {
+                    $results += @{ Item = $null; R = $null; Error = $_.Exception.Message; Shortcut = $null; Kind = 'error'; Line = 'Installing the game from the discs FAILED - nothing patched:' + "`r`n    " + $_.Exception.Message }
+                    $todo = @()
+                }
+            }
             $k = 0
             foreach ($it in $todo) {
                 $k++
@@ -4839,8 +5084,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
         elseif ($errors -gt 0) { $title = 'Patching finished with errors'; $icon = 'Error'; $c.Log.ForeColor = 'Firebrick' }
         elseif ($warnings -gt 0) { $title = 'Patched, with warnings'; $icon = 'Warning'; $c.Log.ForeColor = 'DarkOrange' }
         else { $title = 'Patching succeeded'; $icon = 'Information'; $c.Log.ForeColor = 'DarkGreen' }
-        $ok = $results.Count - $errors
-        $c.Log.Text = "$ok of $($results.Count) executable(s) patched" + $(if ($errors) { ", $errors failed" } else { '' }) + ' - see the message for details.'
+        $exeResults = @($results | Where-Object { $_.Item })
+        $ok = @($exeResults | Where-Object { $_.Kind -ne 'error' }).Count
+        $c.Log.Text = "$ok of $($exeResults.Count) executable(s) patched" + $(if ($errors) { ", $errors failed" } else { '' }) + ' - see the message for details.'
         $text = ($results | ForEach-Object { $_.Line }) -join "`r`n`r`n"
         $skipped = @(& $g.SkippedLines)
         if ($skipped.Count -gt 0) { $text += "`r`n`r`nNot patched: " + ($skipped -join ', ') }
@@ -4881,25 +5127,34 @@ function Show-PatcherWindow([string] $PreloadPath) {
         & $g.Layout
         $vis = @($g.Visible)
         $last = $g.Last
+        $base = $g.Base
         if ($step -gt $last + 1) { $step = $last + 1 }
         $g.Step = $step
         $c.Welcome.Visible = ($step -eq 0)
-        $c.Options.Visible = ($step -eq 1)
+        $c.Discs.Visible = ($g.Disc -and $step -eq 1)
+        $c.Options.Visible = ($step -eq $base)
         for ($i = 0; $i -lt $g.Items.Count; $i++) { $g.Items[$i].UI.Page.Visible = ($step -eq (& $g.StepOf $i)) }
         $c.Ready.Visible = ($step -eq $last)
         $c.Done.Visible = ($step -eq $last + 1)
         $c.Next.Enabled = $true
         if ($step -eq 0) {
             $c.Title.Text = 'Welcome to the Dark Colony patcher'
-            $c.Sub.Text = 'Builds Dark Colony Ultimate, the Map Editor (and, if you ask for it, the deprecated Dark Colony) from the untouched originals in this folder.'
-        } elseif ($step -eq 1) {
-            $c.Title.Text = "Step 1 of ${last}: Options"
+            $c.Sub.Text = 'Builds Dark Colony Ultimate, the Map Editor (and, if you ask for it, the deprecated Dark Colony) from the untouched originals - of this folder, or from your discs.'
+        } elseif ($g.Disc -and $step -eq 1) {
+            $c.Title.Text = "Step 1 of ${last}: Game discs"
+            $c.Sub.Text = 'Your original Dark Colony and Council Wars discs (disc images or drives) and the folder to install the game into.'
+            if ($g.DiscCw -and -not $c.DiscCw.Text) { $c.DiscCw.Text = $g.DiscCw }
+            if ($g.DiscDc -and -not $c.DiscDc.Text) { $c.DiscDc.Text = $g.DiscDc }
+            if ($g.DiscDir -and -not $c.DiscDir.Text) { $c.DiscDir.Text = $g.DiscDir }
+            $c.Log.Text = ''
+        } elseif ($step -eq $base) {
+            $c.Title.Text = "Step $base of ${last}: Options"
             $c.Sub.Text = 'The screen resolution, the battlefield interface (light = classic, dark = console style) and the deprecated executable.  Nothing is preselected.'
             $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
             $c.Next.Enabled = [bool] $g.Mode -and (-not $hd -or [bool] $g.Theme)
             $c.Log.Text = ''
         } elseif ($step -lt $last) {
-            $index = $vis[$step - 2]
+            $index = $vis[$step - $base - 1]
             $it = $g.Items[$index]
             $b = $it.Build
             $c.Title.Text = "Step $step of ${last}: $($b.ProductName)" + $(if ($b.Deprecated) { '  (deprecated)' } else { '' })
@@ -4915,8 +5170,9 @@ function Show-PatcherWindow([string] $PreloadPath) {
         } else {
             $r = @($g.Results)
             $errors = @($r | Where-Object { $_.Kind -eq 'error' }).Count
+            $exes = @($r | Where-Object { $_.Item })
             $c.Title.Text = if ($errors -eq 0) { 'Finished' } elseif ($errors -lt $r.Count) { 'Finished, with errors' } else { 'Patching failed' }
-            $c.Sub.Text = '{0} of {1} executable(s) patched.' -f ($r.Count - $errors), $r.Count
+            $c.Sub.Text = '{0} of {1} executable(s) patched.' -f @($exes | Where-Object { $_.Kind -ne 'error' }).Count, $exes.Count
             $skipped = @(& $g.SkippedLines)
             $c.DoneText.Text = (($r | ForEach-Object { $_.Line }) -join "`r`n`r`n") + $(if ($skipped.Count -gt 0) { "`r`n`r`nNot patched: " + ($skipped -join ', ') } else { '' })
             $c.DoneNote.Text = if ($errors -lt $r.Count) { 'Start the games with the desktop shortcuts or the files above.  Press Close to leave.' } else { 'Nothing usable was written - see above.  Press Close to leave.' }
@@ -4929,7 +5185,10 @@ function Show-PatcherWindow([string] $PreloadPath) {
     $c.Next.Add_Click({
         $g = $script:gui
         $last = $g.Last
-        if ($g.Step -eq 1) {
+        if ($g.Disc -and $g.Step -eq 1) {
+            if (-not (& $g.PrepareDiscs)) { $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'The discs are not ready - see the message on the page.'; return }
+        }
+        if ($g.Step -eq $g.Base) {
             $hd = [bool] $g.Mode -and $g.Mode -ne '640x480'
             if (-not $g.Mode -or ($hd -and -not $g.Theme)) { $g.Controls.Log.ForeColor = 'Firebrick'; $g.Controls.Log.Text = 'Choose a screen resolution and a battlefield interface first.'; return }
         }
@@ -4964,6 +5223,8 @@ function Show-PatcherWindow([string] $PreloadPath) {
         else { & $script:gui.SetError $it $p $null 'missing'; & $script:gui.ShowRow $it; & $script:gui.FillItem $it }
     }
     if ($PreloadPath) { & $loadOriginal ((Resolve-Path $PreloadPath).Path) $false }
+    # the installer package unpacked on its own (no game folder beside it): the disc install is the way, ticked by itself
+    if (-not $PreloadPath -and @($script:gui.Items | Where-Object { $_.Data }).Count -eq 0) { & $script:gui.SetDiscMode $true }
     & $script:gui.Refresh
     & $script:gui.GoTo 0
     return $form
@@ -5077,6 +5338,39 @@ function Invoke-CliBuild([string] $OriginalFile, [string] $OutputFile) {
 }
 
 if ($Original) { Invoke-CliBuild $Original $Output; return }
+# --- the disc install from the command line (5 Oct 2026): copy the game from the two discs into -InstallDir, then
+# patch Dark Colony Ultimate and the map editor there (like the window with its checkbox ticked)
+if ($InstallDir -or $CouncilWarsDisc -or $DarkColonyDisc) {
+    if (-not ($InstallDir -and $CouncilWarsDisc -and $DarkColonyDisc)) { throw '-InstallDir, -CouncilWarsDisc and -DarkColonyDisc belong together: the folder to install into and the two disc images (or drives)' }
+    if (-not $All) { throw 'the disc install takes -All (every fix whose resources are there), together with -Resolution and -Theme' }
+    $games = @($Builds | Where-Object { @($_.Modes).Count -gt 0 -and -not $_.Deprecated })
+    $m0 = Resolve-Mode $games[0] $Resolution; [void] (Resolve-Theme $games[0] $m0 $Theme)
+    Write-Host ("Dark Colony patcher {0}, build {1} (generated {2})" -f $PatcherVersion, $PatcherBuild, $PatcherGenerated) -ForegroundColor Cyan; $script:BannerShown = $true
+    Write-Host ''
+    Write-Host ('=== Installing the game from the discs into {0}' -f $InstallDir) -ForegroundColor Cyan
+    Write-Host ("Council Wars disc: {0}`r`nDark Colony disc:  {1}" -f $CouncilWarsDisc, $DarkColonyDisc)
+    $InstallDir = Get-AbsolutePath $InstallDir
+    [void] [System.IO.Directory]::CreateDirectory($InstallDir)
+    $pre = Install-DiscOriginals $CouncilWarsDisc $DarkColonyDisc $InstallDir       # checks both discs, the two exes, the soundtrack + encoder
+    $script:DiscInstall = @{ Dir = $InstallDir; Cw = $CouncilWarsDisc; Dc = $DarkColonyDisc; Audio = [bool] $pre['Audio'] }
+    if (-not $pre['Audio']) { Write-Warning ('no soundtrack from these discs: ' + $pre['AudioNote'] + ' - fix music is left out') }
+    $dr = Install-GameFromDiscs $CouncilWarsDisc $DarkColonyDisc $InstallDir { param([string] $s) Write-Host ('  ' + $s) -ForegroundColor DarkGray }
+    Write-Host ('{0} files copied ({1} MB), {2} already there' -f $dr.Files, [int][Math]::Round($dr.Bytes / 1MB), $dr.Skipped)
+    foreach ($ml in @($dr.Music)) { if ($ml -match 'NOT written') { Write-Warning $ml } else { Write-Host ('music: ' + $ml) } }
+    if (@($dr.Missing).Count -gt 0) { Write-Warning ('{0} file(s) are not on your discs (another pressing?): {1}' -f @($dr.Missing).Count, (@($dr.Missing | Select-Object -First 10) -join ', ')) }
+    $failed = 0; $done = 0
+    foreach ($o in $DiscOriginals) {
+        $b = $Builds | Where-Object { $_.Id -eq $o.Build }
+        $p = Join-Path (Get-InstallRoot $InstallDir $o.Root) $o.To
+        Write-Host ''
+        Write-Host ('=== {0}  ({1} -> {2})' -f $b.ProductName, $o.To, $b.OutputName) -ForegroundColor Cyan
+        try { Invoke-CliBuild $p $null; $done++ } catch { Write-Warning ('{0}: {1}' -f $b.ProductName, $_.Exception.Message); $failed++ }
+    }
+    Write-Host ''
+    Write-Host ('{0} executable(s) patched, {1} failed.' -f $done, $failed)
+    if ($failed -gt 0 -or $done -eq 0) { exit 1 }
+    return
+}
 if ($Patches) { throw 'give -Original <exe> together with -Patches (the fix ids differ per executable)' }
 if ($Output) { throw '-Output needs -Original (with -All alone each executable is written under its own name beside its original)' }
 # the screen resolution and the battlefield interface are chosen explicitly (1 Oct 2026): checked once here,
@@ -5085,7 +5379,7 @@ $games = @($Builds | Where-Object { @($_.Modes).Count -gt 0 -and (-not $_.Deprec
 if ($games.Count -gt 0) { $m0 = Resolve-Mode $games[0] $Resolution; [void] (Resolve-Theme $games[0] $m0 $Theme) }
 $failed = 0; $done = 0
 foreach ($b in (Sort-ForPatching $Builds { param($i) $i })) {   # Ultimate last: its step adds files to the interface set that a later game build's rebuild would drop
-    $p = Join-Path $PSScriptRoot $b.OriginalPath
+    $p = Join-Path (Split-Path -Parent $PSScriptRoot) $b.OriginalPath      # the repository root = the parent of patcher\
     Write-Host ''
     Write-Host ('=== {0}  ({1} -> {2})' -f $b.ProductName, $b.OriginalPath, $b.OutputName) -ForegroundColor Cyan
     if ($b.Deprecated -and -not $IncludeDeprecated) {

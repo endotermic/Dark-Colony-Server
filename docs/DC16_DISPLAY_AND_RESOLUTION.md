@@ -6689,3 +6689,94 @@ alone; a `pointer` applied without `fps` works on the stock tails too.
 **Rule.** Two fixes sharing one dead region split it at an instruction boundary of the NEW code, not of the
 old: the gate's first range starts two bytes into a dead instruction, which is harmless (nothing executes
 there) but must be in the stock pattern. **Committed and pushed 3 Oct 2026: Dark-Colony `ef41557`, Server `98f5e88`.**
+
+### 10.71 The installer package for ModDB: `patcher/`, the resources beside the script, the game from the two original discs (5 Oct 2026)
+
+**Why.** ModDB's terms forbid uploading a full commercial game or third-party assets, the repository ships the whole game
+(612 MB), and *Dark Colony* is sold nowhere (the holder is unclear: Take-Two or Ubisoft through SSI) - so every copy is
+tolerated, not licensed. The position with the least exposure: distribute nothing of SSI's, let the player bring the
+discs. An installer that downloads the fan-site packages (darkcolony.pl: a 492 MB English "1.1" archive with hacked exes,
+the 554 MB DCUK cover-disc ISO, a 1.25 GB French Dark Colony + Council Wars) would make the patcher itself the
+distributor, and no English Council Wars disc is there at all. Maintainer: "installer must have green plus yellow plus
+the ozi_ns pack" (green = the project's own files, yellow = art derived from the game's own, the pack with credit).
+
+**What is where (tools/discs.py manifest -> tools/disc_manifest.json).** Every tracked file of the two game folders
+against the two CD images (`Dark Colony.bin`, volume DCUK, 5151 files; `Dark Colony - The Council Wars.bin`, volume
+COUNCILWARS, 2441 files; raw 2352-byte MODE1 sectors, ISO 9660 level 1):
+
+| class | files | what | where it lives now |
+|---|---|---|---|
+| disc | 2263 | stock game files: 1958 only on the Dark Colony disc (`/DC/` = the installed game: SCENARIO, GAMESTAT, CURSOR, MISSION, ENCYCLO, MAPED.EXE ...), 305 from the Council Wars disc (`/EXPENG/ENGEXP16.EXE`, `/EXPENG/EXP/` = `exp\`, and its `/DC/` with only ANIMATE, AVI, INTRFACE, SOUND, SPRITES, WALLPAPR); 80 under another disc name (the Classic movies as `AVI\DC*.AVI`, the ozi_ns copies of stock terrains / ambience / sounds, `dc\intrface\credits.txt`), 12 game-written `.OVH` taken as the disc has them | the game folder; a disc install extracts them |
+| output | 75 | the `HD_<height>P` sets, the patched exes, the 640x480 copies | the game folder; the patcher writes them |
+| local | 17 | the MP3 soundtrack (8), the January 1998 `dc16.exe` (the disc has the August 1997 build), InstallShield logs, `ERROR.LOG`, the `HBNFUFL` drive-letter files, the editor's `readme.doc` | the game folder only; never in the package |
+| derived | 1 | `SCENARIO\HUMAN\human09.tro`: the disc's text has the `&&==` typo in mission 9's trigger, the 1998 update fixed it - the installer applies the same one-token fix | written by the installer |
+| resource | 366 | the project's own files and the ozi_ns pack | the game folder AND a copy in **`patcher/game/`**, **`patcher/editor/`** |
+
+Both discs are required: neither alone holds the shared game folder. The resources: `HD_SRC/` (the five pictures per
+size, the console banks, KNOBR), `SPRITES/DC??_HD.SPR` + `CLOCK.SPR` + `TRAC.SPR`, `ANIMATE/*_HD.FIN` + `TRAC.FIN`,
+`DC_HD.ICO`, `DEFAULT_SERVER.TXT`, `dc/gamestat/weapstat.txt`, `exp/animozi.dat` + the pack's `dalg|spyo|reae|tranozi`
+FIN/SPR, the two modified stock files `exp/intrface/bintroe` and `exp/gamestat/weapstat.txt` (kept in the game folder as
+well - the untouched ENGEXP16.EXE reads them), the pack's own `ozi_ns/gamestat`, `intrface/astory|hstory.txt`,
+`mission/*.wav` (the pack's real briefings, 23 files, 50 MB - not silent placeholders; only `h80.wav` is), `scenario/
+council|globo`, `jubjub.bts`, `special.bts`, seven sounds, `ozisave/ozisave.txt`; for the editor the Borland runtimes
+`BWCC.DLL`, `BWCC32.DLL`, `CW3215MT.DLL` (the disc has them only inside the InstallShield `DATA.Z`) and
+`scenario/atlantis.set`. A first form moved them out of the game folders with `git mv`; the maintainer's second
+instruction the same day ("don't delete files from where they was! You must use 'patcher' directory as a source from where
+you take resources and copy to the places where they must reside") restored them: the game folders keep every file (the
+repository plays as checked out), `patcher/` holds a COPY, and `resources.py sync` / `check` keep the two sides equal (the
+dev tools still write into the game folder; `sync` copies their resource outputs over).
+
+**The generated script (patcher 2.0; `gen_disc_install.py` holds the new parts).** `$PSScriptRoot` is `patcher\`, the
+repository root its parent. `Copy-Resources` copies `patcher\game` (or `patcher\editor`) into the folder a build is
+written to before anything else; `Test-DataFile` counts a fix's data file as present when the game folder, the resource
+folder or - while a disc install is planned - the manifest has it. **Disc install:** the welcome checkbox (ticked by
+itself when no original is found beside the package) adds *Step 1: Game discs* - Council Wars disc, Dark Colony disc
+(image `.iso` / `.bin` / `.cue`, or a drive / folder), install folder (default `Documents\Dark Colony`; the editor in
+`Map editor\`). Next = `Install-DiscOriginals`: both discs opened and tested (`/EXPENG/ENGEXP16.EXE` + `/EXPENG/EXP/
+ANIM.DAT`; `/DC/GAMESTAT/GAMESTAT.TXT` + `/DC/SCENARIO/HUMAN/HUMAN01.SCN` + `/DC/MAPED.EXE`), the two exes extracted and
+SHA-256-checked against the builds (a French or Italian disc, or the 1997 `DC16.EXE`, is refused with the hash), loaded
+like browsed originals. Patch = `Install-GameFromDiscs`: every `$DiscFiles` line (`root|to|disc[|from]`), the derived
+files (`human09.tro`, `HBNFUFL.A01/.A02` = `D:`, the editor's `hbnfufl.a01` = `C:`), `SAVE`/`ESAVE`/`ozisave` folders; a
+file already there with the right size is kept (resumable). CLI: `-InstallDir -CouncilWarsDisc -DarkColonyDisc -All
+-Resolution -Theme`. **`DcDisc`** (C# in the script, `Initialize-DiscReader`, Add-Type like the GIF codec): PVD at sector
+16, root directory record at byte 156 (extent at 158, size at 166), directory records walked recursively (`;1` stripped),
+sector size from the sync pattern (2352: data at +16 for MODE1, +24 for MODE2 form 1; else 2048), `.cue` -> its FILE
+line, folders / drive letters by enumeration; extraction in 64-sector chunks (~10 s for 400 MB from a `.bin`).
+
+**The soundtrack (patcher 2.1, same day; maintainer: "music is on the original discs as real music disc tracks. installer
+must rip them, and if possible convert to mp3").** Both CDs are mixed-mode: tracks 2-5 are the music (section 10.31).
+`DcDisc.ScanAudio` finds them in a raw `.bin`: the data track is a prefix whose sectors carry the sync pattern (binary
+search for its end), the rest is audio, tracks are the pieces separated by >= 150 all-silent sectors (|sample| < 3 on both
+channels), pieces under 1500 sectors (20 s) are gap noise - the rules of `rip_music.py`; for a real disc in a drive the
+TOC (`IOCTL_CDROM_READ_TOC`: control bit 2 clear = audio, MSF -> LBA - 150) and raw reads (`IOCTL_CDROM_RAW_READ`, mode
+CDDA, 16 sectors per call) - written from the documentation, untested here (no optical drive). `WriteTrackWav` cuts the
+pregap junk at the end of the last >= 20 ms silent run within the first second and the trailing silence (CW track 2: 45 ms,
+DC track 2: 258 ms, track 3: 481 ms), the raw sectors being 44.1 kHz 16-bit stereo PCM already. `ConvertTo-Mp3` encodes
+with Windows' own MP3 encoder through the WinRT `MediaTranscoder` (`MediaEncodingProfile.CreateMp3(High)`, bitrate forced
+to 192 000, sample rate 44 100 - the profile's default was 48 kHz; ~1 s per 150 s of audio); WinRT is reachable from
+Windows PowerShell 5.1 only, so under pwsh 7 the same script text runs in a hidden `powershell.exe` child; `Test-Mp3Encoder`
+probes once with 0.2 s of silence (the "N" editions have no encoder without the Media Feature Pack). **MCI `mpegvideo`
+refuses a WAV under the `.mp3` name (error 277 "A problem occurred in initializing MCI"), so there is no WAV fallback:
+without an encoder the music is left out.** The encoded files are MPEG-1 layer 3, 192 kbps, 44.1 kHz, and the game's MCI
+device plays them (`mcitest.py`). `Install-DiscMusic` writes `MUSIC\TRACK02-05.MP3` from the Dark Colony disc and
+`exp\music\track02-05.mp3` from the Council Wars disc at the end of `Install-GameFromDiscs`, skips a folder that already
+holds its four files, and `Test-DataFile` counts the eight as present while a disc install with audio is planned
+(`$script:DiscInstall.Audio`, set by `Install-DiscOriginals`: four tracks on each disc + the encoder) - so an install
+from `.bin` images or real CDs reaches the full reference `3cba8b55…`. **What a disc install still cannot have:** the
+music from an `.iso` / mounted `.iso` / folder (data track only; Ultimate then 20 of 21 fixes, `b21baac1…`, said on the
+page) and the deprecated Dark Colony build (needs the 1998 `dc16.exe`). This PC's `Dark Colony.bin` is the damaged rip of
+section 10.52, so its ripped MP3s carry the stray blocks; a player's own disc does not.
+
+**Verified (scratchpad `run_tests.sh`, `gui_test.ps1`, `cmpset.py`).** Clean copy of the repository index: `-All
+-Resolution 1024x768 -Theme dark` under pwsh 7 = Ultimate `3cba8b55…`, editor `de8076dc…`, set = fixture (the
+fixture's `HSCENE`/`GSCENE` refreshed from HEAD - they name the DC endings), the resource copy a no-op (every file
+already there and identical, `resources.py check` clean); disc install from the `.bin` images under PowerShell 5.1 (`tr-TR`) and from the
+`.iso` + the Dark Colony disc as an extracted folder under pwsh 7: `discs.py check` = 2263 files identical to the
+repository, set = fixture, `human09.tro` fixed, the drive-letter files in place, Ultimate `b21baac1…`; refusals
+(`-InstallDir` alone, swapped discs); the headless window under both shells (steps shift by one with the discs page,
+PrepareDiscs refuses empty / equal / swapped discs, Apply with the discs returns the disc line + two builds, a second
+Apply keeps the files). **Pitfalls:** the ISO root record's extent is at PVD byte 158, not 162 (a first reader found no
+files); PowerShell variable names are case-insensitive, so a local `$dir` clobbered the `$Dir` parameter and the
+derived files landed under `SCENARIO\HUMAN\`; `` `u001a `` is a parse error in pwsh 7 and silently `u001a` in 5.1 -
+`[char] 0x1A`. Package: `tools/make_installer_zip.py` (`INSTALL.CMD` + `PATCH_HOWTO.TXT` + `patcher/`, every file
+checked against the index).
