@@ -6786,7 +6786,7 @@ lists without `.txt` plus the new `hxscene`/`gxscene` lists and the `gjungle` te
 CD prompt strings `CDROM NOT FOUND` / `Please insert The Dark Colony CD and Restart`, new asserts (`ip->objects[i].type !=
 unknown_obj`, `strlen(actual_filename)!=0`, `sptr==(stack+2)`, `eq<=t.pool+MAX_POOL`), the keyword `funkytower`; same 11
 DLLs and 155 imports; the official note: stability on newer PCs, many small fixes, human mission 9 repaired (= the
-`human09.tro` typo the installer fixes itself). **Committed and pushed 5 Oct 2026: Dark-Colony `26483c0`, Server `58488c8`** (the maintainer's unstaged 1280x800 run in the game folder - `HD_0800P`, the deprecated `Dark Colony.exe`, the `HD_0768P` deletions - left in the working tree).
+`human09.tro` typo the installer fixes itself). **The package is also its own public repository since 5 Oct 2026 (maintainer: "create github repo 'Dark-Colony-Ultimate' and put there installer with it's resources as we decided earlier for ModDB"): `https://github.com/endotermic/Dark-Colony-Ultimate`, cloned to `../Dark-Colony-Ultimate` - exactly the tracked `INSTALL.CMD`, `PATCH_HOWTO.TXT` and `patcher/` of Dark-Colony plus its own `README.md` and `.gitattributes` (`*.cmd -text`); `tools/publish_installer.py GAME_REPO ULTIMATE_REPO` copies the package over (removes stale files under `patcher/`, touches nothing else, stages nothing) - run it after every patcher change, then commit and push there too; no LICENSE yet in either game repository (the maintainer's call).** **Committed and pushed 5 Oct 2026: Dark-Colony `26483c0`, Server `58488c8`** (the maintainer's unstaged 1280x800 run in the game folder - `HD_0800P`, the deprecated `Dark Colony.exe`, the `HD_0768P` deletions - left in the working tree).
 
 **Verified (scratchpad `run_tests.sh`, `gui_test.ps1`, `cmpset.py`).** Clean copy of the repository index: `-All
 -Resolution 1024x768 -Theme dark` under pwsh 7 = Ultimate `3cba8b55…`, editor `de8076dc…`, set = fixture (the
@@ -6837,6 +6837,58 @@ the first test run found - the StrictMode rule again: every removed field needs 
 from `.iso` + folder = `b21baac1…`, 2263 disc files, two executables; the headless window test (`gui_test2.ps1`, 5 Oct
 scratchpad) under both shells: two builds, no deprecated hooks or controls, steps 1..4, Apply = two results at the
 published hashes, "2 of 2 executable(s) patched".
+
+### 10.73 Start-up before the intro movie: where the seconds go (5 Oct 2026)
+
+Question from the maintainer: "why startup of the game before movie is taking so long?".  Measured with a main-thread
+sampler (`Dark-Colony-development/smoke_rig/startup_profile.py`: `Wow64SuspendThread` + `Wow64GetThreadContext` every
+4 ms, return addresses resolved against the `call` targets of `dcexp16.asm` and the loaded modules, module list /
+display mode / windows polled, the movie detected by `iccvid.dll` appearing) on the Ultimate 1280x800 dark build
+(`e6dc8526…`) started seven times from a `subst X:` copy on the 1920x1200 / 150 % desktop.  Nothing in the exe or the
+data was changed; this section is the record.
+
+**Warm start (files opened before): 3.8-4.2 s from the process start to the first movie frame**, in four phases:
+
+| from - to | what the main thread does | evidence |
+|---|---|---|
+| 0.0 - 0.5 s | process start, DirectDraw + Intel D3D9 driver initialisation, the window | `igd9trinity32`, `dxgi`, `0x4400xx` (ddraw init) |
+| 0.5 - 1.9 s | **`IDirectDraw::SetDisplayMode`** 1920x1200 -> 1280x800 (`create_window`, return address `0x42E991`) | 1.3-1.5 s per run; the desktop mode changes at 0.44-0.6 s and the DWM / mitigation layer settles ~1.4 s later |
+| 1.9 - 3.5 s | **the start-up sound table** (`0x4309C8`, called from the display constructor at `0x42E8D1`): for each of the 200 `sound2.dat` entries `wave_loader` -> `IDirectSound::CreateSoundBuffer` (`0x430D1E`) -> Lock / copy / Unlock -> one `DuplicateSoundBuffer` per extra voice (`0x430E38`; 309 voices in all) -> `IDirectSoundBuffer::Stop` (`0x430E83`) | 1.5 s; the samples sit under `mmdevapi.dll` / `audioses.dll` behind RPC frames: on Windows 11 every one of these ~700 DirectSound calls is a round trip to the audio service, ~2-3 ms each; `CreateSoundBuffer` alone is half of the phase |
+| 3.5 - 3.9 s | sprite banks and animation lists (`load_all_anims` `0x42565C`; CRT `fopen` = `CreateFileA` at `0x47CDF7`, `fread` = `ReadFile` at `0x47DAA8`) | 0.4 s for ~180 banks, 14 MB |
+
+The main thread's CPU time at the movie is only 1.4-1.7 s of those ~4 s: the rest is waiting inside system calls
+(the mode switch and the audio-service round trips), not computation.  No other thread of the game does any work.
+
+**Cold start (files never opened since they were written, or Windows Defender has to look at them again): 6.6-9.2 s.**
+A freshly copied game folder reproduces it every time and the same folder started again is back at ~3.9 s.  The extra
+seconds are **Windows Defender's scan on first open**: `typeperf` showed `MsMpEng` at 44-77 % of a core during the
+game's seconds 1-5 and ~1 % afterwards, and the samples move from the DirectSound calls to the file opens - the wave
+loader's `CreateFileA` (`0x452B5F`, the `longpath` stub) takes 63 % of the sound phase instead of 10 %, and the sprite
+phase is 94 % inside `CreateFileA` (`0x47CDFE`) and lasts 2 s instead of 0.4 s.  Every file the game opens at start-up
+(200 WAVs, ~180 banks, lists) is scanned once; the scan state survives until the file changes or the definitions
+update, so the first launch after a patcher run / a fresh ZIP / a definitions update is the slow one.  Defender's own
+CPU time cannot be read from a user process (`OpenProcess` on `MsMpEng` fails, it is a protected process) - the
+`\Process(MsMpEng)\% Processor Time` counter can.
+
+**Nothing of the recent work adds to this.**  The patches on the start-up path are `nocd` (removes the CD probe),
+`longpath` (`CreateFileA` instead of `OpenFile` - same cost), `ddraw`, `palette` (removed two 1.4-3.5 s palette
+conversions at start-up, section 10.46) and `pool`; the movie, the MP3 module, the online module and the `fps` limiter
+start after the phases above.  The stock exe with its CD ran the same sound loop.
+
+What could be shortened, if the maintainer wants it (not built): (1) the 200 `IDirectSoundBuffer::Stop` calls on
+buffers that have never played are no-ops costing ~0.2-0.3 s - a two-byte `jmp` over the call; (2) the whole sound
+table could be built on a second thread while the sprites load and the movie plays (DirectSound objects are
+free-threaded; the first `play_sound` would have to wait for the table), ~1.5 s off the warm start; (3) the mode
+switch is Windows' and cannot be shortened from the game, only avoided by a desktop-resolution mode.  The Defender
+cost is per file and per first open; a player who finds the first launch slow is seeing that, the second launch is
+the real number.
+
+Rig notes: `startup_profile.py` keeps `startup_samples.ndjson` (one line per sample: time, EIP, exe return-address
+chain, module chain) and prints time line, exclusive / inclusive tables and the DLL the game called into; the sampler
+is starved for ~0.7 s around the mode switch (every GUI call of the sampler blocks while the desktop changes), so the
+switch is timed from the display-mode poll, not from samples; `MsMpEng` is measured with `typeperf`, not
+`GetProcessTimes`.  Test-rig rule from this session: a freshly copied game folder is a *different* benchmark from a
+warm one - run every timing twice and report the second run as the steady state.
 
 ### 10.74 No intro movie at start-up; DARK COLONY and COUNCIL WARS play their own intro (5 Oct 2026)
 
