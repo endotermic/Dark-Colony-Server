@@ -6767,6 +6767,27 @@ music from an `.iso` / mounted `.iso` / folder (data track only; Ultimate then 2
 page) and the deprecated Dark Colony build (needs the 1998 `dc16.exe`). This PC's `Dark Colony.bin` is the damaged rip of
 section 10.52, so its ripped MP3s carry the stray blocks; a player's own disc does not.
 
+**Smoke test as a player (5 Oct 2026, maintainer: "smoke test by placing installer files in a separate folder 'Dark Colony
+patcher' in documents folder and after that create using this fresh copy of the installer 'Dark Colony Ultimate' in
+documents from both CD discs and check integrity").** The zip unpacked into `Documents\Dark Colony patcher` (369 files),
+`INSTALL.CMD` from there with `-InstallDir "Documents\Dark Colony Ultimate"`, both `.bin` images, 1024x768 dark: 2264 files
+(401 MB) from the discs, 4 + 4 tracks ripped, 362 + 4 resources copied, both exes at the published hashes. Integrity against
+the repository index: 2696 tracked game files identical, 8 MP3s (ripped, bytes differ by design), 12 `.OVH` as the disc has
+them, 6 repository-only files absent by design (the 1998 `dc16.exe`, InstallShield logs, `readme.doc`, `ERROR.LOG`), 0
+missing, 0 differing, one extra `HD_0768P\BACKDROP.GIF` (the set writer's fourth picture, untracked); manifest check 2263
+identical; set = fixture; every resource = its `patcher/` copy; the MP3s play through MCI. The game started from the real
+Documents path (no `subst`) into the first OZI battle, `error.log` empty. Side effect: the installer replaced the two desktop
+shortcuts (they point at the Documents install now). The 1998 `dc16.exe` is on neither disc (the Dark Colony disc carries the
+August 1997 build `4180f6e9…`, the Council Wars disc no Classic exe at all), so a disc install has no deprecated Dark Colony
+build - the options: leave it (browse to a repository `dc16.exe` on its page), ship the 1998 exe as the official 1.01
+update file in `patcher/game/`, or re-base the fixes onto the 1997 build. What the 1998 update changed (binary comparison,
+no changelog inside): a full recompile (5.5 % of the code verbatim in 1997), a `.rsrc` section with the icon, the campaign
+lists without `.txt` plus the new `hxscene`/`gxscene` lists and the `gjungle` terrain (the expansion's loader), the
+CD prompt strings `CDROM NOT FOUND` / `Please insert The Dark Colony CD and Restart`, new asserts (`ip->objects[i].type !=
+unknown_obj`, `strlen(actual_filename)!=0`, `sptr==(stack+2)`, `eq<=t.pool+MAX_POOL`), the keyword `funkytower`; same 11
+DLLs and 155 imports; the official note: stability on newer PCs, many small fixes, human mission 9 repaired (= the
+`human09.tro` typo the installer fixes itself). **Committed and pushed 5 Oct 2026: Dark-Colony `26483c0`, Server `58488c8`** (the maintainer's unstaged 1280x800 run in the game folder - `HD_0800P`, the deprecated `Dark Colony.exe`, the `HD_0768P` deletions - left in the working tree).
+
 **Verified (scratchpad `run_tests.sh`, `gui_test.ps1`, `cmpset.py`).** Clean copy of the repository index: `-All
 -Resolution 1024x768 -Theme dark` under pwsh 7 = Ultimate `3cba8b55…`, editor `de8076dc…`, set = fixture (the
 fixture's `HSCENE`/`GSCENE` refreshed from HEAD - they name the DC endings), the resource copy a no-op (every file
