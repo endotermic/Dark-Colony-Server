@@ -27,7 +27,7 @@ DISC_READER = r'''
 #  expansion shares (DC\ANIMATE, AVI, INTRFACE, SOUND, SPRITES, WALLPAPR), the Dark Colony CD the rest of the
 #  Classic game (DC\SCENARIO, GAMESTAT, CURSOR, MISSION, ENCYCLO, MAPED.EXE and the Classic movies, written
 #  as AVI\DCINTRO.AVI etc. because the expansion's own have the same names).  Both are needed.  Not on the
-#  discs: the January 1998 dc16.exe (the deprecated Dark Colony build needs it - from the repository), the
+#  discs: the January 1998 dc16.exe (the untouched Classic exe, which this installer no longer patches), the
 #  map editor's Borland runtime DLLs (they ship as resources).  The CD soundtrack IS on the discs - tracks 2-5
 #  of both mixed-mode CDs - and is ripped from a .bin / .cue image or a real drive and encoded to MP3 with
 #  Windows' own encoder (Install-DiscMusic below); an .iso has no audio tracks.  ISO 9660 level 1 (8.3 upper-case names with ";1" versions, no Joliet); the .bin images are
@@ -622,7 +622,7 @@ function Install-GameFromDiscs([string] $CwPath, [string] $DcPath, [string] $Dir
 #  present when the resource folder holds it (Test-DataFile).  The game folder of the repository therefore
 #  gets these copies on the maintainer's own runs; they are listed in its .gitignore.
 # =================================================================================================
-$ResourceRoots = @{ CouncilWars = 'game'; Classic = 'game'; MapEditor = 'editor' }
+$ResourceRoots = @{ CouncilWars = 'game'; MapEditor = 'editor' }
 function Get-ResourceRoot($Build) { return (Join-Path $PSScriptRoot $ResourceRoots[$Build.Id]) }
 # A planned disc install (@{ Dir; Cw; Dc }, set by the window's discs page and by the command line): the game files
 # are not in the install folder yet when the fixes are checked, but the discs will provide every manifest file at

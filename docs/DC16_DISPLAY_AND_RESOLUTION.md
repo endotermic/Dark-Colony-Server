@@ -6803,3 +6803,37 @@ derived files landed under `SCENARIO\HUMAN\`; `` `u001a `` is a parse error in p
 checked against the index).
 
 **`ozisave` is not carried; `ozisave.txt` is created from scratch (5 Oct 2026, maintainer: "patcher must not carry 'ozisave'. ozisave.txt must be created from scratch"; patcher 2.2).** `patcher/game/ozisave/ozisave.txt` is removed from the repository (`git rm`) and `tools/discs.py` classes `ozisave/ozisave.txt` as an OUTPUT (`OUTPUT_RE`), so it left the manifest's resource list (365 resources) and the installer zip (368 entries); `gen_apply_script.ozi_data` no longer lists it as a `Data` file. The generated script's `Write-OziSaveFolder` runs after every Dark Colony Ultimate build with the `ozi` fix (any resolution, the disc install too): it creates `ozisave\` when missing (stub_pack points both save-folder slots at it and the game writes `ozisave\<name>.dcg` without creating the folder) and writes `ozisave\ozisave.txt` with the one line the game folder's marker carries when no such file exists; nothing is overwritten (a second run writes nothing, saves beside it stay). Verified on a clean copy of the index with `ozisave\` deleted before each run: pwsh 7 and PowerShell 5.1 `tr-TR` at 1024x768 dark = `3cba8b55…` / `de8076dc…`, set = fixture, marker byte-identical to the repository's; 640x480 = `be1b3fa0…`; the disc install from `.iso` + folder = `b21baac1…`, 2263 disc files identical, `ozisave\ozisave.txt` present. The game folder's own `DC - Council wars/ozisave/ozisave.txt` stays tracked (an output now, like the HD sets).
+
+### 10.72 The deprecated Dark Colony build removed from the installer (5 Oct 2026)
+
+**Maintainer: "remove deprecated 'Dark colony' option from installer completely as won't be needed anymore."** Since
+1 Oct 2026 (section 10.58) the Classic build `dc16.exe` -> `Dark Colony.exe` was deprecated: unticked by default, its page
+shown only through a checkbox on the options page, `-All` skipping it unless `-IncludeDeprecated`, the patched file no
+longer in the repository. Now it is gone from the installer altogether (patcher **2.3**):
+
+* `gen_apply_script.py`: the `Classic` entry of `BUILDS` (with `CLASSIC_DEPRECATED`, `deprecated=`, `shipped=`), the
+  `'classic'` keys of `ORIGINALS` / `GAME_DIR` / `RES_DIR`, the two Classic-only fixes **`movies`** (section 10.18) and
+  **`sounds`** (section 10.21) with their block parsers, `movie_data` and tool entries, and every Classic branch of the
+  block asserts (`nocd` 13 / 19 edits, `music` five or six blocks) are removed; `MODE_STEPS` loses `movies`.
+* the generated script: no `Deprecated` / `Shipped` fields in the build records, no `-IncludeDeprecated` parameter, no
+  "Also patch the deprecated Dark Colony" box or deprecation notices in the window (Welcome -> Options -> Dark Colony
+  Ultimate -> Map Editor -> Ready to patch, 4 steps, 5 with the discs page), no `Write-StockEndingLists` (`movies` at
+  640x480: `GAMESTAT\HSCNDC.TXT` / `GSCNDC.TXT`), no `Get-PatchOrder` / `Sort-ForPatching` (the 3 Oct "Ultimate last"
+  order existed only because the Classic build rebuilt the interface set after it); `Write-InterfaceSet` lost its
+  `$Movies` parameter - the HD `HSCENE` / `GSCENE` lists still name `avi/dchending.avi` / `dcaending.avi` when the
+  `DC*.AVI` files are in the folder (the DARK COLONY mode of Dark Colony Ultimate plays them; fixtures unchanged).
+  The script shrank from 1.98 MB to 1.33 MB (the Classic variants of every size are gone).
+* `gen_disc_install.py`: `$ResourceRoots` without `Classic`. The untouched `dc16.exe` stays in the repository (manifest
+  class `local`), `.gitignore` keeps `Dark Colony.exe`; the Python tools (`patch_movies.py`, `patch_wavprefix.py`, the
+  rest) still patch it by hand for research.
+* player docs: README, PATCH_HOWTO.TXT, INSTALL.CMD.
+
+Verified on a clean copy of the index: `-All -Resolution 1024x768 -Theme dark` under pwsh 7 = **Ultimate `3cba8b55…`,
+editor `de8076dc…`** (unchanged references), set = fixture, no `Dark Colony.exe` and no `HSCNDC` / `GSCNDC` written;
+PowerShell 5.1 under `tr-TR` with `-Theme light` = `7ad1744c…`; `-IncludeDeprecated` is an unknown parameter;
+`-Original dc16.exe` is refused as "not one of the two known original executables"; `-Verify` of a light build says
+"not the published exe" (a leftover `$b.Shipped` read in that message and in the CLI result line was the one runtime error
+the first test run found - the StrictMode rule again: every removed field needs a grep for its readers); the disc install
+from `.iso` + folder = `b21baac1…`, 2263 disc files, two executables; the headless window test (`gui_test2.ps1`, 5 Oct
+scratchpad) under both shells: two builds, no deprecated hooks or controls, steps 1..4, Apply = two results at the
+published hashes, "2 of 2 executable(s) patched".
