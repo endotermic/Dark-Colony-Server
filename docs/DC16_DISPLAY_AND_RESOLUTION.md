@@ -6837,3 +6837,48 @@ the first test run found - the StrictMode rule again: every removed field needs 
 from `.iso` + folder = `b21baac1…`, 2263 disc files, two executables; the headless window test (`gui_test2.ps1`, 5 Oct
 scratchpad) under both shells: two builds, no deprecated hooks or controls, steps 1..4, Apply = two results at the
 published hashes, "2 of 2 executable(s) patched".
+
+### 10.74 No intro movie at start-up; DARK COLONY and COUNCIL WARS play their own intro (5 Oct 2026)
+
+**Maintainer: "remove movie from startup. respective movies must play when selecting mission pack from main menu.
+'dark colony' intro for 'DARK COLONY'. 'Council wars' intro for 'COUNCIL WARS'."** Fix **`intro`** = `tools/patch_intro.py`,
+Dark Colony Ultimate only, `Requires ozi`, patcher order `..., pointer, ozi, intro, icon, online` (`PLAN_ON_PATCHED`: its
+plan is taken on the exe after ozi, like `online`'s); patcher **2.4**.
+
+**Stock behaviour.** `main` (`0x405264`) copies `"avi/"` (DGROUP `0x482464`) into the `.bss` buffer `0x4A46F2` at start,
+and - after the loader and the palette - builds `"avi/" + "intro.avi"` (`0x4824A8`) in a local buffer and calls the movie
+player **`play_movie(eax = ui, edx = path)` = `0x401028`** at `0x4053C1`, then enters the menu loop `0x4053C6`
+(`mov eax,ebx ; call bintro 0x404DC8 ; jmp`). The same player serves the campaign endings (`0x404A3E`,
+`0x4823EC` / `0x4823F8` = hending / aending), the scene-list movies (`0x403E0F`) and, in the stock Council Wars menu,
+the PLAY INTRO button (`0x405138`, the handler whose body became OZI MISSIONS on 10 Sep 2026). The Dark Colony intro
+sits beside the Council Wars one as `AVI/DCINTRO.AVI` since 15 Sep 2026 but no Ultimate code ever named it (fix
+`movies` of the removed Classic build did, section 10.18).
+
+**Fix (3 code edits + 2 `.reloc` entries).** The 95 bytes `0x405367..0x4053C6` (two inlined strcpy / strcat loops and the
+call) become `jmp 0x4053C6` (`EB 5D`) followed by the new code; their two HIGHLOW `.reloc` entries (`0x405368` the
+`"avi/"` buffer, `0x40538D` the `"intro.avi"` string, page `0x5000` entries at file `0x97C1C` / `0x97C1E`) become
+type 0. The new code has no absolute operand (rel32 calls, inline strings reached through `call ; <string> ; pop`):
+
+    0x405369 tramp_cw_intro: push edx ; call stub_cw_set 0x47F290 ; call common ; db "avi/intro.avi",0     (25 bytes)
+    0x405382 tramp_dc_intro: push edx ; call stub_dc_set 0x47F340 ; call common ; db "avi/dcintro.avi",0   (27 bytes)
+    0x40539D common:         pop edx (the path) ; push eax ; call play_movie ; pop eax ; pop edx ; jmp 0x401C08 (14 bytes)
+
+COUNCIL WARS (button 0, the stock NEW CAMPAIGN handler) calls `tramp_cw_intro` instead of fix ozi's `tramp_cw_campaign`
+(`0x405065`); DARK COLONY (button 6, fix ozi's handler) calls `tramp_dc_intro` instead of `tramp_dc_campaign` (`0x405116`);
+ACADEMY (`0x405083`) keeps `tramp_dc_campaign` and plays nothing, OZI MISSIONS and LOAD GAME are untouched. At the call
+sites eax = the menu's ui object and edx = the campaign state, exactly the campaign runner's arguments; the mode stubs
+preserve both, the player returns a value in eax, so eax and edx are saved around it and the handler's return address
+stays on top of the stack for the runner's `ret` - the same frame discipline as fix ozi's trampolines. A missing movie
+file is skipped silently by the player (fix nocd's `jmp` past the CD attempt), SPACE skips a playing one.
+
+**Verified.** Tool chain = patcher byte for byte (Ultimate 1024x768 dark **`165b609a…`**, light `b5986b07…`, 640x480
+`01fc077c…`; the editor `de8076dc…` unchanged); clean copy under pwsh 7 and PowerShell 5.1 `tr-TR`, set = fixture; `-Verify`
+names the fix. **In game** (`smoke_rig/intro_test.py`, `subst X:` copy at 1024x768 dark, three launches): the main menu is on
+screen 14 s after the start with the credits already scrolling (no movie; a start-up movie would still be running), DARK
+COLONY shows the Mars landscape of DCINTRO.AVI 3 s after the click, COUNCIL WARS the jungle of INTRO.AVI, SPACE ends both
+and the START CAMPAIGN race screen follows, ACADEMY goes straight to START TRAINING; `error.log` empty. **Rig lessons:**
+`avifil32.dll`, `msvfw32.dll` and `quartz.dll` are loaded at start-up whatever happens (the AVI player and the MP3 music
+module), so a movie cannot be detected from the module list - judge by a screenshot (the ACADEMY button's red frame at
+(328,496) is on screen only in the menu); `drive.py` reads the screen size once at import, so a driver started before the
+mode switch must refresh `SW`/`SH` before clicking (the first run's clicks landed at 1024/1920 of the intended point).
+`dcexp16.asm` regenerated from the new build.
