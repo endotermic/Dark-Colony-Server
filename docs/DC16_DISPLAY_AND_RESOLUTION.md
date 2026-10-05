@@ -6882,3 +6882,29 @@ module), so a movie cannot be detected from the module list - judge by a screens
 (328,496) is on screen only in the menu); `drive.py` reads the screen size once at import, so a driver started before the
 mode switch must refresh `SW`/`SH` before clicking (the first run's clicks landed at 1024/1920 of the intended point).
 `dcexp16.asm` regenerated from the new build.
+
+### 10.75 The repository ships no patched file (5 Oct 2026)
+
+**Maintainer: "wipe out a patched files from repo. customer must generate all of them by themselves!"** Every patcher output
+left the Dark-Colony index (`git rm --cached`, the maintainer's working copy untouched): `DC - Council wars/Dark Colony
+Ultimate.exe`, `Dark Colony - Map editor/Dark Colony Map Editor.exe`, the 1024x768 interface set `HD_0768P/` with its
+`exp/`, `dc/` and `ozi_ns/` copies (73 files) and the OZI save-folder marker `ozisave/ozisave.txt` (an output since
+section 10.71's second round). `.gitignore` now lists them all (the `HD_0768P` exceptions are gone: every `HD_*P` / `UW_*P`
+folder is ignored), so a patcher run in a checkout shows no untracked output. The repository = the untouched originals
+(`ENGEXP16.EXE`, `dc16.exe`, `maped.exe`), the game data, the resources in `patcher/` and the installer; `INSTALL.CMD`
+builds the rest on the player's PC. Patcher **2.5**.
+
+**Generator.** `hd_data` enumerated the shipped set from the index (`git ls-files HD_0768P`) to derive the stock `INTRFACE`
+inputs; it now reads the frozen list `HD_SET_FILES` (the 59 names of the set as it was shipped). The "published in the
+repository" wording (`-List`, `-Verify`, the result lines, the window's options text, the parameter help) says "the
+generator's reference build" instead; `PatchedSha256` / `Published` keep their meaning as "every fix at 1024x768 dark =
+the reference build". `tools/disc_manifest.json` regenerated: the `outputs` class is empty now (no tracked output).
+Verified on a clean copy of the index (no exe, no set): `-All -Resolution 1024x768 -Theme dark` under pwsh 7 writes
+Ultimate `165b609a…` and the editor `de8076dc…` with the set = fixture; PowerShell 5.1 `tr-TR` light = `b5986b07…`; the
+disc install from `.iso` = `b21baac1…`; the headless window test passes under both shells. README and PATCH_HOWTO.TXT say
+that the patched files are built, not downloaded.
+
+**Rules.** The fixtures `Dark-Colony-development/hd_sets/<WxH>/` are the only reference copy of the interface sets now -
+regenerate them with the tool chain whenever a set changes, and compare every patcher run against them. A reference
+hash lives in the generated script (`ReferenceSha256`), nowhere else; a player's "my exe differs" report is answered by
+`-Verify`, not by a repository file.
