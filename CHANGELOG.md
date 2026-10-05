@@ -6,6 +6,12 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **`INTRO.GIF` no longer ships per size** (5 Oct 2026, maintainer: "remove deprecated main menu backgrounds from
+  the repo"; doc §10.76): the painted Classic-menu backdrop in `HD_SRC/<WxH>/` was drawn by no screen Dark Colony
+  Ultimate reaches (`introe`, `BUTTONSE` and `DINTROE` are unreachable, the Classic build left the installer in
+  §10.72). The seven files left the Dark-Colony repository and the installer package; `Write-InterfaceSet` letterboxes
+  the stock 640x480 picture over `BACKDROP.GIF` for the three scripts instead, so nothing dangles. Data only, no exe
+  byte. Patcher **2.6**.
 - **REPLAY ONLINE GAME** (2 Oct 2026, maintainer; plan §21, protocol doc §4.5 / §6.10): the relay records
   every battle as a file again - on Fly into the new 1 GB volume `dc_replays` (`RECORD_DIR=/data/replays`),
   the newest `REPLAY_KEEP` (50) kept (`src/replays.js`) - and offers them to the patched Dark Colony

@@ -50,7 +50,7 @@ MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='u
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '2.5'   # 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
+PATCHER_VERSION = '2.6'   # 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
 
 
 def _git_state(repo):
@@ -215,7 +215,7 @@ def hd_data(g, mode=None):
     return files
 
 
-SHIPPED_PICTURES = ('INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF', 'INTRFACE_LIGHT.GIF')
+SHIPPED_PICTURES = ('INTRG.GIF', 'BACKDROP.GIF', 'INTRFACE.GIF', 'INTRFACE_LIGHT.GIF')   # INTRO.GIF shipped too until 5 Oct 2026 (doc 10.76)
 # the files of a resolution's interface folder HD_<height>P as Write-InterfaceSet writes them (the 1024x768 set the
 # repository carried until 5 Oct 2026); hd_data derives the stock INTRFACE inputs from this list
 HD_SET_FILES = ['BINTROE', 'BUTTONSE', 'CHOO.GIF', 'DEMOWINE', 'DINTROE', 'DPBLANKE', 'DPLAYSE', 'ENCY.GIF', 'ENCYCLOE', 'GETSVRE',
@@ -228,9 +228,11 @@ HD_SET_FILES = ['BINTROE', 'BUTTONSE', 'CHOO.GIF', 'DEMOWINE', 'DINTROE', 'DPBLA
 
 
 def set_sources(g, mode):
-    """The four pictures of a resolution that cannot be derived: the painted main-menu backdrops
-    (INTRG / INTRO with their bottom bands, BACKDROP without one - the pre-battle screens' ground,
-    doc 10.56) and the spliced HUD frame, shipped as HD_SRC\\<WxH>\\*.GIF (until 1 Oct 2026 INTRF_HD\\<WxH>)."""
+    """The four pictures of a resolution that cannot be derived: the painted main-menu backdrop (INTRG
+    with its bottom band, BACKDROP without one - the pre-battle screens' ground, doc 10.56) and the two
+    spliced HUD frames (dark / light), shipped as HD_SRC\<WxH>\*.GIF (until 1 Oct 2026 INTRF_HD\<WxH>).
+    INTRO.GIF - the same scene with the SSI band, the Classic menu's dress - shipped too until 5 Oct 2026; no screen
+    Dark Colony Ultimate reaches draws it, so the stock picture is letterboxed like every other screen (doc 10.76)."""
     out = ['%s\\%s\\%s' % (SRC_DIR, mode, x) for x in SHIPPED_PICTURES]
     for f in out:
         assert os.path.exists(os.path.join(RES_DIR[g], f.replace('\\', os.sep))), (g, f)   # a resource (patcher/game) since 5 Oct 2026
@@ -754,8 +756,8 @@ also renames the dial's bank - that is the separate fix "console" below.)
 REQUIRES the interface data built for %(mode)s next to the exe in the folder %(folder)s/ - one
 folder per resolution (2 Oct 2026), so a set of another size can never be read by mistake.
 Applying this fix makes the patcher WRITE that set (Write-InterfaceSet) from the stock 640x480
-files and the five pictures per size that ship with the game (HD_SRC\\%(mode)s\\INTRG.GIF,
-INTRO.GIF, BACKDROP.GIF, and the HUD frame INTRFACE.GIF for the dark battlefield interface or
+files and the four pictures per size that ship with the game (HD_SRC\%(mode)s\INTRG.GIF,
+BACKDROP.GIF, and the HUD frame INTRFACE.GIF for the dark battlefield interface or
 INTRFACE_LIGHT.GIF for the light one - the theme is chosen with the resolution): menu scripts,
 HUD script, briefing lists, letterboxed backgrounds, the two loading screens
 %(folder)s\\LOAD.BMP / LOAD2.BMP (the 640x480 picture centred on a black %(mode)s canvas),
@@ -1618,8 +1620,8 @@ W(r'''.SYNOPSIS
       * for an HD resolution the script also WRITES the interface data the patched exe reads
         (INTRF_HD\, exp\intrf_hd\, ozi_ns\intrf_hd\: menu scripts, HUD script, briefing lists,
         letterboxed backgrounds, loading screens) from the stock 640x480 files of the game folder and
-        the four pictures per size that ship with the game (INTRF_HD\<WxH>\INTRG.GIF, INTRO.GIF,
-        BACKDROP.GIF, INTRFACE.GIF; the menu screens are laid over BACKDROP.GIF, the main menu's planet
+        the four pictures per size that ship with the game (HD_SRC\<WxH>\INTRG.GIF, BACKDROP.GIF,
+        INTRFACE.GIF, INTRFACE_LIGHT.GIF; the menu screens are laid over BACKDROP.GIF, the main menu's planet
         without its bottom band, inside a grey panel frame).  Re-encoding the GIF backgrounds needs a small GIF reader/writer: its C# SOURCE
         TEXT is in this file and is compiled in memory by Add-Type when the set is built, with the
         .NET compiler that is part of Windows (no download, no install, ~2 s).  Doing the same in
@@ -1870,7 +1872,7 @@ for bd in build_data:
             srcs = set_sources(g, mode)
             files = files + srcs
             datasize = ("\n                # applying this fix also GENERATES the INTRF_HD interface set for this size from the stock files"
-                        "\n                # (Write-InterfaceSet); these five pictures cannot be derived and ship with the game (two HUD frames: dark / light)"
+                        "\n                # (Write-InterfaceSet); these four pictures cannot be derived and ship with the game (two HUD frames: dark / light)"
                         f"\n                SetSources = @({', '.join(ps_str(x) for x in srcs)})")
         W(f'''            @{{
                 Id = {ps_str(P['id'])}; Name = {ps_str(name)}; Date = {ps_str(P['date'])}
@@ -2293,11 +2295,13 @@ function Write-LoadingScreens([string] $GameDir, [string] $Mode) {
 #  (pad_background.py, paint_intro.py, hud_layout.py, split_hd_data.py, build_ozi_overlay.py), reproduced here line by line; the output is byte-identical for every text
 #  file and pixel-identical for every picture, checked against the tools' output for all sizes.
 #
-#  Four pictures per size cannot be derived and ship with the game: INTRF_HD\<WxH>\INTRG.GIF and
-#  INTRO.GIF (the procedurally painted main-menu planet, with the Take 2 / SSI bottom bands),
+#  Four pictures per size cannot be derived and ship with the game: HD_SRC\<WxH>\INTRG.GIF (the
+#  procedurally painted main-menu planet, with the Take 2 bottom band; until 5 Oct 2026 also INTRO.GIF,
+#  the same scene with the SSI band for the Classic menu - no screen Dark Colony Ultimate reaches draws
+#  it, so the stock picture is letterboxed like every other screen since then, doc 10.76),
 #  BACKDROP.GIF (the same planet without a band: since 1 Oct 2026 the ground of every letterboxed
 #  menu screen, which sits on it in a grey panel frame instead of on black - doc 10.56) and
-#  INTRFACE.GIF (the HUD frame).
+#  INTRFACE.GIF / INTRFACE_LIGHT.GIF (the dark / light HUD frame).
 #
 #  ---- A NOTE ON THE COMPILED CODE BELOW ------------------------------------------------------------
 #  The 15 menu backgrounds are GIF files.  The game's loader (gifload.c) insists that the picture is
@@ -3078,7 +3082,7 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Console =
     $intrface = Join-Path $GameDir 'INTRFACE'; $hd = Join-Path $GameDir $folder; $gamestat = Join-Path $GameDir 'GAMESTAT'
     $src = Join-Path (Join-Path $GameDir $HD_SRC) $Mode
     $frame = if ($Console) { 'INTRFACE.GIF' } else { 'INTRFACE_LIGHT.GIF' }
-    foreach ($need in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF', $frame) { if (-not (Find-CI $src $need)) { throw "$HD_SRC\$Mode\$need is missing: the painted backdrops and HUD frames for $Mode ship with the game and cannot be generated" } }
+    foreach ($need in 'INTRG.GIF', 'BACKDROP.GIF', $frame) { if (-not (Find-CI $src $need)) { throw "$HD_SRC\$Mode\$need is missing: the painted backdrops and HUD frames for $Mode ship with the game and cannot be generated" } }
     # the maintainer's rule (2 Oct 2026): no file of another resolution stays anywhere - every other size's folder, the
     # pre-October INTRF_HD set and the 640x480 copies go, and this size's folder is rebuilt from scratch
     $lines += Remove-OtherInterfaceSets $GameDir $folder
@@ -3124,8 +3128,9 @@ function Write-InterfaceSet([string] $GameDir, [string] $Mode, [bool] $Console =
         $gifsToPad[[System.IO.Path]::GetFileName($gif).ToUpperInvariant()] = $gif
     }
     # --- backgrounds: the painted / spliced ones ship per size, the rest are letterboxed here - laid
-    # over BACKDROP.GIF (the main menu's planet without its bottom band) in a grey panel frame (doc 10.56)
-    foreach ($shipped in 'INTRG.GIF', 'INTRO.GIF', 'BACKDROP.GIF') {
+    # over BACKDROP.GIF (the main menu's planet without its bottom band) in a grey panel frame (doc 10.56).
+    # INTRO.GIF, the Classic menu's dress, is one of the letterboxed ones since 5 Oct 2026 (doc 10.76)
+    foreach ($shipped in 'INTRG.GIF', 'BACKDROP.GIF') {
         $gifsToPad.Remove($shipped)
         [System.IO.File]::Copy((Find-CI $src $shipped), (Join-Path $hd $shipped), $true); $written++
     }

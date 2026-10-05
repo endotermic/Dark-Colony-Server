@@ -6960,3 +6960,24 @@ that the patched files are built, not downloaded.
 regenerate them with the tool chain whenever a set changes, and compare every patcher run against them. A reference
 hash lives in the generated script (`ReferenceSha256`), nowhere else; a player's "my exe differs" report is answered by
 `-Verify`, not by a repository file.
+
+### 10.76 INTRO.GIF no longer ships per size: the Classic menu's dress is letterboxed like every other screen (5 Oct 2026)
+
+**Maintainer: "remove deprecated main menu backgrounds from the repo."** Of the three painted backdrops per size in
+`HD_SRC/<WxH>/`, `INTRG.GIF` is the live main menu (`bintroe`, section 10.11), `BACKDROP.GIF` the ground of every
+pre-battle screen (section 10.56) and `INTRO.GIF` the same scene with the SSI band: the background of `introe`,
+`BUTTONSE` and `DINTROE`, which the retail exe never reaches (section 10.11), and of the Classic menu, whose build left
+the installer on 5 Oct 2026 (section 10.72). Dark Colony Ultimate draws it on no screen. The seven `INTRO.GIF` (0.6 MB)
+left `DC - Council wars/HD_SRC/<WxH>/` and the resource copy `patcher/game/HD_SRC/<WxH>/` of the Dark-Colony repository,
+and with them the installer package (Dark-Colony-Ultimate, ModDB).
+
+**Generator.** `SHIPPED_PICTURES` is four names - `INTRG.GIF`, `BACKDROP.GIF`, `INTRFACE.GIF`, `INTRFACE_LIGHT.GIF` -
+and `Write-InterfaceSet` requires and copies the two painted backdrops only; the seven resource entries left
+`tools/disc_manifest.json`. `INTRO.GIF` stays a name of `HD_SET_FILES`: the three scripts that name it are still written,
+and their background now takes the ordinary route of section 10.56 - the stock 640x480 `INTRFACE/INTRO.GIF` (a file of
+the Dark Colony disc, so `hd_data` lists it as an input of fix `resolution`) is letterboxed over `BACKDROP.GIF` in the
+grey panel frame - so nothing in the folder dangles; the three scripts keep the full-frame layout of section 10.11 over
+that letterboxed picture (unreachable screens, cosmetic). `tools/paint_intro.py` is unchanged. Data only, no exe byte:
+every reference hash stays. The fixtures `Dark-Colony-development/hd_sets/<WxH>/INTRF_HD/INTRO.GIF` still hold the
+painted full-frame picture, so a comparison of a patcher run against them differs in that one file until they are
+regenerated. Patcher **2.6**.
