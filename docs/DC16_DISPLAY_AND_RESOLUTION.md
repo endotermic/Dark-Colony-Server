@@ -6978,6 +6978,7 @@ and their background now takes the ordinary route of section 10.56 - the stock 6
 the Dark Colony disc, so `hd_data` lists it as an input of fix `resolution`) is letterboxed over `BACKDROP.GIF` in the
 grey panel frame - so nothing in the folder dangles; the three scripts keep the full-frame layout of section 10.11 over
 that letterboxed picture (unreachable screens, cosmetic). `tools/paint_intro.py` is unchanged. Data only, no exe byte:
-every reference hash stays. The fixtures `Dark-Colony-development/hd_sets/<WxH>/INTRF_HD/INTRO.GIF` still hold the
-painted full-frame picture, so a comparison of a patcher run against them differs in that one file until they are
-regenerated. Patcher **2.6**.
+every reference hash stays. The fixtures `Dark-Colony-development/hd_sets/<WxH>/HD_<h>P/INTRO.GIF` of all six sizes
+were refreshed from patcher 2.6 runs on 6 Oct 2026 (the letterboxed picture; checked against the written sets, text
+with CR stripped and GIFs by pixel: 62 fixture files per size, nothing else differs - the HSCENE/GSCENE ending names
+of the five sets other than 1024x768 aside, a known difference since 28 Sep 2026). Patcher **2.6**.
