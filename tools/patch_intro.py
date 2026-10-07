@@ -10,6 +10,11 @@ build.  Now the main menu comes up at once; DARK COLONY plays avi/dcintro.avi an
 avi/intro.avi, each right before its campaign's race / name screen.  ACADEMY, OZI MISSIONS and LOAD GAME play
 nothing (not asked for).  SPACE skips a movie as before; a missing movie file is skipped silently (the player
 returns when the file does not open - the stock behaviour of fix nocd's movie opener).
+The movie plays in silence apart from its own sound track (7 Oct 2026, section 10.77, a player's report: "when you select Dark
+Colony or cw during the intro there is a sound of the menu"): the main menu (`bintro`) starts its background hum
+- sample 0x86 = sound/hum.wav, flagged looped in sound2.dat - and nothing stops it before the pre-battle screens,
+so it kept looping under the movie.  The common tail now stops every sample before the movie and starts the hum
+again after it, so the race / name screen hums as it does after ACADEMY.
 
 How (3 code edits + 2 .reloc entries, on the exe AFTER fix ozi):
   1. `main` (`0x00405264`) built "avi/" + "intro.avi" into a local buffer and called the movie player
@@ -28,12 +33,19 @@ How (3 code edits + 2 .reloc entries, on the exe AFTER fix ozi):
   The trampolines (in the freed start-up block):
      tramp_cw_intro:  push edx ; call stub_cw_set ; call common ; db "avi/intro.avi",0      (25 bytes)
      tramp_dc_intro:  push edx ; call stub_dc_set ; call common ; db "avi/dcintro.avi",0    (27 bytes)
-     common:          pop edx (-> the string) ; push eax ; call play_movie ; pop eax ; pop edx ;
-                      jmp campaign_runner                                                   (14 bytes)
+     common:          pop edx (-> the string) ; push eax ; push ecx ; mov ecx,eax ;
+                      push edx ; call [ecx+0B4h] (stop every sample) ; pop edx ;
+                      mov eax,ecx ; call play_movie ;
+                      edx = 1 ; eax = 86h ; call [ecx+7Ch] (play HUM.WAV, looped, at its own volume) ;
+                      pop ecx ; pop eax ; pop edx ; jmp campaign_runner                     (39 bytes)
   At the call sites eax = the menu's ui object and edx = the campaign state (gs), exactly what the campaign
-  runner takes; the mode stubs keep both (they push eax/edi), the movie player returns a value in eax, so eax
-  and edx are saved around it.  The handler's own return address stays on top of the stack for the runner's
-  `ret`, as with fix ozi's trampolines.
+  runner takes; the mode stubs keep both (they push eax/edi), the movie player returns a value in eax and the
+  sample player clobbers edx, so eax, ecx (the ui during the tail) and edx are saved around them.  The handler's
+  own return address stays on top of the stack for the runner's `ret`, as with fix ozi's trampolines.
+  The ui's sound slots are the ones `bintro` uses: `+7Ch` = play sample (eax = id, edx = 1: the volume of
+  sound2.dat; the sample loops when sound2.dat says so; a sample already playing is not restarted), `+0B4h` =
+  stop all 200 samples (`0x004310CC`, keeps every register but eax; its only stock caller is the battle's end at
+  `0x00401A49`).  `bintro`'s own `mov edx,1 ; mov eax,86h ; call [edi+7Ch]` is checked to be in the exe.
 Requires fix `ozi` (the trampolines and mode stubs it created).  `plan` and `apply` work on the exe after
 ozi; on the untouched exe both stop with a message.
 
@@ -75,7 +87,15 @@ DC_MOVIE = b'avi/dcintro.avi\0'
 T0 = 2                               # tramp_cw_intro at block+2 (after the 2-byte jmp)
 T1 = T0 + 1 + 5 + 5 + len(CW_MOVIE)  # tramp_dc_intro
 COMMON = T1 + 1 + 5 + 5 + len(DC_MOVIE)
-COMMON_LEN = 14
+COMMON_LEN = 39
+COMMON_PLAY = 15                     # offsets inside common of `call play_movie` and `jmp campaign_runner`
+COMMON_RUNNER = 34
+assert COMMON + COMMON_LEN <= BLOCK_LEN
+# the ui's sound slots and the menu's hum, as bintro uses them: mov edx,1 ; mov eax,86h ; call [edi+7Ch]
+UI_PLAY_SAMPLE = 0x7C                # eax = sample id, edx = 1 (the volume of sound2.dat); loops when sound2.dat says so
+UI_STOP_SAMPLES = 0xB4               # stop every sample (0x004310CC), no arguments
+HUM = 0x86                           # SOUND\HUM.WAV, looped
+SITE_HUM = b'\xBA\x01\x00\x00\x00\xB8' + struct.pack('<I', HUM) + b'\xFF\x57' + bytes([UI_PLAY_SAMPLE])
 
 
 def sections(data):
@@ -160,9 +180,21 @@ def new_block(block_va, stub_cw, stub_dc, play, runner):
     assert len(b) == COMMON
     b += b'\x5A'                                                   # common: pop edx  (-> the movie path)
     b += b'\x50'                                                   # push eax         (the ui object)
+    b += b'\x51'                                                   # push ecx
+    b += b'\x89\xC1'                                               # mov ecx,eax      (ui, kept by every callee below)
+    b += b'\x52'                                                   # push edx
+    b += b'\xFF\x91' + struct.pack('<I', UI_STOP_SAMPLES)          # call [ecx+0B4h]  stop every sample: the menu's looping hum
+    b += b'\x5A'                                                   # pop edx
+    b += b'\x89\xC8'                                               # mov eax,ecx
+    assert len(b) == COMMON + COMMON_PLAY
     b += b'\xE8' + rel32(block_va + len(b), play)                  # call play_movie(eax = ui, edx = path)
+    b += b'\x6A\x01\x5A'                                           # push 1 ; pop edx (the volume of sound2.dat)
+    b += b'\xB8' + struct.pack('<I', HUM)                          # mov eax,86h      HUM.WAV
+    b += b'\xFF\x51' + bytes([UI_PLAY_SAMPLE])                     # call [ecx+7Ch]   the hum again, looped, for the race screen
+    b += b'\x59'                                                   # pop ecx
     b += b'\x58'                                                   # pop eax
     b += b'\x5A'                                                   # pop edx          (gs)
+    assert len(b) == COMMON + COMMON_RUNNER
     b += b'\xE9' + rel32(block_va + len(b), runner)                # jmp campaign_runner(ui, gs)
     assert len(b) == COMMON + COMMON_LEN
     b += b'\0' * (BLOCK_LEN - len(b))
@@ -195,6 +227,8 @@ def analyse(data):
     if len(dc_hits) != 1:
         raise SystemExit('the DARK COLONY handler of fix ozi is not in this exe (%d hits) - apply patch_ozi_menu.py first' % len(dc_hits))
     dc = dc_hits[0]
+    # the slots and the sample id the new tail uses must be the ones bintro starts the hum with
+    unique(data, SITE_HUM, 'main-menu hum start (mov edx,1 ; mov eax,86h ; call [edi+7Ch])', lo, hi, matches_q)
     cw_call, dc_call = cw + SITE_CW_CALL, dc + SITE_DC_CALL
     cw_target = call_target(data, cw_call, va_of(cw_call))
     dc_target = call_target(data, dc_call, va_of(dc_call))
@@ -223,8 +257,11 @@ def analyse(data):
             raise SystemExit('the start-up block is ours but the campaign buttons call %#x / %#x' % (cw_target, dc_target))
         stub_cw = call_target(data, blk + T0 + 1, blk_va + T0 + 1)
         stub_dc = call_target(data, blk + T1 + 1, blk_va + T1 + 1)
-        play = call_target(data, blk + COMMON + 2, blk_va + COMMON + 2)
-        runner = call_target(data, blk + COMMON + 9, blk_va + COMMON + 9)
+        if data[blk + COMMON:blk + COMMON + 3] == b'\x5A\x50\xE8':
+            raise SystemExit('the start-up block at %#x is the first (5 Oct 2026) version of this fix, which left the menu hum '
+                             'playing under the movie - rebuild the exe from the original' % blk_va)
+        play = call_target(data, blk + COMMON + COMMON_PLAY, blk_va + COMMON + COMMON_PLAY)
+        runner = call_target(data, blk + COMMON + COMMON_RUNNER, blk_va + COMMON + COMMON_RUNNER)
         if bytes(data[blk:blk + BLOCK_LEN]) != new_block(blk_va, stub_cw, stub_dc, play, runner):
             raise SystemExit('the start-up block at %#x is not exactly ours' % blk_va)
     else:
@@ -237,7 +274,7 @@ def analyse(data):
         (dc_call, bytes(data[dc_call:dc_call + 5]), b'\xE8' + rel32(va_of(dc_call), blk_va + T1),
          'DARK COLONY handler: call tramp_dc_campaign %#010x -> call tramp_dc_intro %#010x (mode dc/, the Dark Colony intro, then the campaign)' % (dc_target if state == 'stock' else stub_dc, blk_va + T1)),
         (blk, bytes(data[blk:blk + BLOCK_LEN]), nb,
-         'main: the start-up intro ("avi/" + "intro.avi" built in a local buffer, play_movie %#010x) -> jmp to the menu loop %#010x; the freed 93 bytes hold tramp_cw_intro (%#010x: push edx; call stub_cw_set %#010x; call common; "avi/intro.avi"), tramp_dc_intro (%#010x: push edx; call stub_dc_set %#010x; call common; "avi/dcintro.avi") and common (%#010x: pop edx = the path; push eax; call play_movie; pop eax; pop edx; jmp campaign runner %#010x)'
+         'main: the start-up intro ("avi/" + "intro.avi" built in a local buffer, play_movie %#010x) -> jmp to the menu loop %#010x; the freed 93 bytes hold tramp_cw_intro (%#010x: push edx; call stub_cw_set %#010x; call common; "avi/intro.avi"), tramp_dc_intro (%#010x: push edx; call stub_dc_set %#010x; call common; "avi/dcintro.avi") and common (%#010x: pop edx = the path; save eax, ecx; stop every sample (ui+0B4h: the menu hum HUM.WAV loops otherwise under the movie); call play_movie; HUM.WAV again (ui+7Ch, 86h, 1) for the race screen; restore; pop edx; jmp campaign runner %#010x)'
          % (play, blk_va + BLOCK_LEN, blk_va + T0, stub_cw, blk_va + T1, stub_dc, blk_va + COMMON, runner)),
     ]
     relocs = []

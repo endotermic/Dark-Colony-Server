@@ -6982,3 +6982,47 @@ every reference hash stays. The fixtures `Dark-Colony-development/hd_sets/<WxH>/
 were refreshed from patcher 2.6 runs on 6 Oct 2026 (the letterboxed picture; checked against the written sets, text
 with CR stripped and GIFs by pixel: 62 fixture files per size, nothing else differs - the HSCENE/GSCENE ending names
 of the five sets other than 1024x768 aside, a known difference since 28 Sep 2026). Patcher **2.6**.
+
+### 10.77 The menu hum under the intro movies: stopped before the movie, started again after it (7 Oct 2026)
+
+**Player's report, through the maintainer: "when you select Dark Colony or cw during the intro there is a sound of the
+menu" - "stop that sound right before video playback and play that sound again after video playback ends".** Fix
+**`intro`** amended (`tools/patch_intro.py`, section 10.74), no new fix id: the common tail of the two trampolines grows
+from 14 to 39 bytes inside the same freed block. Patcher **2.7**.
+
+**Cause.** The main menu (`bintro` `0x404DC8`) starts its background hum as it opens - `mov edx,1 ; mov eax,86h ;
+call [edi+7Ch]`, sample `0x86` = `SOUND/HUM.WAV`, flagged looped in `SOUND/SOUND2.DAT` (last column 1) - and nothing
+stops it before the pre-battle screens: in the stock exe the start-up movie ran before the menu existed, so it was
+silent, and after a campaign button the hum simply carries on under the race / name screen (ACADEMY still does this).
+Section 10.74 moved the movie behind the button, under the running hum.
+
+**The ui's sound slots.** `+7Ch` = play sample (eax = id, edx = 1: the volume of sound2.dat; the sample loops when
+sound2.dat says so; a sample already playing is not restarted). `+0B4h` = stop every sample: the slot holds the wrapper
+`0x42FA14` (`push ebp ; call 0x4310CC ; pop ebp ; ret`); `0x4310CC` returns at once when the sound system is off
+(`[0x489750]` != 0) and otherwise calls `stop_one(eax = i)` (`0x4310F4`) for the 200 slots; both keep every register but
+eax. Its only stock caller is the battle's end (`0x401A49`). The movie player `play_movie 0x401028` saves ebx, ecx, esi,
+edi and ebp (ecx is kept across it), clobbers edx and returns a value in eax. (`dcexp16.asm` loses sync at `0x401028`
+after the nocd edit; the player was read with capstone from the built exe.)
+
+**Fix.** `common` (`0x40539D`, 39 bytes):
+
+    pop edx (the path) ; push eax ; push ecx ; mov ecx,eax (the ui) ; push edx ; call [ecx+0B4h] ; pop edx ;
+    mov eax,ecx ; call play_movie ; push 1 ; pop edx ; mov eax,86h ; call [ecx+7Ch] ; pop ecx ; pop eax ; pop edx ;
+    jmp 0x401C08
+
+The two trampolines are unchanged (25 + 27 bytes); 25 + 27 + 39 = 91 of the 93 freed bytes, two zero bytes of padding.
+No absolute operand, so the `.reloc` edits of section 10.74 stay as they were. The tool now also requires `bintro`'s hum
+start (`SITE_HUM`: `BA 01 00 00 00 B8 86 00 00 00 FF 57 7C`, exactly once) so the slots and the sample id it uses are the
+exe's, and refuses an exe carrying the 5 Oct 2026 block ("rebuild the exe from the original") instead of calling it
+patched. The hum restarts after the movie whether it was skipped with SPACE or ran to its end, and a missing movie file
+makes the player return at once, so the hum is stopped and started again within a frame.
+
+**Verified.** Generator: fix intro 5 edits, 102 bytes, `.reloc` exact. New references: Ultimate 1024x768 dark
+**`ac3a2463…`** (was `165b609a…`), light `720ca97b…`, 640x480 `7335ea8c…`, 1920x1080 dark `d150de59…` / light
+`ba10a65c…`; the editor `de8076dc…` unchanged. The regenerated patcher rebuilt the exe from `ENGEXP16.EXE` into the
+rig's `subst X:` copy at 1024x768 dark: byte-identical to the reference. **In game** (`smoke_rig/intro_test.py`, three
+launches): the main menu is on screen 14 s after the start, DARK COLONY shows the Mars landscape of DCINTRO.AVI 3 s after
+the click and COUNCIL WARS the jungle of INTRO.AVI, SPACE brings the START CAMPAIGN race screen, ACADEMY goes straight to
+START TRAINING, the game is alive after each, `error.log` empty. A screenshot cannot show the hum; the sound path is the
+disassembly of the built block (capstone) - the stop and the restart are the very calls the battle's end and `bintro`
+make. `dcexp16.asm` regenerated from the new build (7 Oct 2026).

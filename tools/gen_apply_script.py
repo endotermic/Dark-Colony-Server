@@ -50,7 +50,7 @@ MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='u
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '2.6'   # 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
+PATCHER_VERSION = '2.7'   # 2.7 (7 Oct 2026): fix intro - the campaign intro movies no longer play over the main menu's looping hum (doc 10.77); 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
 
 
 def _git_state(repo):
@@ -1080,22 +1080,25 @@ second frame (15 changes per second).  The gate lives in the free tails of the t
 slack of the import section next to the frame limiter's; the tails' three relocation entries are re-pointed to
 the gate's two absolute operands (the third becomes padding), so the relocation table stays exact.  Same code
 in both games (at +0x60 in Council Wars).  Independent of the frame limiter (fps).'''),
- dict(id='intro', name='No intro movie at start-up; DARK COLONY and COUNCIL WARS play their own intro (Dark Colony Ultimate only)', date='5 Oct 2026',
-      tool='tools/patch_intro.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.74', blocks=blocks_intro, cw_only=True, requires=['ozi'],
+ dict(id='intro', name='No intro movie at start-up; DARK COLONY and COUNCIL WARS play their own intro (Dark Colony Ultimate only)', date='5 Oct 2026 / 7 Oct 2026',
+      tool='tools/patch_intro.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.74 and 10.77', blocks=blocks_intro, cw_only=True, requires=['ozi'],
       desc='''The game started with the Council Wars intro (avi/intro.avi) before the main menu, whatever the player
 was going to do, and the Dark Colony intro - on the Dark Colony disc, kept beside the Council Wars one as
 AVI/DCINTRO.AVI since both games share the folder - was never played by this build.  Now the main menu
 comes up at once, DARK COLONY plays avi/dcintro.avi and COUNCIL WARS plays avi/intro.avi, each right
 before its campaign's race and name screen.  ACADEMY, OZI MISSIONS and LOAD GAME play nothing.  SPACE
-skips a movie as before; a missing movie file is skipped silently.
+skips a movie as before; a missing movie file is skipped silently.  Since 7 Oct 2026 the movie plays
+without the main menu's background hum (SOUND/HUM.WAV, a looping sound the menu starts and nothing
+stopped, so it went on under the movie); the hum comes back for the race and name screen, as after
+ACADEMY.
 How: the 95 bytes of main() that built "avi/" + "intro.avi" and called the movie player become a jump
 to the menu loop and hold the new code: two small trampolines (one per button: push edx; call the
 button's mode stub of fix ozi; call common with the movie path inline) and a common tail (pop the path
-into edx, save eax, call the movie player with eax = the menu object, restore, jump to the campaign
-runner).  The COUNCIL WARS and DARK COLONY handlers call these trampolines instead of fix ozi's
-plain ones (which set the mode and enter the campaign); ACADEMY keeps the plain one.  The two absolute
-operands the old bytes held lose their .reloc entries (type 0); the new code has none.  Requires fix ozi
-(its mode stubs and trampolines).'''),
+into edx, save eax and ecx, stop every sound, call the movie player with eax = the menu object, start
+the hum again, restore, jump to the campaign runner).  The COUNCIL WARS and DARK COLONY handlers call
+these trampolines instead of fix ozi's plain ones (which set the mode and enter the campaign); ACADEMY
+keeps the plain one.  The two absolute operands the old bytes held lose their .reloc entries (type 0);
+the new code has none.  Requires fix ozi (its mode stubs and trampolines).'''),
  dict(id='ozi', name='DARK COLONY and OZI MISSIONS menu modes (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.13 and 10.36', blocks=blocks_ozi, cw_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=ozi_data,
