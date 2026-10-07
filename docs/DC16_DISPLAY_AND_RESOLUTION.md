@@ -7103,4 +7103,5 @@ light `1c3b491e…`; the editor `de8076dc…` unchanged. The regenerated patcher
 rig's `subst X:` copy at 1024x768 dark: byte-identical to the reference, `patch_volume.py verify` reports it patched.
 **In game** (`smoke_rig/intro_test.py`, three launches): the main menu is on screen 14 s after the start, DARK COLONY, COUNCIL WARS and ACADEMY each leave the menu 3 s after the click, the game is alive after each, `error.log` empty - the main menu's hum is started through `setvol`
 (the cache is 0, the saved level 5 applies), so the new path runs at every start. The rig cannot hear the game (section
-10.77), and the sliders need a hand on the options screen: the maintainer's ear confirms the result.
+10.77), and the sliders need a hand on the options screen. **Confirmed by the maintainer the same day: "tested. working as
+expected"** - the SOUND slider moves the effects only, the music keeps its own level.
