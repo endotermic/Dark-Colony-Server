@@ -3477,7 +3477,9 @@ range 0..10) call display slot **+0xE8** = `set_volume(level, method)` `0x004527
 and calls `auxSetVolume(level·0x1800 per channel)`; the sound widgets `0x2A`/`0x2B` use method 1 =
 the mixer line `MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT` (`0x00452580`, flag `0x0048C180`). Modern
 Windows reports **zero aux devices** (`auxGetNumDevs() == 0` on this PC), so the music slider has
-been a no-op for twenty years even with a CD in the drive.
+been a no-op for twenty years even with a CD in the drive. The mixer line, on the other hand, is since Vista the
+process's own session volume - the game's slider in the Windows Volume Mixer - so the sound slider scaled the
+music as well once fix `music` played it in-process; fix `volume` (section 10.78) moves it to the effects' buffers.
 
 **Why it is silent on today's PCs.** `mcicda.dll` still ships (32-bit `SysWOW64\mcicda.dll` present on
 this Windows 11), but `MCI_OPEN cdaudio` fails without a CD-ROM drive (MCIERR 266 on this PC) → the
@@ -5111,7 +5113,7 @@ recordings.
 | `0x004510D0..0x00451820` (CW +0x60) | **`cdaudio` MCI module** (stock; **rewritten by fix `music`** as the MP3 player, entry points kept): `cd_open` `0x004510D0` (device type `cdaudio` `0x00487C1C`), `cd_play_from_here` `0x0045110C`, `cd_close` `0x00451158`, `cd_stop` `0x00451188`, `cd_tracks` `0x00451408`, `cd_seek_track` `0x004515B8`, `cd_read_toc` `0x0045164C`, `cd_mode` `0x004517B0`; the only user of `mciSendCommandA` (IAT `0x00480570`); §10.31 |
 | `0x0042F9F8` / `0x0042FA9C` / `0x0042FAC0` / `0x0042FA80` / `0x0042FA4C` / `0x0042FA28` (CW +0x60) | `ddex4.c` music layer: open / start (seek track 2 + play, playlist ignored) / poll (restart from track 2 when stopped) / stop / play(track, unused) / track count; device id `0x00489744`, no-CD flag `0x00489748`; display-wrapper slots +0xB8..+0xCC, called from `0x00404E60`, `0x0041F09F`, `0x004320DB`, `0x00401A41`, `0x0040502D`; §10.31 |
 | `0x00429BC0`ff / `0x004A46C0` | `scenario.c` scene-list reader: per-mission playlist `%d … -1` (max 10, assert line 1260) → bytes `0x004A46C0..`, count `0x004A46CC`, cleared at `0x004298D2`; never read by the music code; §10.31 |
-| `0x004527F8` / `0x00452870` / `0x00452580` | `set_volume(level 0..10, method)` (display slot +0xE8, options widgets `0x43`/`0x44` music, `0x2A`/`0x2B` sound): method 0 = aux CD-audio device `auxSetVolume` (no such device on modern Windows; **fix `music` rewrites `0x00452870` as `MCI_SETAUDIO` volume**), method 1 = mixer `SRC_WAVEOUT` line; §10.31 |
+| `0x004527F8` / `0x00452870` / `0x00452580` | `set_volume(level 0..10, method)` (display slot +0xE8, options widgets `0x43`/`0x44` music, `0x2A`/`0x2B` sound): method 0 = aux CD-audio device `auxSetVolume` (no such device on modern Windows; **fix `music` rewrites `0x00452870` as `MCI_SETAUDIO` volume**), method 1 = mixer `SRC_WAVEOUT` line = the Windows per-application volume (**rewritten by fix `volume` as the effects-only module**, 0x4525E0..0x452858, setvol +0x143 called from the engine's SetVolume sites 0x431006 / 0x431257 / 0x431374); §10.31, §10.78 |
 | `0x0040117F`ff | `main.c`; full-screen rect at `0x004010E5` |
 | `0x00405F88` (CW `0x00405F68`) | `safefunc.c` start-up: reads `HBNFUFL.A01`/`.A02`, builds the CD path `%c:\dc\` (`0x00482654`) into `0x004A48B0`, `full` marker → `0x00488DF5`, calls `cd_probe`; **patched: `jmp` from `0x00405FB3` to the `full` check, probe call NOPped** (`cddrive`, §10.19) |
 | `0x00405EAC` (CW `0x00405E8C`) | `cd_probe`: `fopen <CD>anim.dat` + write test `<CD>a<rand>` → flag `0x004A49B8`; re-run by `load_interface` (`0x00423223`) and in game (`0x0041138D`); **patched to `ret`** (`cddrive`, §10.19) |
@@ -7026,3 +7028,79 @@ the click and COUNCIL WARS the jungle of INTRO.AVI, SPACE brings the START CAMPA
 START TRAINING, the game is alive after each, `error.log` empty. A screenshot cannot show the hum; the sound path is the
 disassembly of the built block (capstone) - the stop and the restart are the very calls the battle's end and `bintro`
 make. `dcexp16.asm` regenerated from the new build (7 Oct 2026).
+
+### 10.78 The SOUND slider attenuates the sound effects only, not the game's Windows per-application volume (7 Oct 2026)
+
+**Maintainer's report: "I was trying to lower the volume of the game and to keep the volume of the music higher, but
+both sliders were changing all audio" -> "CD music slider works as expected, but original sound slider regulates both
+(music and effects) simultaneously".** New fix **`volume`** (`tools/patch_volume.py`, the module assembled by
+`tools/volume_asm.py`), Dark Colony Ultimate only. Patcher **2.8**.
+
+**Cause.** The options screen's sound `-`/`+` (widgets `0x2A`/`0x2B`, handler `0x432E68` CW) store the level in the
+dialog's copy of the options and call display slot `+0xE8` = `set_volume(level, 1)` (`0x452858` CW; section 10.31):
+method 1 is the legacy mixer API - `0x4525E0` walks `mixerGetNumDevs` for the first mixer with a
+`MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT` line (`0x1008`), takes its `MIXERCONTROL_CONTROLTYPE_VOLUME` control and sets it to
+`min + (max - min) / 10 * level` (`0x4527F4` = `mixerSetControlDetails`, `0x452820` = `mixerClose`). Since Windows Vista
+that line **is the process's audio session**, the game's own slider in the Windows Volume Mixer, so it scales everything
+the process plays: the DirectSound effects and, since fix `music` (section 10.31) plays the MP3 soundtrack through MCI
+inside the same process, the music. Measured 7 Oct 2026 (`Dark-Colony-development/scratch/voltest.py`: a replica of both
+sliders in one Python process - the same mixer calls, the same `MCI_SETAUDIO` - with pycaw reading the process's session
+volume and a WASAPI loopback RMS; the `mmsystem.h` structures are byte-packed, and the MCI command interface crashes in
+64-bit Python, so the string interface sends the same messages): SOUND 10 -> 5 -> 2 puts the session at 1.0 -> 0.5 -> 0.2
+and the music's loopback level follows (0.044 -> 0.012 -> 0.002); MUSIC 10 -> 5 -> 2 -> 0 leaves the session at 1.0 and
+moves the music only (0.057 -> 0.025 -> 0.010 -> 0). The first mixer with such a line on this PC is the headphones' (mixer
+0, line "Master Volume", control range 0..65535), yet the session it sets is the one on the default device. Windows
+remembers the per-application level between runs, and nothing in the game re-applies the level at start-up (the only
+callers of `set_volume` are the four button handlers), so a player who once lowered SOUND kept a quiet game until the
+next press. So music could never be louder than the SOUND slider allowed; the maintainer's second description is exactly
+what the measurement shows.
+
+**The engine's volume path.** The sample table `0x4DFF30` holds 200 entries of 116 bytes: `+0` the number of voices
+(byte), `+0x44` the sample's volume from `SOUND/SOUND2.DAT` (hundredths of a dB, `<= 0`), `+0x48` loaded (byte), `+0x49`
+looped, `+0x4C` the voices' `IDirectSoundBuffer*` (up to 10). Every effect passes `IDirectSoundBuffer::SetVolume`
+(vtable `+0x3C`) at one of three sites: `play` `0x430F64` (eax = id, edx = volume, 1 = the table's) at `0x431006` -
+`mov edx,[ebp-4] ; push edx ; mov eax,[ebx] ; push ebx ; call [eax+3Ch]`; `play with pan` `0x4311B4` at `0x431257` and
+the voice adjust `0x43132C` (eax = id, edx = voice, ebx = volume, ecx = pan) at `0x431374` - both `push edi ; mov
+eax,[ebx] ; push ebx ; call [eax+3Ch]`. Nothing else sets a sample buffer's volume (`0x401149`, `0x451E2F`, `0x45244C`
+call other interfaces' `+0x3C`). The default of the saved sound level `0x488E0C` (.data) is **5**, as the music level's
+`0x488E10`; the main menu copies both into the game state (`+0x198C` / `+0x1988`) at `0x404E27` and back at `0x405184`.
+
+**Fix.** The 632 bytes `0x4525E0..0x452858` - the walk and its two wrappers; nothing but set_volume's method-1 branch
+(`call 0x4525E0 ; test eax,eax ; je exit` at `0x452887`, checked by the tool) reaches them - become a
+**position-independent module** (411 bytes, `tools/volume_asm.py` with keystone, bytes pasted into the tool): every
+global, import slot and table is reached through a base register loaded with `call next ; pop`, so the old code's **58
+HIGHLOW `.reloc` entries become type 0** and no new entry is needed (the page has none to spare).
+
+* `sfx_set` `+0x000` (ecx = level 0..10, clamped by set_volume): `pushad`; cache = level + 1 at `0x5337CC` (the walk's
+  dead "control minimum"; 0 = nothing pressed in this run); unless `[0x489750]` says sound is off, every voice of every
+  loaded sample gets `setvol(buffer, table volume)` - the looping menu hum and the sounds of a running battle change at
+  once; then the **Windows per-application volume is set back to its maximum** on every mixer with a WaveOut line (the
+  walk the old code did: `mixerOpen`, `mixerGetLineInfoA` by component type, `mixerGetLineControlsA` one by type,
+  `mixerSetControlDetails` with the control's `lMaximum`, `mixerClose`, through the stock IAT slots `0x480574..0x48058C`
+  and the stock `.bss` structures `0x5336F0`/`0x533798`/`0x5337B0`/`0x5337C8`/`0x5337D0`/`0x5337D4`), so a game an older
+  build left quiet in the Volume Mixer recovers with one press; `popad ; xor eax,eax ; ret` - set_volume reads 0 as "no
+  mixer" and returns. Every register but eax preserved (Watcom).
+* `setvol` `+0x143` (`0x452723`; ebx = `IDirectSoundBuffer*`, edx = volume): level = cache - 1, or the saved level
+  `0x488E0C` while the cache is 0; clamp 0..10; `edx += table[level]`; clamp at `DSBVOLUME_MIN` (-10000);
+  `IDirectSoundBuffer::SetVolume`; eax = its HRESULT; ecx and edx preserved.
+* the table `+0x185`, 11 words, hundredths of a dB: **36·log10(level/10)** = 0, -165, -349, -558, -799, -1084, -1433,
+  -1883, -2517, -3600 for 10..1 and **-10000 (silence) for 0** - the taper of the Windows per-application slider the old
+  code set (measured: session 0.5 = -10.8 dB, 0.2 = -25.8 dB), so a level sounds as it did.
+* the three engine sites call `setvol`: `0x431006` -> `mov edx,[ebp-4] ; call setvol ; nop ; nop` (10 bytes), `0x431257`
+  and `0x431374` -> `mov edx,edi ; call setvol` (7 bytes each). The first site's edx is already the resolved volume (the
+  caller's, or the table's when the caller passed 1).
+
+The music slider (fix music's `MCI_SETAUDIO`, section 10.31) is untouched. The level the sound buttons show comes from
+the dialog's copy of the options; a level loaded from a saved game applies to new sounds only after the next press (the
+same limitation as the music module's level). The module was run under unicorn before it went into the exe
+(`volume_asm.py`: `setvol` with the saved level and with the cache, the clamp, `sfx_set` over a fake sample table with
+fake buffers and two fake mixers - the three SetVolume calls, the mixer call sequence, the structures' fields, every
+register and the stack checked; sound off: no SetVolume, the mixer walk still runs).
+
+**Verified.** Generator: fix volume 4 code edits (10 + 7 + 7 + 632 bytes) and 58 `.reloc` entries. New references:
+Ultimate 1024x768 dark **`d37b674e…`** (was `ac3a2463…`), light `89b3fa45…`, 640x480 `8f76732a…`, 1920x1080 dark `772a285d…` /
+light `1c3b491e…`; the editor `de8076dc…` unchanged. The regenerated patcher rebuilt the exe from `ENGEXP16.EXE` into the
+rig's `subst X:` copy at 1024x768 dark: byte-identical to the reference, `patch_volume.py verify` reports it patched.
+**In game** (`smoke_rig/intro_test.py`, three launches): the main menu is on screen 14 s after the start, DARK COLONY, COUNCIL WARS and ACADEMY each leave the menu 3 s after the click, the game is alive after each, `error.log` empty - the main menu's hum is started through `setvol`
+(the cache is 0, the saved level 5 applies), so the new path runs at every start. The rig cannot hear the game (section
+10.77), and the sliders need a hand on the options screen: the maintainer's ear confirms the result.

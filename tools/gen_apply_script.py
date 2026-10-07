@@ -50,7 +50,7 @@ MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='u
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '2.7'   # 2.7 (7 Oct 2026): fix intro - the campaign intro movies no longer play over the main menu's looping hum (doc 10.77); 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
+PATCHER_VERSION = '2.8'   # 2.8 (7 Oct 2026): fix volume - the SOUND slider attenuates the sound effects only, no longer the game's Windows per-application volume, which scaled the music as well (doc 10.78); 2.7 (7 Oct 2026): fix intro - the campaign intro movies no longer play over the main menu's looping hum (doc 10.77); 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
 
 
 def _git_state(repo):
@@ -298,7 +298,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'speed': ('patch_speed.py', ['--percent', '150']),
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
-           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py', 'fps': 'patch_fps.py', 'pointer': 'patch_pointer.py', 'intro': 'patch_intro.py',
+           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py', 'fps': 'patch_fps.py', 'pointer': 'patch_pointer.py', 'intro': 'patch_intro.py', 'volume': 'patch_volume.py',
            'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -316,7 +316,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'console': 'clock', 'speed': 'speed', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave', 'fps': 'fps', 'pointer': 'pointer', 'intro': 'intro',
+           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave', 'fps': 'fps', 'pointer': 'pointer', 'intro': 'intro', 'volume': 'volume',
            'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'race': 'maped', 'campaign': 'maped', 'medfiles': 'maped', 'blockmenu': 'maped', 'teamdialogs': 'maped',
@@ -447,6 +447,17 @@ def blocks_intro(g):
         out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
     out += reloc_lines(t, '.reloc table: ')
     assert len(out) == 5, (g, len(out))                                   # two re-pointed calls, the start-up block, two .reloc entries
+    return out
+
+def blocks_volume(g):
+    t = plan(g, 'volume'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) and len(old) in (10, 7, 632), (g, len(old))
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 4, (g, len(out))                                   # the engine's three SetVolume sites and the module
+    out += reloc_lines(t, '.reloc table: ')
+    assert len(out) == 62, (g, len(out))                                  # + the old mixer walk's 58 entries -> type 0
     return out
 
 def blocks_fps(g):
@@ -1099,6 +1110,24 @@ the hum again, restore, jump to the campaign runner).  The COUNCIL WARS and DARK
 these trampolines instead of fix ozi's plain ones (which set the mode and enter the campaign); ACADEMY
 keeps the plain one.  The two absolute operands the old bytes held lose their .reloc entries (type 0);
 the new code has none.  Requires fix ozi (its mode stubs and trampolines).'''),
+ dict(id='volume', name='The SOUND slider changes the sound effects only, not the music (Dark Colony Ultimate only)', date='7 Oct 2026',
+      tool='tools/patch_volume.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.78', blocks=blocks_volume, cw_only=True,
+      desc='''The options screen's SOUND -/+ buttons set the "WaveOut" line of the legacy Windows mixer.  Since
+Windows Vista that line is the game's own slider in the Windows Volume Mixer (its per-application volume),
+so it scaled everything the game plays - the effects and, since fix music plays the soundtrack inside the
+game, the music too: the music could never be louder than the SOUND level allowed, and Windows kept the
+reduced level between runs.  Now the SOUND level is an attenuation applied to the effects themselves:
+every sound is started at its sound2.dat volume plus 36*log10(level/10) dB (the taper of the Windows
+slider it replaces; 10 = unchanged, 5 = -10.8 dB, 0 = silent), a press re-applies it to every playing
+voice (the menu hum, a running battle), and the music keeps its own slider (CDROM VOLUME / MUSIC).  A press
+also sets the game's Windows per-application volume back to 100 %, so a game an older build left quiet in
+the Volume Mixer recovers with one press.
+How: the 632 bytes of the mixer walk that set_volume's sound branch called (nothing else did) become a
+position-independent module: sfx_set (the cache, the re-apply loop over the 200-sample table, the Windows
+mixer walk at maximum, returns 0 so set_volume does nothing more) and setvol (volume + the attenuation of
+the cached or saved level, clamped at DirectSound's minimum, IDirectSoundBuffer::SetVolume); the sample
+engine's three SetVolume calls go through setvol.  The 58 .reloc entries of the old walk become type 0;
+the new code has no absolute operand.  Independent of every other fix.'''),
  dict(id='ozi', name='DARK COLONY and OZI MISSIONS menu modes (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.13 and 10.36', blocks=blocks_ozi, cw_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=ozi_data,
@@ -1394,7 +1423,7 @@ BUILDS = [
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'ozi', 'intro', 'icon', 'online']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'ozi', 'intro', 'volume', 'icon', 'online']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
