@@ -1,6 +1,7 @@
 // Configuration from environment variables (plan §11). Types follow the defaults.
 
 import { resolveMap } from './maps.js';
+import { parseVariant } from './engine/krusty.js';
 
 export const DEFAULTS = Object.freeze({
   PORT: 8888,
@@ -113,6 +114,9 @@ export const DEFAULTS = Object.freeze({
   // 0 = random per game, otherwise bot i starts at (BOT_SEED + 17 i) & 0xFF, which makes a recorded
   // game reproducible.
   BOT_SEED: 0,
+  // The krusty.js VARIANTS the Krusty bots play (7 Oct 2026, plan §19.12): switches separated by commas,
+  // e.g. `workers,vents=zone`; '' = the original behaviour. Measured with `node tools/botarena.js`.
+  BOT_VARIANT: '',
   // The engine now runs the game's own AI (engine/ai.js) for computer lobby slots and DISCONNECT
   // takeovers. The port is unverified against a real client, so in `send` mode such a game still stops
   // sending checksums unless this is true (a wrong checksum kicks every client). `shadow` compares.
@@ -218,5 +222,11 @@ function validate(cfg) {
   if (!(cfg.MERCENARY_ALLY_S >= 1)) throw new Error('MERCENARY_ALLY_S must be >= 1');
   if (!Number.isInteger(cfg.MERCENARY_THINK_TICKS) || cfg.MERCENARY_THINK_TICKS < 1) throw new Error('MERCENARY_THINK_TICKS must be >= 1');
   if (!Number.isInteger(cfg.BOT_SEED) || cfg.BOT_SEED < 0) throw new Error('BOT_SEED must be an integer >= 0');
+  cfg.BOT_VARIANT = String(cfg.BOT_VARIANT ?? '').trim();
+  try {
+    parseVariant(cfg.BOT_VARIANT);
+  } catch (err) {
+    throw new Error(`BOT_VARIANT: ${err.message}`);
+  }
   if (!Number.isInteger(cfg.BOT_TEAM) || cfg.BOT_TEAM < 0 || cfg.BOT_TEAM > 6) throw new Error('BOT_TEAM must be 0..6');
 }

@@ -664,3 +664,17 @@ the signed-tile row read of `move_group` for tiles ≥ 128, and the game-ending 
 port plays on). Verification status: the bot mode plays whole games in headless self-play and in
 the server (`test/krusty.test.js`); the exact mode has **not** been compared with a recording of a
 real game in which the AI played (`RELAY_SERVER_PLAN.md` §19.10).
+
+**Variants in bot mode** (`ctx.variant`, 7 Oct 2026, `RELAY_SERVER_PLAN.md` §19.12 and §19.13; exact
+mode ignores them): `workers` - a worker that deploys into a mining tower (type 6 → 0x2F in place) stays
+in task 0's list, and `worker_count` (§7, `0x459AB8`) counts the list, so the goals 1 and 7 (§10) cap the
+original at two workers-or-mines; the switch leaves goal 1 as it is, switches goal 7 off and buys the
+further workers in an expansion lane before the chain (`workerExpansion` in `krusty.js`: barracks
+standing, at most two undeployed, a free live vent, the money; three sites before the factory).
+`vents=zone|none` - the threat-free-route test of §11 reduced to the vent's own neighbourhood or dropped.
+`ratio=N` - the attack gate of §13 as N/10 to 1 against a second, mobile-only influence pool (towers and
+mines left out). The behaviours the original lacks (`pressure`, `fortify`, `react`, `upgrades=experience`,
+`mines`, `clear`, `airscout`, `focus`, `hold`; `plus` = all) live in `src/engine/krustyx.js` and use the
+attack task's group slots 8..15 for their units. Measured with `tools/botarena.js`: `workers` wins 52 of
+56 games against the unmodified bot; the full `plus` does not yet beat the rusher of `src/rusher.js`
+(19 / 37 / 0 at ten minutes), see §19.13 of the plan for the ladder.

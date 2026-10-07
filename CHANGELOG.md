@@ -6,6 +6,31 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **The upgraded Krusty: extension switches and the second ladder** (7 Oct 2026, maintainer's brief; plan
+  §19.13): `src/engine/krustyx.js` adds bot-mode behaviours behind `BOT_VARIANT` switches - `ratio=13`
+  (the attack gate 1.3 to 1 against mobile strength, towers and mines left out), `pressure` (kamikaze
+  squads at enemy mines and base), `fortify` (turrets), `react`, `upgrades=experience`, `mines`
+  (engineers lay mines at zone boundaries and bridges), `clear`, `airscout`, `focus` (the aggressor first
+  with several opponents), `hold` (few troopers hold the HQ, three mining sites, factory, counter-offensive
+  with the whole army); `plus` = all of them. The `workers` switch is in its third form (an expansion lane
+  before the goal chain; the first form never built a barracks on maps with many vents). The arena gets
+  `--ffa N` free-for-alls, a five-minute default cap with games decided on points (HQ 10, fighter 1, mine
+  3; maintainer: "5 min is enough"), and per-matchup "on points" counts. Result: the economy half of the
+  brief works (at ten minutes `krusty+plus` out-earns the rusher 39.8k to 32.3k with 3.9 mines and holds
+  its HQ in 37 of 56 games), the military half does not yet - the rusher gate ("never lose") is NOT met:
+  19 / 37 / 0 at ten minutes, 12 / 43 / 1 at five. Nine tests (277).
+- **Bot arena and the `workers` economy variant** (7 Oct 2026, maintainer: "build the arena tool and run the
+  economy change"; plan §19.12): `node tools/botarena.js --a krusty+workers --b krusty,rusher` plays paired
+  headless games (seats swapped, races cycling, one series seed, worker threads) of a candidate brain against a
+  pool on every map and prints win rates with 95 % intervals and per-side economy metrics (`src/arena.js`).
+  The Krusty port gets bot-mode **VARIANTS** (`ctx.variant`, exact mode untouched): `workers` makes the
+  worker goals count the undeployed workers instead of the worker task's whole list, in which a deployed
+  mining tower stays (the original never holds more than two workers-or-mines, the cause of the bots'
+  one or two mines and their passivity); `vents=zone|none` relaxes the threat-free-route rule of the vent
+  choice. Measured over 112 games per matchup: `workers` beats the server's bot 101 / 2 / 9 (15 mines
+  against 1.65) and turns 22 games against the rusher where the baseline turns none; the vent switches add
+  nothing measurable. New config `BOT_VARIANT` (default empty = the original behaviour) puts a variant on the
+  server; `KrustyBot` takes `opts.variant`. Four tests (272).
 - **`INTRO.GIF` no longer ships per size** (5 Oct 2026, maintainer: "remove deprecated main menu backgrounds from
   the repo"; doc §10.76): the painted Classic-menu backdrop in `HD_SRC/<WxH>/` was drawn by no screen Dark Colony
   Ultimate reaches (`introe`, `BUTTONSE` and `DINTROE` are unreachable, the Classic build left the installer in

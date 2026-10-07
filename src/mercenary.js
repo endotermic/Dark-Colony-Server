@@ -320,7 +320,7 @@ export class AiPlayer {
         if (kind === 'rusher') this.brain = new Rusher(G, player, { isAlly: (q) => this.isAlly(q), nameOf: (q) => this.nameOf(q) });
         else {
           const seed = cfg.BOT_SEED ? (cfg.BOT_SEED + 17 * index) & 0xff : undefined;
-          this.brain = new KrustyBot(G, player, { seed });
+          this.brain = new KrustyBot(G, player, { seed, variant: cfg.BOT_VARIANT }); // '' = the original behaviour
         }
         this.kind = kind;
       } catch (err) {
@@ -352,6 +352,7 @@ export class AiPlayer {
       bond: this.bond?.player ?? -1,
       hire: hire,
       ai: this.brain ? this.kind : 'deal only',
+      variant: this.kind === 'krusty' ? cfg.BOT_VARIANT : '',
       allyTicks: this.allyTicks,
     });
   }

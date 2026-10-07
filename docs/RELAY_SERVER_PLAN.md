@@ -2754,6 +2754,178 @@ always teamed with client with shared vision until either player looses connecti
   joiner, team cycle, leaving, limits, `/botcount` interplay, the bond's commands and its end).
   **Confirmed by the maintainer on the live server, 27 Sep 2026** (deployed as `1d9052e`).
 
+### 19.12 The bot arena and the economy variant (7 Oct 2026)
+
+Maintainer, 7 Oct 2026, after the question why the relay's Krusty bots are so passive: "can you find a
+best logic for a bot by running headless games between bots? ... build the arena tool and run the
+economy change."
+
+**Why the bots are passive** (investigated the same day from a 7-bot self-play on Plink - O and the
+engine replay of `logs/replays/2026-09-25T14-08-09-018Z-room1-J8PLAY01.jsonl`, seven Krusty bots against
+the maintainer): no port bug, the original AI's rules starved by the multiplayer setting.
+
+1. *Economy, capped at two mines.* A worker deploys into a mining tower in place (renat.js 0x4139AA,
+   type 6 -> 0x2F) and stays in the worker task's list; `worker_count 0x459AB8` sets `have[6]` to the
+   list length, so the goals "fewer than 1 / 2 workers" count the mines as workers and Krusty never buys
+   a third worker until a mine dies. In the live game every bot had 1-2 mines and 24k-37k income in 15
+   minutes, the maintainer 6 mines and 88k. Plink - O has 14 vents for 8 players, and `worker_update`
+   takes a vent only over a route without enemy ground strength within two hops, so a spare worker idles
+   at home. The relay bots are human-typed (`INCOME_MULT` 0x100); the original "hard" AI had 0x200.
+2. *Attack gate.* `group_strength` counts arrived units only (infantry 2, cyborg 12, mech 25, artillery
+   34, scout 32, deployed tower 84); a target needs `2*s > threat` along the route and
+   `s*score / threat >= 1` in integer division. 75 % of a 10-15 unit army split in two groups is worth
+   30-90 per group; 42 fighters of a human are ~700. Such groups raid undefended vents and dying bots,
+   park (state 3) or flip targets every think. The raids on the maintainer's base stopped after minute 12
+   when the two raiding bots died.
+3. *Defence is passive by design* (`DC16_AI.md` §12): the home guard sits at a random zone with hop < 2,
+   re-routed 1/16 per think, never reads strengths or reacts.
+
+**The arena** (`src/arena.js`, `tools/botarena.js`, `test/arena.test.js`): headless games of a candidate
+brain against a pool on the server engine - `krusty` (the server's bot: bot mode, FIXES on), `rusher`,
+`krusty+<switch>+<switch>=<value>` with the krusty.js **VARIANTS** - on every map with a JSON, paired
+(every game is also played with the seats swapped), the race pairs cycling, seeds from one series seed
+(a game is deterministic in map, seats, races, seed), spread over worker threads (a 50 000-tick game
+takes 2-10 s). Win = the other HQ slot gone and no armed mobile unit left; the tick cap is a draw. The
+table gives wins / losses / draws, the win rate with a 95 % Wilson interval, mean ticks to a win, and
+per side income, peak mines, peak fighters, units trained and mean idle money. `BOT_VARIANT` (config,
+default empty) puts an accepted variant on the server; `KrustyBot` takes `opts.variant`.
+
+**The economy run** (`--pairs 8 --ticks 50000 --seed 1`, 7 maps, 112 games per matchup, 5 threads,
+5-8 min per candidate):
+
+| candidate | vs `krusty` W / L / D | win rate (95 %) | vs `rusher` W / L / D | win rate (95 %) | peak mines vs krusty |
+|---|---|---|---|---|---|
+| `krusty` (the server today) | 21 / 25 / 66 | 19 % (13..27) | 0 / 98 / 14 | 0 % (0..3) | 1.96 |
+| `krusty+workers` | 101 / 2 / 9 | 90 % (83..94) | 22 / 84 / 6 | 20 % (13..28) | 14.8 |
+| `krusty+workers+vents=zone` | 105 / 0 / 7 | 94 % (88..97) | 16 / 85 / 11 | 14 % (9..22) | 16.1 |
+| `krusty+workers+vents=none` | 107 / 0 / 5 | 96 % (90..98) | 16 / 85 / 11 | 14 % (9..22) | 16.2 |
+| `krusty+vents=zone` (control) | 21 / 16 / 75 | 19 % (13..27) | 0 / 96 / 16 | 0 % (0..3) | 1.99 |
+
+Reading: the mirror match `krusty` vs `krusty` (21 / 25, 59 % draws) is the noise floor and shows the
+pairing is symmetric. **`workers` is the whole economy effect**: income 185k against 30k over the same
+games, 15 mines against 1.65, 95 fighters against 14, and no game lost to the server's bot that was not
+a draw by the tick cap. The vent-route rule adds nothing measurable once the worker count is right (the
+three `workers` rows are inside each other's intervals), and alone it changes nothing, so the original
+rule stays. Against the rusher the economy is not enough: the rusher's wave kills Krusty at tick
+11 000-13 500 (8-10 minutes), before the extra mines pay; the economy variant turns 22 of 112 games
+(the baseline 0). Two findings for the next iteration: Krusty with the economy fixed sits on ~12 000
+idle money (the goal chain buys one unit per think, 0x0A count 1), and its defence does not react to
+the wave (§19.7 "Strength of play"). Recommendation: `BOT_VARIANT=workers` on the server, then the
+defence and production throughput as the next arena candidates, then a live game against the
+maintainer, which no arena replaces (it measures bots against bots, and the rusher is the only
+non-Krusty opponent so far; a scripted human-like expander is the missing pool member).
+
+### 19.13 The upgraded Krusty: the maintainer's brief, the extension switches and the second ladder (7 Oct 2026)
+
+Maintainer, 7 Oct 2026, after §19.12: "upgraded krusty must never lose to rusher. ... aggressive start
+... sending few troops (kamikaze) to the opponent (mines and base) constantly ... defending base - it
+must be fortified when technologies are enough with turrets. if opponent attacks base or vent, produce
+reapers/scythes to defend. make upgrades only based on the battle experience and opponent units
+detected. use land mines too ... lower attack task to 1.3-to-1 and don't count home buildings ... when
+multiple opponents, prefer the opponent who is threatening the base / mining sites / turrets ... 5 min
+[of test play] is enough ... while few troopers hold the rusher's offence, take three mining sites, get
+the factory as soon as possible, then an instant counteroffensive with tanks."
+
+**The code.** `src/engine/krustyx.js` (the extensions, ~700 lines) with small hooks in `krusty.js`
+(census, production, goal chain, target choice, mover, bomber), all behind the VARIANTS switches of
+`parseVariant`, bot mode only; the state lives in `ctx.aux.x`, the extension units in the attack task's
+slots 8..15 (squads 8..13, mine clearers 14, engineers 15), skipped by `attack_take`, `attack_plan` and
+`move_all`. Switches: `ratio=N` (the gate N/10 to 1 against the enemy's MOBILE strength, towers and
+mines left out, through a second influence pool), `pressure` (three-infantry squads every 80 s at the
+nearest remembered enemy mine, then base, else the stalest zone), `fortify` (turret builders to 2 + mines,
+max 8), `react` (a mech or infantry per think while enemy mobile strength stands within two hops of home
+or a mine; parked groups and the home guard routed there), `upgrades=experience` (weapon upgrade for the
+fielded type with the most kills, anti-air first once enemy flyers were seen; armour for the type with the
+most losses; only with 1500 in reserve), `mines` (engineers - they become the mine, 450 - to boundary
+cells between the home zone and its neighbours, the second ring, and the first steps towards a detected
+threat; a boundary of four cells or fewer is a bridge and comes first), `clear` (a sergeant / psy-raider
+attacks known enemy mines with 0x0B + 0x0E, else a mech walks onto them), `airscout` (flyers patrol the
+zone whose centre we have not seen for the longest, enemy anti-air avoided, two kept in production),
+`focus` (enemy mobile strength near our assets accumulates per player and decays; the most hostile is the
+aggressor: squads raid its assets only, `choose_target` triples the score of its zones), `hold` (the
+doctrine of the last paragraph of the brief, below). `plus` = all of them with `workers`, `vents=zone`
+and `ratio=13`. New arena features: `--ffa N` free-for-alls (the candidate and N-1 pool members, every
+seating rotated, win = last side alive), a five-minute default cap (6818 ticks) with games decided ON
+POINTS at the cap (HQ 10, fighter 1, mine 3; `decidedBy` 'kill' / 'points'), `BOT_VARIANT` accepts every
+switch. Tests: `test/krustyx.test.js` (4), `test/arena.test.js` (5); 277 in all.
+
+**The first ladder** (50 000-tick cap, 112 games per matchup, `--pairs 8`, before `hold` and `focus`):
+
+| candidate | vs `krusty+workers` | vs `rusher` |
+|---|---|---|
+| `krusty+plus` (then: ratio, pressure, fortify, react, upgrades, mines, clear, airscout) | 38 / 58 / 16 | 51 / 48 / 13 |
+| `krusty+workers+ratio=13` (56 games) | 24 / 21 / 11 | 10 / 43 / 3 |
+| `krusty+workers+pressure` | 26 / 18 / 12 | 12 / 41 / 3 |
+| `krusty+workers+react+fortify` | 19 / 21 / 16 | 13 / 35 / 8 |
+| `krusty+workers+mines` | 12 / 30 / 14 | 3 / 48 / 5 |
+| `krusty+workers+airscout` | 17 / 24 / 15 | 10 / 43 / 3 |
+| `krusty+workers+upgrades=experience` | 21 / 23 / 12 | 11 / 42 / 3 |
+
+No single switch beats the rusher; `mines` costs games (engineers bought while the army is small);
+`plus` even lost to the plain economy bot. The traces that followed found the mechanism, one layer at a
+time:
+
+1. The rusher's trickle of infantry pairs takes the **HQ** around tick 9 000 - and the game credits
+   **no income without the HQ** (engine.js step 11), so the mines keep harvesting into nothing. The
+   defenders stood in four groups (home guard at a randomly re-routed zone, three vent guards).
+2. `hold` v1 (everything to the defend task under danger, the home guard pinned home, fighters bought
+   before the chain) kept the HQ to tick 20 000 but traded units 1:1 with the rusher while spending on
+   workers, buildings, scouts and engineers; the rusher spends 100 % on 350-money troopers.
+3. Standing at the HQ tile loses to troopers shooting the HQ from outside the defenders' range; the rusher
+   wins its fights by re-ordering defenders onto intruders every 96 ticks. `hold` v2 hunts the intruders
+   our vision shows (one order per intruder every 128 ticks), gathers at the HQ otherwise, and walks turret
+   builders to the HQ to deploy (a deployed turret takes 5 damage per trooper shot and kills one in 8).
+4. `workers` v1 (have[6] = undeployed workers) made the FIRST worker goal fire after every deployment:
+   on Circle of Friends the bot bought worker after worker and never built a barracks in 20 000 ticks.
+   v2 (the spare worker in goal 7) put the expansion behind "army 10", which a bot under rush pressure
+   never reaches (1.2 mines). v3, the current form: goal 1 original, goal 7 off, an **expansion lane**
+   before the chain (barracks standing, up to two undeployed workers, a free live vent, the money) -
+   three sites before the factory, then as many as the vents allow.
+5. `react`'s "a fighter per think while a threat is near" starved the mines and the factory alike; with
+   `hold` on, hold rules the purchases. A proposed `early` switch (infantry every think and no saving
+   for the factory in the first five minutes) was rejected by the maintainer - "we must outsmart the
+   rusher, not become one" - and removed.
+6. The current `hold`: DANGER = enemy near our assets within 900 ticks, or an enemy fighter known within
+   12 tiles of the HQ, or known enemy mobile strength above ours, or fewer than 6 fighters (600 ticks of
+   calm end it). Under danger: split 0 (every new unit defends), the intruder hunt, turret builders to
+   the HQ, no squads, a trooper only below 3 (or while intruders outnumber ours by less than 6, at most 8
+   in the opening), the goal chain limited to HQ and barracks until three workers-or-mines stand (the
+   factory follows at once), the factory's second level (turrets) moved before "army 15". When the
+   danger ends every defender is unlinked for the census: 75 % of them become the counter-offensive.
+
+**Where it stands** (`--pairs 4`, 56 games per matchup, seed 5):
+
+| candidate | cap | vs `rusher` W / L / D (on points) | income, mines, fighters vs the rusher's |
+|---|---|---|---|
+| `krusty` (the server) | 5 min | 0 / 56 / 0 (0 / 53) | 10.9k, 1, 5.7 vs 16.7k, 2, 28.7 |
+| `krusty+workers` v3 | 5 min | 0 / 56 / 0 | 11.5k, 1.1, 5 vs 16.8k, 2, 30.6 |
+| `krusty+plus` | 5 min | 12 / 43 / 1 (12 / 43) | 16.4k, 2.3, 9.8 vs 16.8k, 2, 20.7 |
+| `krusty+plus` | 10 min | 19 / 37 / 0 (19 / 19) | **39.8k, 3.9**, 14.4 vs 32.3k, 2, 32 |
+| `krusty+workers` v3 vs `krusty` | 5 min | 52 / 2 / 2 at 50 000 ticks (the economy switch still decisive) | |
+
+Reading: the economy half of the brief works - at ten minutes the upgraded bot out-earns the rusher
+by a quarter with twice its mines, and it holds the HQ in 37 of 56 games where the server's bot held it
+in none. The military half does not yet: at ten minutes the factory has just come and the tank
+counter-offensive has not left, so the bot is behind on fighters (14 to 32) and loses on points; eighteen
+games are lost to a kill before the tenth minute. **The rusher gate ("never lose") is not met.** The
+five-minute cap favours the rusher's opening by construction - a long game cannot be ahead on fighters at
+five minutes - so the gate should be judged at ten to fifteen minutes with the points rule, or by the
+kill alone. Next candidates, in order: the factory before the third mine when the first wave is already
+at the gates (the opening's budget is one mine's income, 1400 per 1000 ticks, and cannot pay for troopers,
+three workers and a 2000-money factory at once - with the brief's order the factory arrives around
+minute eight); tanks bought before any infantry once factory and science stand; the counter-offensive
+triggered by tank count rather than by the danger flag; a free-for-all series for `focus`; and a live
+game against the maintainer, which no arena replaces.
+
+**State at the end of 7 Oct 2026.** Nothing of §19.12 and §19.13 is committed or deployed; 277 tests
+pass, lint is clean. The one change that measured as pure gain is the economy switch alone
+(`BOT_VARIANT=workers`, 52 / 2 / 2 against the server's bot in its third form); `plus` is the brief in
+full and should go to the server only once it passes the rusher gate at ten minutes. The arena runs 112
+five-minute games in about 36 s on five threads, so a candidate costs a minute to measure; the traces
+(`fighters near the HQ, intruders, buildings, money per 2000 ticks`) were what found every cause today,
+and every change made without a trace first made the bot worse. The method for the next session:
+one switch, one trace, one arena run, keep only what beats the pool.
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in

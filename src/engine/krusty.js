@@ -22,7 +22,34 @@
 //    tests the contested flag of zone[m] instead of zone[dest]; with fixes on all three use the zone
 //    (destination) index, so the two groups no longer march on the same zone and a group standing in a
 //    contested destination is not sent home for lack of enemies.
-
+//
+// VARIANTS (ctx.variant, bot mode only; chosen per bot by the arena `tools/botarena.js` and, once accepted,
+// by the server's BOT_VARIANT; exact mode ignores them). Found 7 Oct 2026 while investigating why the
+// relay bots are passive (plan §19.12):
+//  * workers: `worker_count` (task 0's recount) sets have[6] to the LENGTH of group 0's list, and a worker
+//    that deploys into a mining tower (renat.js 0x4139AA, type 6 -> 0x2F in place) stays in that list, so
+//    the goals "fewer than 1 / 2 workers" count the mines as workers and Krusty never holds more than two
+//    workers-or-mines. With `workers` on, the first worker goal keeps the original meaning (one
+//    worker-or-mine, so the barracks comes next), the second goal is off, and the expansion runs in its
+//    own lane before the chain (workerExpansion): once the barracks stands, up to two undeployed workers
+//    are kept on their way to vents whenever a free live vent exists and the money covers it with a reserve, so
+//    the mines grow one at a time whatever the chain is saving for. (Two earlier forms of this switch
+//    failed in the arena on 7 Oct 2026: have[6] counting undeployed workers made the first goal fire
+//    after every deployment - worker after worker, never a barracks; keeping the spare worker in the
+//    second goal put the expansion behind "army 10", which a bot under rush pressure never reaches.)
+//  * vents: `worker_update` sends a worker to a vent only over a route with no enemy ground strength within
+//    two hops of any zone on the way (`route_threat`), and recalls a worker whose route gained one. On an
+//    eight-player map nearly every vent fails that test. 'route' = the original; 'zone' = only the enemy
+//    strength within two hops of the vent itself counts; 'none' = no threat test at all.
+//  * ratio=N: the attack task's gate becomes N/10 to 1 (the original is 2 to 1 in attack_plan and the
+//    integer score of choose_target) against the enemy's MOBILE strength only - deployed towers and mines
+//    are left out of the sum (maintainer, 7 Oct 2026: "lower attack task to 1.3-to-1 and don't count home
+//    buildings"); krusty_general keeps a second, mobile-only pool for it (krustyx.js).
+//  * pressure, fortify, react, upgrades=experience, mines, clear, airscout, focus, hold: the behaviours
+//    of krustyx.js (timed raiding squads, turrets, reactive defence, experience-based upgrades, land
+//    mines, mine clearing, air patrol, the aggressor first, the hold doctrine against a rush), hooked
+//    into the census, the production, the target choice and the end of the think. `plus` = all switches
+//    with workers, vents=zone and ratio=13.
 //
 // State: `kai` is a Buffer of 0x6C40 bytes with the ORIGINAL offsets (DC16_AI.md §5), so that the
 // save-game layout (§19) and every address of the doc map 1:1. The six task callbacks live in code
@@ -49,6 +76,7 @@ import { GS, O, P, u8, i8, i16, u16, i32, w8, w16, w32, objAddr, playerAddr, idi
 import * as City from './city.js';
 import * as Scenario from './scenario.js';
 import { build } from '../commands.js';
+import * as X from './krustyx.js';
 
 export const KAI_SIZE = 0x6c40;
 export const NZONES = 256;
@@ -124,18 +152,51 @@ const O_VENT_RATE = 0x32; // i16 vent rate (renat.js), same offset as O.TARGET
 
 const alive = (life) => life !== 0 && life !== 10;
 const tileOf = (gs, a) => [u16(gs, a + O.X) >> 8, u16(gs, a + O.Z) >> 8];
-const famAt = (G, x, z) => G.map.path.familyAt(x, z);
+export const famAt = (G, x, z) => G.map.path.familyAt(x, z);
 const nextHop = (G, a, b) => G.map.path.routing[((a & 0xff) << 8) + (b & 0xff)];
-const adjCount = (G, z) => G.map.path.clist2[z * 32];
-const adj = (G, z, k) => G.map.path.clist2[z * 32 + k];
+export const adjCount = (G, z) => G.map.path.clist2[z * 32];
+export const adj = (G, z, k) => G.map.path.clist2[z * 32 + k];
 const OT = (G, t) => G.tables.types[t];
 const MB = (G, r, c) => G.tables.mbullet.rows[r][c];
 /** 0x456A6B etc.: `ground(x, z) & player(q).VISION` - the player's vision MASK (own bit plus shared allies), not the single team bit. */
-const seenByPlayer = (G, x, z, q) => (G.map.ground[z * G.map.w + x] & i32(G.gs, playerAddr(q) + P.VISION)) !== 0;
+export const seenByPlayer = (G, x, z, q) => (G.map.ground[z * G.map.w + x] & i32(G.gs, playerAddr(q) + P.VISION)) !== 0;
 const groundIdAt = (G, x, z) => G.map.ground[z * G.map.w + x] & 0x3ff;
-const centreOf = (kai, z) => [u8(kai, zoneAddr(z) + Z.CX), u8(kai, zoneAddr(z) + Z.CZ)];
-const money = (G, p) => i32(G.gs, playerAddr(p) + P.MONEY);
-const spend = (G, p, cost) => w32(G.gs, playerAddr(p) + P.MONEY, money(G, p) - cost);
+export const centreOf = (kai, z) => [u8(kai, zoneAddr(z) + Z.CX), u8(kai, zoneAddr(z) + Z.CZ)];
+export const money = (G, p) => i32(G.gs, playerAddr(p) + P.MONEY);
+export const spend = (G, p, cost) => w32(G.gs, playerAddr(p) + P.MONEY, money(G, p) - cost);
+/** The bot-mode variant switches (VARIANTS above); exact mode and a bot without options get the original. */
+export const variant = (ctx) => (ctx.exact ? EMPTY_VARIANT : ctx.variant ?? EMPTY_VARIANT);
+const EMPTY_VARIANT = Object.freeze({});
+/** Parse "workers,vents=zone" (or an object) into a variant; unknown keys and values throw. */
+export function parseVariant(spec) {
+  if (spec && typeof spec === 'object') spec = Object.entries(spec).map(([k, v]) => (v === true ? k : `${k}=${v}`)).join(',');
+  const out = {};
+  for (const part of String(spec ?? '').split(/[,+]/)) {
+    const kv = part.trim();
+    if (!kv) continue;
+    const [k, v = 'true'] = kv.split('=').map((x) => x.trim());
+    if (k === 'workers') {
+      if (!['true', 'false'].includes(v)) throw new Error(`variant workers=${v}: true or false`);
+      out.workers = v === 'true';
+    } else if (k === 'vents') {
+      if (!['route', 'zone', 'none'].includes(v)) throw new Error(`variant vents=${v}: route, zone or none`);
+      out.vents = v;
+    } else if (k === 'ratio') {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error(`variant ratio=${v}: tenths, 1..100 (13 = 1.3 to 1)`);
+      out.ratio = n;
+    } else if (k === 'upgrades') {
+      if (v !== 'experience') throw new Error(`variant upgrades=${v}: experience`);
+      out.upgrades = v;
+    } else if (['pressure', 'fortify', 'react', 'mines', 'clear', 'airscout', 'focus', 'hold'].includes(k)) {
+      if (!['true', 'false'].includes(v)) throw new Error(`variant ${k}=${v}: true or false`);
+      out[k] = v === 'true';
+    } else if (k === 'plus') {
+      Object.assign(out, { workers: true, vents: 'zone', ratio: 13, pressure: true, fortify: true, react: true, upgrades: 'experience', mines: true, clear: true, airscout: true, focus: true, hold: true });
+    } else throw new Error(`unknown variant switch ${k}`);
+  }
+  return out;
+}
 
 /** unit_class 0x456150: types 0..15 -> type mod 8, 49/50 -> 7, 41/42 -> 1, else 8. */
 export function unitClass(type) {
@@ -158,7 +219,7 @@ function zoneOfTile(G, x, z) {
 // ---- command output (hack.c builders 0x40C7D4, 0x40C50C, 0x40C538; send_command 0x421648) -------
 
 /** `[0x07 nwp nobjs (x,z)* (obj)*][0x05 obj order]*` for the given objects; chunked in bot mode. */
-function sendWaypointOrder(ctx, objs, points, order) {
+export function sendWaypointOrder(ctx, objs, points, order) {
   const pts = points.map(([x, z]) => [sx16(x), sx16(z)]);
   const frame = (ids) => [build.waypointsObjects(pts, ids), ...ids.map((o) => build.order(o, order))];
   if (ctx.exact) {
@@ -175,7 +236,7 @@ function sendWaypointOrder(ctx, objs, points, order) {
   for (let i = 0; i < objs.length; i += BOT_CHUNK) ctx.emit(frame(objs.slice(i, i + BOT_CHUNK)));
 }
 
-function sendOrder(ctx, obj, order) {
+export function sendOrder(ctx, obj, order) {
   ctx.emit([build.order(obj, order)]);
 }
 
@@ -183,7 +244,7 @@ function sendBuildBuilding(ctx, slot, level) {
   ctx.emit([build.buildBuilding(slot, level, ctx.p)]);
 }
 
-function sendBuildUnits(ctx, type, count) {
+export function sendBuildUnits(ctx, type, count) {
   ctx.emit([build.buildUnits(type, ctx.p, count)]);
 }
 
@@ -206,7 +267,7 @@ export function hops(G, a, b) {
 }
 
 /** The object indices of a group's list, head first. */
-function listOf(gs, kai, t, m) {
+export function listOf(gs, kai, t, m) {
   const out = [];
   let o = i16(kai, minorAddr(t, m) + MN.HEAD);
   let guard = 0;
@@ -303,10 +364,15 @@ function recountByClass(ctx, t) {
   }
 }
 
-/** worker_count 0x459AB8: have[6] = length of group 0's list. */
+/** worker_count 0x459AB8: have[6] = length of group 0's list (mines included; see the VARIANT workers in GOAL_CHECK). */
 function workerCount(ctx, t) {
   const n = listOf(ctx.G.gs, ctx.kai, t, 0).length;
   w16(ctx.kai, haveAddr(t, 6), n);
+}
+
+/** VARIANT workers: the undeployed workers (class 6) of the worker task's list. */
+function undeployedWorkers(ctx) {
+  return listOf(ctx.G.gs, ctx.kai, 0, 0).filter((o) => unitClass(u8(ctx.G.gs, objAddr(o) + O.TYPE)) === 6).length;
 }
 
 // ---- the task callback tables (DC16_AI.md §7) ----------------------------------------------------
@@ -377,6 +443,7 @@ export function krustyThink(ctx) {
     w8(kai, K.FIRST_RUN, 0);
   }
   krustyGeneral(ctx);
+  X.general(ctx); // VARIANTS: mobile pool, memory of the battle, threat near home (no-op without them)
   krustyDemand(ctx);
   for (let t = 0; t < NTASKS; t++) {
     const cb = TASK_CALLBACKS[t];
@@ -385,6 +452,7 @@ export function krustyThink(ctx) {
     cb.plan(ctx, t);
     cb.move(ctx, t);
   }
+  X.tasks(ctx); // VARIANTS: squads, engineers, clearers, reactive moves
 }
 
 // ---- krusty_aimsg 0x44BF78 (trigger `aimsg`, DC16_AI.md §18) -------------------------------------
@@ -529,6 +597,7 @@ function poolAdd(kai, za, ownerOff, strOff, team, s) {
 export function krustyGeneral(ctx) {
   const { G, p, kai } = ctx;
   const gs = G.gs;
+  X.mobileReset(ctx);
   // 1. reset
   for (let z = 0; z < NZONES; z++) {
     const za = zoneAddr(z);
@@ -619,6 +688,7 @@ export function krustyGeneral(ctx) {
     const aa = MB(G, wc, 2);
     if (t.fly !== 0 && gnd > 0) poolAdd(kai, za, Z.AIR_OWNER, Z.AIR_STR, team, gnd);
     if (gnd > 0) poolAdd(kai, za, Z.G_OWNER, Z.G_STR, team, gnd);
+    if (gnd > 0 && t.speed !== 0) X.mobileAdd(ctx, zone, team, gnd); // VARIANT ratio: towers and mines left out
     if (aa > 0) poolAdd(kai, za, Z.AA_OWNER, Z.AA_STR, team, aa);
   }
   // 3. contested: the non-empty owners of a zone disagree
@@ -632,7 +702,7 @@ export function krustyGeneral(ctx) {
 // ---- goals (DC16_AI.md §10) ----------------------------------------------------------------------
 
 /** The troop items player p may buy now: [{ item, type, cost }] (dep_check_troop == 1), item order. */
-function buyableTroops(G, p) {
+export function buyableTroops(G, p) {
   const out = [];
   for (let i = 0; i < G.tables.depend.length; i++) {
     const r = City.depCheckTroop(G, p, i);
@@ -683,11 +753,13 @@ export function buyableUpgrades(G, p, which) {
 }
 
 const GOAL_CHECK = [
-  // 0 workers 0x45618C: fewer than param workers
-  (ctx, have, param) => have[6] < param,
+  // 0 workers 0x45618C: fewer than param workers (VARIANT workers: the goals beyond the first are off, the
+  // expansion is workerExpansion's lane)
+  (ctx, have, param) => (variant(ctx).workers && param >= 2 ? false : have[6] < param),
   // 1 building 0x456228: buildable, or its slot is blocked for the scenario (then the chain stops)
   (ctx, have, param) => {
     const { G, p } = ctx;
+    if (variant(ctx).upgrades === 'experience' && param in UPGRADE_KIND) return X.upgradeWanted(ctx, UPGRADE_KIND[param]) !== null;
     if (ctx.fixes && param in UPGRADE_KIND) return buyableUpgrades(G, p, UPGRADE_KIND[param]).length > 0;
     const item = BUILDING_KIND[param][i32(G.gs, playerAddr(p) + P.RACE) ? 1 : 0];
     return City.depCheckBuilding(G, p, item).status === 1 || City.slotBlocked(G, p, item);
@@ -719,8 +791,9 @@ const GOAL_ACTION = [
   (ctx, have, param) => {
     const { G, p } = ctx;
     if (ctx.fixes && param in UPGRADE_KIND) {
-      // FIX: buy the upgrade for the unit type the player fields most of (0x0C which type level player)
-      const up = buyableUpgrades(G, p, UPGRADE_KIND[param])[0];
+      // FIX: buy the upgrade for the unit type the player fields most of (0x0C which type level player);
+      // VARIANT upgrades=experience: the type that fights / dies most, enemy flyers seen -> anti-air first
+      const up = variant(ctx).upgrades === 'experience' ? X.upgradeWanted(ctx, UPGRADE_KIND[param]) : buyableUpgrades(G, p, UPGRADE_KIND[param])[0];
       if (!up || money(G, p) < up.cost) return;
       spend(G, p, up.cost);
       ctx.emit([build.upgrade(up.which, up.type, up.level, p)]);
@@ -782,6 +855,7 @@ function runGoals(ctx, have) {
     const action = i32(kai, a + 4);
     const param = i32(kai, a + 8);
     if (!(check >= 0 && check <= 4)) return; // uninitialised slot (pool memory) - nothing sensible to do
+    if (X.skipGoal(ctx, check, param)) continue; // VARIANT hold: the opening builds mines before the factory
     // 0x457650: a check returning non-zero means "goal satisfied, next"; GOAL_CHECK returns true when the goal FIRES
     if (!GOAL_CHECK[check](ctx, have, param)) continue;
     GOAL_ACTION[action](ctx, have, param);
@@ -862,6 +936,11 @@ export function census(ctx) {
     const a = objAddr(o);
     if (!isFree(a)) continue;
     const cls = unitClass(u8(gs, a + O.TYPE));
+    const xm = X.take(ctx, o, cls); // VARIANTS: engineers, clearers and squad recruits go to their own slots
+    if (xm >= 0) {
+      link(gs, kai, o, 2, xm);
+      continue;
+    }
     for (let t = 0; t < NTASKS; t++) {
       if (assign[t][cls] === 0) continue;
       const m = TASK_CALLBACKS[t].take(ctx, t, cls);
@@ -887,8 +966,48 @@ export function krustyDemand(ctx) {
     const len = gs.readUInt16LE(pa + P.QUEUE_LEN + 2 * k);
     for (let i = 0; i < len; i++) have[unitClass(u8(gs, pa + P.QUEUE + 800 * k + i))]++;
   }
+  if (variant(ctx).workers) workerExpansion(ctx);
+  if (X.production(ctx, have)) return; // VARIANTS: one purchase of the new behaviours replaces the chain this think
   runGoals(ctx, have);
 }
+
+const EXPANSION_RESERVE = 500; // VARIANT workers: money left to the chain when a spare worker is bought
+const EXPANSION_SPARE = 2; // VARIANT workers: undeployed workers kept at most (the first ladder's winning form had two)
+const EXPANSION_OPENING = 3; // VARIANT workers: workers-or-mines before the factory stands
+
+/**
+ * VARIANT workers: the expansion lane. With the barracks standing, no undeployed worker, a free live
+ * vent somewhere and the money for the worker plus a reserve, buy one worker; the worker task sends it
+ * to the nearest safe vent and it deploys there.
+ */
+function workerExpansion(ctx) {
+  const { G, p } = ctx;
+  const gs = G.gs;
+  if (i32(gs, playerAddr(p) + P.SLOT_HP + 4) === 0) return; // no barracks yet: the chain's first goals come first
+  if (undeployedWorkers(ctx) >= EXPANSION_SPARE) return; // a worker that found no safe vent must not block the next one for good
+  // three mining sites before the factory, then as many as the vents allow (maintainer, 7 Oct 2026)
+  if (i32(gs, playerAddr(p) + P.SLOT_HP + 4 * 3) === 0 && listOf(gs, ctx.kai, 0, 0).length >= EXPANSION_OPENING) return;
+  const pa = playerAddr(p);
+  for (let k = 0; k < 4; k++) {
+    const n = gs.readUInt16LE(pa + P.QUEUE_LEN + 2 * k);
+    for (let i = 0; i < n; i++) if (unitClass(u8(gs, pa + P.QUEUE + 800 * k + i)) === 6) return; // one in a queue already
+  }
+  let free = false;
+  for (let o = 0; o < MAX_OBJECTS && !free; o++) {
+    const a = objAddr(o);
+    if (u8(gs, a + O.TYPE) !== TYPE_VENT || i16(gs, a + O_VENT_RATE) === 0 || !alive(u8(gs, a + O.LIFE))) continue;
+    const [vx, vz] = tileOf(gs, a);
+    if (groundIdAt(G, vx, vz) === 0x3ff) free = true;
+  }
+  if (!free) return;
+  const it = buyableTroops(G, p).find((i) => unitClass(i.type) === 6);
+  const factory = i32(gs, playerAddr(p) + P.SLOT_HP + 4 * 3) !== 0;
+  if (!it || money(G, p) < it.cost + (factory ? EXPANSION_RESERVE : 0)) return; // in the opening the mines come first, no reserve
+  spend(G, p, it.cost);
+  sendBuildUnits(ctx, it.type, 1);
+  ctx.say(`Expansion: a ${OT(G, it.type).name.toLowerCase()} for the next vent.`);
+}
+
 
 /**
  * route_threat 0x457EA4(gs, kai, from, to, p, route?): A = the zones of the route from -> to (the
@@ -896,8 +1015,9 @@ export function krustyDemand(ctx) {
  * neighbours of A; the sum of the ground strength of every zone in B whose ground owner is neither
  * -1 nor p. -1 when `from` is 0 or the chain hits a 0 entry.
  */
-export function routeThreat(ctx, from, to, route = null, p = ctx.p) {
+export function routeThreat(ctx, from, to, route = null, p = ctx.p, mobile = false) {
   const { G, kai } = ctx;
+  const mob = mobile ? X.mobilePool(ctx) : null;
   const A = new Uint8Array(NZONES);
   const mark = (z) => {
     A[z] = 1;
@@ -931,9 +1051,9 @@ export function routeThreat(ctx, from, to, route = null, p = ctx.p) {
   let sum = 0;
   for (let z = 0; z < NZONES; z++) {
     if (!B[z]) continue;
-    const owner = i8(kai, zoneAddr(z) + Z.G_OWNER);
+    const owner = mob ? mob.owner[z] : i8(kai, zoneAddr(z) + Z.G_OWNER);
     if (owner === -1 || owner === p) continue;
-    sum += u16(kai, zoneAddr(z) + Z.G_STR);
+    sum += mob ? mob.str[z] : u16(kai, zoneAddr(z) + Z.G_STR);
   }
   return sum;
 }
@@ -973,6 +1093,7 @@ export function groupStrength(ctx, t, m) {
  */
 export function chooseTarget(ctx, excluded, maxh, strength, from, routeOut) {
   const { G, kai } = ctx;
+  const ratio = variant(ctx).ratio | 0; // VARIANT: N/10 to 1 against the mobile strength; 0 = the original
   let best = -1;
   let bestScore = 0;
   for (let z = 0; z < NZONES; z++) {
@@ -985,13 +1106,15 @@ export function chooseTarget(ctx, excluded, maxh, strength, from, routeOut) {
     if (hop <= maxh && (e !== 0 || (flags & ZF_CONTESTED))) score = flags & ZF_ATTACK_HERE ? idiv(maxh, 2) : maxh + 1 - hop;
     if (u16(kai, za + Z.BUILDINGS) !== 0) score += idiv(maxh, 2); // added even when the hop test failed
     if (score === 0) continue;
-    let e2 = routeThreat(ctx, from, z);
+    score *= X.focus(ctx, z); // VARIANT focus: the aggressor's zones first (1 without it)
+    let e2 = routeThreat(ctx, from, z, null, ctx.p, ratio !== 0);
+    if (ratio !== 0 && e2 > 0 && 10 * strength <= ratio * e2) continue; // the gate: strength / threat > ratio / 10
     if (e2 === 0) e2 = 1; // -1 (no route) stays -1 and makes the final score negative
     if (i32(kai, K.RATIO) * e2 > strength) {
       ctx.assert(false, 'avoiding_route 0x4579F0 not ported (kai+0x6C34 != 0)');
       continue;
     }
-    const fin = idiv(strength * score, e2);
+    const fin = ratio !== 0 ? idiv(strength * score * 10, e2) : idiv(strength * score, e2); // scaled so a passed gate rarely rounds to 0
     if (fin <= bestScore) continue;
     bestScore = fin;
     best = z;
@@ -1045,16 +1168,17 @@ export function attackPlan(ctx, t) {
   let active = 0;
   for (let g = 0; g < NMINORS; g++) {
     const mn = minorAddr(t, g);
-    if (!u8(kai, mn + MN.ACTIVE)) continue;
+    if (!u8(kai, mn + MN.ACTIVE) || X.isSpecial(ctx, g)) continue;
     active++;
     const state = u8(kai, mn + MN.STATE);
     const idx = ctx.fixes ? i32(kai, mn + MN.DEST) & 0xff : g; // FIX: the destination zone, not the group index
     if (state === 0) B[idx] = 1; // 0x45897A: the GROUP index in the original (bug)
     if (state === 3 || state === 1) C[idx]++; // 0x45898F: likewise
   }
+  const ratio = variant(ctx).ratio | 0;
   for (let m = 0; m < NMINORS; m++) {
     const mn = minorAddr(t, m);
-    if (!u8(kai, mn + MN.ACTIVE)) continue;
+    if (!u8(kai, mn + MN.ACTIVE) || X.isSpecial(ctx, m)) continue;
     const state = u8(kai, mn + MN.STATE);
     const zone = i32(kai, mn + MN.ZONE);
     const dest = i32(kai, mn + MN.DEST);
@@ -1078,11 +1202,11 @@ export function attackPlan(ctx, t) {
       const step = i16(kai, mn + MN.STEP);
       const route = [];
       for (let i = step; i < NZONES; i++) route.push(u8(kai, mn + MN.ROUTE + i));
-      const e = routeThreat(ctx, zone, dest, route);
+      const e = routeThreat(ctx, zone, dest, route, ctx.p, ratio !== 0);
       const zm = zoneAddr(ctx.fixes ? dest & 0xff : m); // the group index as a zone index in the original (bug); FIX: the destination
       if (e === 0 && !(u8(kai, zm + Z.FLAGS) & ZF_CONTESTED) && u16(kai, zoneAddr(dest & 0xff) + Z.BUILDINGS) === 0) {
         w8(kai, mn + MN.STATE, 2);
-      } else if (2 * s <= e) w8(kai, mn + MN.STATE, 2);
+      } else if (ratio !== 0 ? 10 * s <= ratio * e : 2 * s <= e) w8(kai, mn + MN.STATE, 2); // too weak (VARIANT ratio: N/10 to 1)
     } else if (state === 1) {
       // 0x458B0C: every class must hold at least its share (have[c] / ((4*active)/(m+1))) and at least 3
       let ok = true;
@@ -1106,7 +1230,7 @@ function attackTake(ctx, t, cls) {
   let bestTotal = 0;
   for (let m = 0; m < NMINORS; m++) {
     const mn = minorAddr(t, m);
-    if (!u8(kai, mn + MN.ACTIVE)) continue;
+    if (!u8(kai, mn + MN.ACTIVE) || X.isSpecial(ctx, m)) continue;
     let score = i16(kai, mn + MN.COUNT + 2 * cls);
     if (u8(kai, mn + MN.STATE) !== 1) score *= 4;
     score *= m + 1;
@@ -1281,6 +1405,17 @@ export function workerUpdate(ctx, t) {
   const { G, kai } = ctx;
   const gs = G.gs;
   const list = listOf(gs, kai, t, 0);
+  // the threat test of a worker's way to a vent: the original's route_threat, or the VARIANT vents
+  const ventThreat = (from, vfam, team) => {
+    switch (variant(ctx).vents) {
+      case 'none':
+        return 0;
+      case 'zone':
+        return routeThreat(ctx, vfam, vfam, null, team);
+      default:
+        return routeThreat(ctx, from, vfam, null, team);
+    }
+  };
   // pass 1 (0x4595E3)
   for (const o of list) {
     const a = objAddr(o);
@@ -1296,7 +1431,7 @@ export function workerUpdate(ctx, t) {
     }
     const target = u8(gs, a + OA.ZONE);
     if (target === 0) continue;
-    if (routeThreat(ctx, wfam, target, null, u8(gs, a + O.TEAM)) === 0) continue;
+    if (ventThreat(wfam, target, u8(gs, a + O.TEAM)) === 0) continue;
     const [cx, cz] = centreOf(kai, home);
     sendWaypointOrder(ctx, [o], [[cx << 8, cz << 8]], ORDER_MOVE);
     w8(gs, a + OA.ZONE, 0);
@@ -1329,7 +1464,7 @@ export function workerUpdate(ctx, t) {
     if (taken[vfam]) continue;
     const hop = u8(kai, zoneAddr(vfam) + Z.HOP);
     if (hop >= bestHop) continue;
-    if (routeThreat(ctx, wfam, vfam, null, team) !== 0) continue;
+    if (ventThreat(wfam, vfam, team) !== 0) continue;
     bestHop = hop;
     best = o;
     bestZone = vfam;
@@ -1355,6 +1490,7 @@ export function bomberUpdate(ctx, t) {
     const a = objAddr(o);
     const status = u8(gs, a + OA.STATUS);
     const idle = u8(gs, a + OA.BOTTOM_STATE) === 1;
+    if (X.airPatrol(ctx, o, idle)) continue; // VARIANT airscout: flyers patrol the stalest zones instead
     let act = false;
     if (status === 4 || status === 0) act = idle;
     else if (status === 5) {
@@ -1551,7 +1687,11 @@ function taskInitCommon(kai, t) {
 
 /** move_all 0x46BDA4: move_group for every active group. */
 export function moveAll(ctx, t) {
-  for (let m = 0; m < NMINORS; m++) if (u8(ctx.kai, minorAddr(t, m) + MN.ACTIVE)) moveGroup(ctx, t, m);
+  for (let m = 0; m < NMINORS; m++) {
+    if (!u8(ctx.kai, minorAddr(t, m) + MN.ACTIVE)) continue;
+    if (t === 2 && X.isSpecial(ctx, m)) continue; // VARIANTS: squads, engineers and clearers move on their own
+    moveGroup(ctx, t, m);
+  }
 }
 
 /** move_group 0x46B984 (DC16_AI.md §15): units follow the group zone; the group advances along its route. */

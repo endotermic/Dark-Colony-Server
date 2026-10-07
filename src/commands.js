@@ -402,6 +402,7 @@ export const build = Object.freeze({
   tickDesSpeed: (ms) => Buffer.concat([u8(T.TICK_DESSPEED), i32(ms)]),
   sync: (checksum, time) => Buffer.concat([u8(T.SYNC), i16(checksum), i32(time)]),
   order: (obj, order) => Buffer.concat([u8(T.ORDER), i16(obj), u8(order)]),
+  targetObj: (obj, target) => Buffer.concat([u8(T.TARGET_OBJ), i16(obj), i16(target)]), // 0x40C978: with [0x05 obj 0x0E] = attack that object
   waypointsObjects: (points, objs) =>
     Buffer.concat([u8(T.WAYPOINTS_OBJ, points.length), i16(objs.length), ...points.flatMap(([x, z]) => [i16(x), i16(z)]), ...objs.map((o) => i16(o))]),
   buildBuilding: (slot, level, player) => u8(T.RESEARCH, slot, level, player),

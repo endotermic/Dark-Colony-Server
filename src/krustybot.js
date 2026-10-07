@@ -18,11 +18,13 @@ export class KrustyBot {
   /**
    * @param G       the engine Game
    * @param player  game player index of the fake human
-   * @param opts    { seed: RNG seed (0..255 used), thinkTicks }
+   * @param opts    { seed: RNG seed (0..255 used), variant: krusty.js VARIANTS as "workers,vents=zone" or an object }
    */
   constructor(G, player, opts = {}) {
     this.G = G;
     this.p = player;
+    this.variant = Krusty.parseVariant(opts.variant);
+    this.aux = {}; // the state of the krustyx.js behaviours (VARIANTS), outside the original's kai layout
     this.kai = Krusty.krustyAlloc(G, player);
     this.randIndex = (opts.seed ?? (Math.random() * 256) | 0) & 0xff;
     this.table = G.randTable;
@@ -48,6 +50,9 @@ export class KrustyBot {
       kai: this.kai,
       exact: false,
       fixes: true, // the bot plays the repaired Krusty (krusty.js FIXES); exact mode keeps the original's bugs
+      variant: this.variant, // krusty.js VARIANTS (7 Oct 2026); {} = the original behaviour
+      aux: this.aux,
+      tick,
       rand: () => this.rand(),
       emit: (cmds) => {
         out.commands.push(Buffer.concat(cmds));
@@ -71,6 +76,8 @@ export class KrustyBot {
     const st = Krusty.summarize(this.G, this.kai);
     return {
       ai: 'krusty',
+      variant: this.variant,
+      x: this.aux.x?.stats ?? null,
       thinks: this.thinks,
       commands: this.commands,
       groups: this.groups,

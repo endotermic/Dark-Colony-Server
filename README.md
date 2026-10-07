@@ -41,6 +41,11 @@ row shows your name; you can type it there.
   and waves at the nearest base), `/bottype random` lets every bot draw one of the two, `/bottype
   krusty` is the default. `FAKE_PLAYERS`, `BOT_TYPE` and `BOT_HIRE` set the defaults;
   `SYNC_CHECK=off` (the engine off; it is on by default since 27 Sep 2026) leaves the bases idle.
+  `BOT_VARIANT` (default empty = the original AI) switches on measured changes of the Krusty bots:
+  `workers` lets them claim more than two mines (plan §19.12), `plus` the whole upgraded bot of plan
+  §19.13 (squads, turrets, mines, air patrol, the hold doctrine; not yet a match for the rusher);
+  `node tools/botarena.js` is the headless arena that measures such variants against the server's bot
+  and the rusher in five-minute games decided on points.
   Every bot plays a random race (Human or Gray).
 - **Seven rooms**, each with its own map (default: Plink - O, Armageddon, Black Widow, Circle of
   Friends, Olympus Mons, Hoops of Fury, Rings of fire; configurable with `ROOMS`). A newcomer
