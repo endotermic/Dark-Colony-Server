@@ -677,4 +677,8 @@ mines left out). The behaviours the original lacks (`pressure`, `fortify`, `reac
 `mines`, `clear`, `airscout`, `focus`, `hold`; `plus` = all) live in `src/engine/krustyx.js` and use the
 attack task's group slots 8..15 for their units. Measured with `tools/botarena.js`: `workers` wins 52 of
 56 games against the unmodified bot; the full `plus` does not yet beat the rusher of `src/rusher.js`
-(19 / 37 / 0 at ten minutes), see §19.13 of the plan for the ladder.
+(19 / 37 / 0 at ten minutes), see §19.13 of the plan for the ladder. 8 Oct 2026 (plan §19.14): `landmines`
+(the attack gate's pool without land mines), `factory`, `alarm`, `batch`, `safe`, `counter`, `escort`, `patrol`,
+`second`, `shield`, `gate`, `tech`, `upnow`, `mechfirst`, `noscout` and `lieutenant` (the commander, types 69..76, in its
+own slot following our largest group, its rally - the deploy order - given when the group meets the enemy); the relay's
+default bot is `workers,lieutenant` since that day.

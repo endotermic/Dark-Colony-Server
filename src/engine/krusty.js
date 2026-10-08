@@ -50,6 +50,20 @@
 //    mines, mine clearing, air patrol, the aggressor first, the hold doctrine against a rush), hooked
 //    into the census, the production, the target choice and the end of the think. `plus` = all switches
 //    with workers, vents=zone and ratio=13.
+//  * landmines (8 Oct 2026, maintainer: "ignore landmines (and alien landmines) when calculating attack
+//    possibility"): the attack task's threat sums and its target test read a third influence pool that
+//    leaves the land mines (45 HMINE, 46 the alien one; 12 ground strength each, a sergeant's worth) out,
+//    deployed towers and every other armed object still counted; with ratio on, the mobile pool rules.
+//  * factory, alarm, batch, safe, counter, escort (8 Oct 2026, from the traces of the losses to the rusher,
+//    plan §19.14): the tanks' science and robot factory before the third mine once the first wave came, a
+//    danger flag raised only by enemy fighters seen near the base or a mine, the defenders bought and sent
+//    in groups, explorers sent over routes free of enemy units and not rebought at once after a loss, the
+//    counter-offensive only with the numbers, and the escorted expansion (troopers lead, the explorer
+//    follows, reinforcements on contact, a recall and a new try when the escort dies). Later the same day:
+//    patrol, second, shield, gate, tech, upnow, mechfirst, lieutenant, noscout (krustyx.js, plan §19.14).
+//    `tweak` = the maintainer's selection: workers, upgrades=experience, hold, focus, landmines, alarm, batch,
+//    safe, counter, escort, patrol (not factory: the brief takes three mining sites before the factory).
+//    The server's default (config BOT_VARIANT) is workers,lieutenant since 8 Oct 2026.
 //
 // State: `kai` is a Buffer of 0x6C40 bytes with the ORIGINAL offsets (DC16_AI.md §5), so that the
 // save-game layout (§19) and every address of the doc map 1:1. The six task callbacks live in code
@@ -147,6 +161,7 @@ const SCOUT_TYPES = [5, 0x0d]; // SCGM, ORTU
 const TOWER_BUILDER_TYPES = [1, 9];
 const SCOUT_ITEMS = [10, 24]; // DEPEND troop items SCGM / ORTU
 const O_VENT_RATE = 0x32; // i16 vent rate (renat.js), same offset as O.TARGET
+const LAND_MINE_TYPES = [45, 46]; // HMINE, human and alien (an engineer / slom deployed)
 
 // ---- small helpers ---------------------------------------------------------------------------------
 
@@ -188,11 +203,16 @@ export function parseVariant(spec) {
     } else if (k === 'upgrades') {
       if (v !== 'experience') throw new Error(`variant upgrades=${v}: experience`);
       out.upgrades = v;
-    } else if (['pressure', 'fortify', 'react', 'mines', 'clear', 'airscout', 'focus', 'hold'].includes(k)) {
+    } else if (['pressure', 'fortify', 'react', 'mines', 'clear', 'airscout', 'focus', 'hold', 'landmines', 'factory', 'alarm', 'batch', 'safe', 'counter', 'escort', 'patrol', 'second', 'shield', 'gate', 'tech', 'upnow', 'mechfirst', 'lieutenant', 'noscout'].includes(k)) {
       if (!['true', 'false'].includes(v)) throw new Error(`variant ${k}=${v}: true or false`);
       out[k] = v === 'true';
     } else if (k === 'plus') {
       Object.assign(out, { workers: true, vents: 'zone', ratio: 13, pressure: true, fortify: true, react: true, upgrades: 'experience', mines: true, clear: true, airscout: true, focus: true, hold: true });
+    } else if (k === 'tweak') {
+      // the maintainer's selection of 8 Oct 2026: unlimited expansion, experience upgrades, hold (not react), focus,
+      // land mines out of the attack gate, the fixes of the rusher traces, the escorted expansion and the base
+      // patrol; not factory (the brief takes three mining sites before the factory)
+      Object.assign(out, { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, batch: true, safe: true, counter: true, escort: true, patrol: true });
     } else throw new Error(`unknown variant switch ${k}`);
   }
   return out;
@@ -689,6 +709,7 @@ export function krustyGeneral(ctx) {
     if (t.fly !== 0 && gnd > 0) poolAdd(kai, za, Z.AIR_OWNER, Z.AIR_STR, team, gnd);
     if (gnd > 0) poolAdd(kai, za, Z.G_OWNER, Z.G_STR, team, gnd);
     if (gnd > 0 && t.speed !== 0) X.mobileAdd(ctx, zone, team, gnd); // VARIANT ratio: towers and mines left out
+    if (gnd > 0 && !LAND_MINE_TYPES.includes(type)) X.gateAdd(ctx, zone, team, gnd); // VARIANT landmines: only the land mines left out
     if (aa > 0) poolAdd(kai, za, Z.AA_OWNER, Z.AA_STR, team, aa);
   }
   // 3. contested: the non-empty owners of a zone disagree
@@ -824,6 +845,7 @@ const GOAL_ACTION = [
     for (const it of buyableTroops(G, p)) {
       const c = unitClass(it.type);
       if (c === 8) continue;
+      if (c === 5 && X.noScouting(ctx)) continue; // VARIANT noscout: no scout bought before the robot factory
       if (bestScore > score[c]) {
         best = it;
         bestScore = score[c];
@@ -899,7 +921,9 @@ export function census(ctx) {
   assign[1][1] = count[1];
   count[1] = 0;
   const have = (t, c) => u16(kai, haveAddr(t, c));
-  if (SCOUT_ITEMS.some((it) => City.depCheckTroop(G, p, it).status === 1)) {
+  if (X.noScouting(ctx)) {
+    // VARIANT noscout: nobody goes scouting before the robot factory stands - scouts and infantry join the split below
+  } else if (SCOUT_ITEMS.some((it) => City.depCheckTroop(G, p, it).status === 1)) {
     assign[3][5] = count[5];
     count[5] = 0;
   } else if (count[5] > 0) {
@@ -983,8 +1007,11 @@ const EXPANSION_OPENING = 3; // VARIANT workers: workers-or-mines before the fac
 function workerExpansion(ctx) {
   const { G, p } = ctx;
   const gs = G.gs;
-  if (i32(gs, playerAddr(p) + P.SLOT_HP + 4) === 0) return; // no barracks yet: the chain's first goals come first
-  if (undeployedWorkers(ctx) >= EXPANSION_SPARE) return; // a worker that found no safe vent must not block the next one for good
+  // no barracks yet: the chain's first goals come first - VARIANT second: but the second explorer before the barracks
+  if (i32(gs, playerAddr(p) + P.SLOT_HP + 4) === 0 && !X.secondFirst(ctx)) return;
+  if (X.expansionPaused(ctx)) return; // VARIANTS factory (saving for the tanks), safe (an explorer died a moment ago)
+  // a worker that found no safe vent must not block the next one for good; the escort takes one explorer at a time
+  if (undeployedWorkers(ctx) >= (variant(ctx).escort || X.escortInfo(ctx).on ? 1 : EXPANSION_SPARE)) return;
   // three mining sites before the factory, then as many as the vents allow (maintainer, 7 Oct 2026)
   if (i32(gs, playerAddr(p) + P.SLOT_HP + 4 * 3) === 0 && listOf(gs, ctx.kai, 0, 0).length >= EXPANSION_OPENING) return;
   const pa = playerAddr(p);
@@ -1013,11 +1040,12 @@ function workerExpansion(ctx) {
  * route_threat 0x457EA4(gs, kai, from, to, p, route?): A = the zones of the route from -> to (the
  * routing chain, or the given route - then `from` is ignored) plus their neighbours; B = A plus the
  * neighbours of A; the sum of the ground strength of every zone in B whose ground owner is neither
- * -1 nor p. -1 when `from` is 0 or the chain hits a 0 entry.
+ * -1 nor p. -1 when `from` is 0 or the chain hits a 0 entry. `pool` picks a VARIANT pool: 'mobile'
+ * (ratio, safe: towers and mines left out) or 'gate' (landmines: only the land mines left out).
  */
-export function routeThreat(ctx, from, to, route = null, p = ctx.p, mobile = false) {
+export function routeThreat(ctx, from, to, route = null, p = ctx.p, pool = null) {
   const { G, kai } = ctx;
-  const mob = mobile ? X.mobilePool(ctx) : null;
+  const mob = pool === 'mobile' ? X.mobilePool(ctx) : pool === 'gate' ? X.gatePool(ctx) : null;
   const A = new Uint8Array(NZONES);
   const mark = (z) => {
     A[z] = 1;
@@ -1058,6 +1086,12 @@ export function routeThreat(ctx, from, to, route = null, p = ctx.p, mobile = fal
   return sum;
 }
 
+/** The attack gate's pool: the mobile one with ratio, the one without land mines with landmines, else the original. */
+function gatePoolName(ctx) {
+  const v = variant(ctx);
+  return v.ratio ? 'mobile' : v.landmines ? 'gate' : null;
+}
+
 /**
  * group_strength 0x4583AC: over the arrived units (ai_status 1) of a group, per class c
  * 25 * count[c] * MB[class(weapon0 of TYPE c)][1] / (OT(c).defenceClass == 2 ? 50 : MB[1][OT(c).defenceClass]),
@@ -1094,6 +1128,7 @@ export function groupStrength(ctx, t, m) {
 export function chooseTarget(ctx, excluded, maxh, strength, from, routeOut) {
   const { G, kai } = ctx;
   const ratio = variant(ctx).ratio | 0; // VARIANT: N/10 to 1 against the mobile strength; 0 = the original
+  const pool = gatePoolName(ctx);
   let best = -1;
   let bestScore = 0;
   for (let z = 0; z < NZONES; z++) {
@@ -1101,13 +1136,13 @@ export function chooseTarget(ctx, excluded, maxh, strength, from, routeOut) {
     const za = zoneAddr(z);
     const flags = u8(kai, za + Z.FLAGS);
     const hop = u8(kai, za + Z.HOP);
-    const e = routeThreat(ctx, z, z);
+    const e = routeThreat(ctx, z, z, null, ctx.p, variant(ctx).landmines ? 'gate' : null); // VARIANT landmines: a lone mine makes no target
     let score = 0;
     if (hop <= maxh && (e !== 0 || (flags & ZF_CONTESTED))) score = flags & ZF_ATTACK_HERE ? idiv(maxh, 2) : maxh + 1 - hop;
     if (u16(kai, za + Z.BUILDINGS) !== 0) score += idiv(maxh, 2); // added even when the hop test failed
     if (score === 0) continue;
     score *= X.focus(ctx, z); // VARIANT focus: the aggressor's zones first (1 without it)
-    let e2 = routeThreat(ctx, from, z, null, ctx.p, ratio !== 0);
+    let e2 = routeThreat(ctx, from, z, null, ctx.p, pool);
     if (ratio !== 0 && e2 > 0 && 10 * strength <= ratio * e2) continue; // the gate: strength / threat > ratio / 10
     if (e2 === 0) e2 = 1; // -1 (no route) stays -1 and makes the final score negative
     if (i32(kai, K.RATIO) * e2 > strength) {
@@ -1202,7 +1237,7 @@ export function attackPlan(ctx, t) {
       const step = i16(kai, mn + MN.STEP);
       const route = [];
       for (let i = step; i < NZONES; i++) route.push(u8(kai, mn + MN.ROUTE + i));
-      const e = routeThreat(ctx, zone, dest, route, ctx.p, ratio !== 0);
+      const e = routeThreat(ctx, zone, dest, route, ctx.p, gatePoolName(ctx));
       const zm = zoneAddr(ctx.fixes ? dest & 0xff : m); // the group index as a zone index in the original (bug); FIX: the destination
       if (e === 0 && !(u8(kai, zm + Z.FLAGS) & ZF_CONTESTED) && u16(kai, zoneAddr(dest & 0xff) + Z.BUILDINGS) === 0) {
         w8(kai, mn + MN.STATE, 2);
@@ -1404,9 +1439,11 @@ function trackStuck(gs, a, cap) {
 export function workerUpdate(ctx, t) {
   const { G, kai } = ctx;
   const gs = G.gs;
-  const list = listOf(gs, kai, t, 0);
+  const esc = X.escortInfo(ctx); // VARIANT escort: its explorer moves with its troopers, not from here
+  const list = listOf(gs, kai, t, 0).filter((o) => !esc.objs.has(o));
   // the threat test of a worker's way to a vent: the original's route_threat, or the VARIANT vents
   const ventThreat = (from, vfam, team) => {
+    if (variant(ctx).safe) return routeThreat(ctx, from, vfam, null, team, 'mobile'); // VARIANT safe: enemy units on the way, not towers or buildings
     switch (variant(ctx).vents) {
       case 'none':
         return 0;
@@ -1444,6 +1481,7 @@ export function workerUpdate(ctx, t) {
   // pass 3 (0x45980C): zones already targeted (index 0 included)
   const taken = new Uint8Array(NZONES);
   for (const o of list) taken[u8(gs, objAddr(o) + OA.ZONE)] = 1;
+  if (esc.zone > 0) taken[esc.zone] = 1;
   // pass 4 (0x459885): the vent with the smallest hop distance and a threat-free route
   const la = objAddr(last);
   const [wx, wz] = tileOf(gs, la);
@@ -1464,6 +1502,7 @@ export function workerUpdate(ctx, t) {
     if (taken[vfam]) continue;
     const hop = u8(kai, zoneAddr(vfam) + Z.HOP);
     if (hop >= bestHop) continue;
+    if (esc.on && hop > X.ESCORT_FREE_HOP) continue; // VARIANT escort: the farther vents are reached with an escort
     if (ventThreat(wfam, vfam, team) !== 0) continue;
     bestHop = hop;
     best = o;

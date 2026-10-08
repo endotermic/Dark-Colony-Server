@@ -83,3 +83,30 @@ test('focus: the most hostile enemy becomes the aggressor, its zones score tripl
   x.interestTeam[zoneOfQ] = other;
   assert.equal(X.focus({ aux: bot.aux, kai: bot.kai, variant: bot.variant }, zoneOfQ), 1);
 });
+
+test('the switches of 8 Oct 2026 parse, `tweak` expands, and the default server variant is workers + lieutenant', async () => {
+  assert.deepEqual(Krusty.parseVariant('workers,lieutenant'), { workers: true, lieutenant: true });
+  for (const k of ['landmines', 'factory', 'alarm', 'batch', 'safe', 'counter', 'escort', 'patrol', 'second', 'shield', 'gate', 'tech', 'upnow', 'mechfirst', 'noscout']) {
+    assert.deepEqual(Krusty.parseVariant(k), { [k]: true });
+  }
+  assert.deepEqual(Krusty.parseVariant('tweak'), { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, batch: true, safe: true, counter: true, escort: true, patrol: true });
+  const { DEFAULTS } = await import('../src/config.js');
+  assert.equal(DEFAULTS.BOT_VARIANT, 'workers,lieutenant');
+});
+
+test('lieutenant: the commander leaves the groups for its own slot, follows the army and gives the star command', () => {
+  const G = createGame(loadMapJson('D8PLAY03'), { slots: [...Array(8)].map((_, s) => ({ type: s === 4 || s === 0 ? 2 : 3, race: s === 0 ? 1 : 0, colour: s, team: s, name: s === 4 || s === 0 ? `P${s}` : '' })), localSlot: -1, titleDigit: 8 }, {});
+  const bot = new KrustyBot(G, G.scenario.slotToPlayer[4], { seed: 9, variant: 'workers,lieutenant' });
+  const rival = new KrustyBot(G, G.scenario.slotToPlayer[0], { seed: 5, variant: 'workers' });
+  for (let t = 1; t <= 12000; t++) {
+    for (const b of [bot, rival]) {
+      if (t % 32 !== (4 + 4 * b.p) % 32) continue;
+      const out = b.think(t);
+      for (const buf of out.commands) for (const c of splitCommands(buf)) G.applyCommand(c.raw);
+    }
+    G.step();
+  }
+  assert.equal(bot.asserts.length, 0, JSON.stringify(bot.asserts));
+  assert.equal(X.isSpecial({ aux: bot.aux }, X.COMMANDER_SLOT), true, 'the commander has its slot');
+  assert.ok((bot.aux.x.stats.stars ?? 0) >= 3, `star commands: ${bot.aux.x.stats.stars ?? 0}`); // 8 with these seeds
+});

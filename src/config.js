@@ -116,7 +116,9 @@ export const DEFAULTS = Object.freeze({
   BOT_SEED: 0,
   // The krusty.js VARIANTS the Krusty bots play (7 Oct 2026, plan §19.12): switches separated by commas,
   // e.g. `workers,vents=zone`; '' = the original behaviour. Measured with `node tools/botarena.js`.
-  BOT_VARIANT: '',
+  // Default since 8 Oct 2026 (maintainer, plan §19.14): the economy fix and the commander following the
+  // largest group with its star command - 52 / 4 against the original, 31 / 24 / 1 against `workers` alone.
+  BOT_VARIANT: 'workers,lieutenant',
   // The engine now runs the game's own AI (engine/ai.js) for computer lobby slots and DISCONNECT
   // takeovers. The port is unverified against a real client, so in `send` mode such a game still stops
   // sending checksums unless this is true (a wrong checksum kicks every client). `shadow` compares.

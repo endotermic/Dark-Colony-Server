@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **The default bot is `workers,lieutenant`; the rusher series** (8 Oct 2026, maintainer; plan §19.14): `BOT_VARIANT`
+  now defaults to the economy fix plus `lieutenant` - the commander leaves the groups, follows 3 tiles behind the
+  largest group of the bot's fighters and gives its star command (the rally: up to 6 units at 130 % damage) when that
+  group meets the enemy. It beats the original 52 / 4 and the economy bot 31 / 24 / 1. New switches from a day of traces
+  against the rusher: `landmines` (land mines out of the attack gate), `alarm`, `batch`, `safe`, `counter`, `escort`,
+  `patrol`, `second`, `shield`, `gate`, `tech`, `upnow`, `mechfirst`, `noscout`, `factory`; `tweak` bundles the
+  maintainer's selection. Best against the rusher: `tweak+second+shield+tech+upnow+lieutenant+noscout`, 34 / 18 / 4
+  where the original wins 1 / 55 - but it loses to the economy bot 6 / 50, so it is not the default. Two tests (279).
 - **The upgraded Krusty: extension switches and the second ladder** (7 Oct 2026, maintainer's brief; plan
   §19.13): `src/engine/krustyx.js` adds bot-mode behaviours behind `BOT_VARIANT` switches - `ratio=13`
   (the attack gate 1.3 to 1 against mobile strength, towers and mines left out), `pressure` (kamikaze

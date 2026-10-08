@@ -23,7 +23,8 @@ row shows your name; you can type it there.
 - **AI players that play the game's own AI** (since 19 Sep 2026, when the server-side engine is
   on): every bot is played by a port of *Dark Colony*'s computer player "Krusty" (workers to the
   vents, the standard base, an army, guards at the vents, attack groups at the nearest contested
-  zone). By default there is **one** bot, AI Mercenary, the host; type **`/botcount N`** (1..7) in
+  zone), with two improvements since 8 Oct 2026: it keeps expanding to new vents (the original never held
+  more than two mines) and its commander follows the army and rallies it in battle. By default there is **one** bot, AI Mercenary, the host; type **`/botcount N`** (1..7) in
   the room chat and hit ENTER to get more (AI Marauder, AI Renegade, AI Outlaw, ...), `/botcount` to see
   them, `/help` for the commands. **`/botteam N`** (0..6) gives every player N bots of its own:
   on the player's team in the lobby and, in battle, its allies with shared vision until the player

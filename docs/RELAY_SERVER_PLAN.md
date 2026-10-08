@@ -666,6 +666,7 @@ Builders are needed for: `'d' 'i' 'l' 'g' 'f' 'j' 'n' 'h' 'o' 'e'`, `0x02`, `0x1
 | `MERCENARY_ALLY_S` | `45` (120 from 13 to 19 Sep 2026) | seconds an alliance bought for 1000 lasts (maintainer, 19 Sep 2026: "hiring of the bot must remain for 45 sec"); payments arriving while one runs are returned (§19.8) |
 | `MERCENARY_THINK_TICKS` | `32` | decision interval of a bot in game ticks (the original AI's 32, F45) |
 | `BOT_SEED` | `0` | seed of the bots' private RNG (the krusty bot walks the game's `rand()` table on its own index); `0` = random per game, else bot *i* starts at `(BOT_SEED + 17 i) & 0xFF`, which makes a recorded game's bot decisions reproducible (§19.10) |
+| `BOT_VARIANT` | `workers,lieutenant` | the krusty.js VARIANTS every Krusty bot plays (§19.12-19.14), switches separated by commas; `''` = the original computer player. Since 8 Oct 2026 the economy fix and the commander that follows the largest group with its star command (maintainer: "make krusty+workers+lieutenant the default bot") |
 | `AI_SEND` | `false` | the engine runs the game's own AI (`engine/ai.js`) for computer lobby slots and `DISCONNECT` takeovers since 19 Sep 2026, but that exact mode is unverified against a real client: in `send` mode such a game stops sending checksums unless this is `true` (a wrong checksum kicks every client); `shadow` compares and is the verification path (§19.10) |
 
 ---
@@ -2925,6 +2926,64 @@ five-minute games in about 36 s on five threads, so a candidate costs a minute t
 (`fighters near the HQ, intruders, buildings, money per 2000 ticks`) were what found every cause today,
 and every change made without a trace first made the bot worse. The method for the next session:
 one switch, one trace, one arena run, keep only what beats the pool.
+
+### 19.14 The rusher series, the commander, and the new default bot (8 Oct 2026)
+
+The maintainer's list of 8 Oct 2026 ("upgrades only based on battle result, extend mining by one more explorer, fix the
+bug with explorers, ignore land mines when calculating attack possibility, defend base on attack, switch priority when
+the opponent attacks"), then a day of traces of the losses to the rusher, each answered by a switch (`krusty.js`
+VARIANTS, `krustyx.js`), each measured over the same 56 ten-minute games against the rusher (`--pairs 4 --ticks 13636
+--seed 5`, decided on points at the cap; the run-to-run noise is about ±5 games).
+
+**Engine facts found on the way.** An attacker fires at the NEAREST object in its weapon range, unit or building alike
+(`find_target`'s score is 0 for every living target, the first cell of the spiral wins) and re-picks on every step of
+an assault move; idle units fire by themselves. Ranges: trooper 4, reaper 2, scythe 1, commander 6. A land mine (45 / 46)
+is 12 ground strength in the influence map, a sergeant's worth. Every player starts with a trooper and a commander
+(types 69..72 human, 73..76 alien by the lobby's rank, lieutenant by default) at charge 231; its special, the star
+command, is the deploy order: it needs charge >= 32 (+1 per 32 ticks, so one per ~1024 ticks), commanders deploy
+anywhere, and up to 6 / 8 / 10 / 12 armed units within 10 tiles deal 130..160 % for 320..560 ticks (BATTLE_ENGINE §10.2).
+`gs+0x000` (non-zero disables commander specials) is 0 in the arena; its value in a live relay game is not checked.
+Level-1 upgrades cost 1000 (weapon: reaper 100 -> 125 damage; armour: damage taken x 204/256), level 2 needs science 2.
+
+**The switches** (all bot mode, all in `parseVariant`): `landmines` (a third influence pool without the land mines for
+the attack gate and the target test, towers still counted), `factory` (save for science + robot factory after the first
+wave), `alarm` (danger only from enemy fighters seen now near the base, a mine or a turret), `batch` (defence troopers
+bought and sent three at a time), `safe` (explorer routes tested against enemy units only, no new explorer for 1500 ticks
+after a loss), `counter` (the counter-offensive only at 1.5 x the strongest known enemy's power), `escort` (explorers for
+vents beyond one hop go behind three troopers; reinforcements on contact, a recall and a new try when the escort dies),
+`patrol` (the home guard walks a ring around the buildings; under attack every defender stands on the tile beside an
+attacker on the side of our nearest building, where it draws the fire), `second` (the second explorer before the
+barracks, led by the starting trooper reserved at the first census; at the first exchange of fire the explorer runs on
+alone while the trooper holds the enemy), `shield` (larger escorts walk on in contact, the explorer on their far side),
+`gate` (science no longer waits for a third site once it failed, with factory's saving), `tech` (science and factory
+right after the barracks, saving until a mech is buyable), `upnow` (experience upgrades bought before the defence
+troopers, the money waiting for them unless the HQ is unguarded), `mechfirst` (no third explorer before three mechs),
+`lieutenant` (the commander in its own slot 12, following 3 tiles behind our largest group - the fighter with most of
+ours within 6 tiles - away from seen enemies, else on the home side, giving the star command when enemies are within 8
+tiles of the group and at least 3 of ours within 8 of it), `noscout` (nothing to the scouting task before the factory).
+`tweak` = workers, upgrades=experience, hold, focus, landmines, alarm, batch, safe, counter, escort, patrol.
+
+**The ladder against the rusher** (56 games each): the server's bot 1 / 55; start of the day (workers, vents=zone,
+upgrades, ratio=20, hold, focus) 20 / 36; + alarm + batch 22 / 34; tweak 7..12 wins; + second 22 / 34; + the split 24 / 32;
++ shield 24 / 32; + gate 26 / 28 / 2; + tech 29 / 26 / 1; + upnow 34 / 22 / 0; + lieutenant (waiting at the HQ) + noscout
+34 / 18 / 4. Without `alarm` the preset fell to 5 / 51. No measurable effect: safe, counter, landmines (the rusher lays no
+mines), mechfirst, patrol, batch, fortify. Harmful: factory's first form, the larger escorts under siege (0-1 mines in 56
+games), the second explorer before the barracks with the scouting trooper. The remaining kill losses are economy (one
+mine all game on Armageddon and J8PLAY02 seat 7: the second mine lost or never built and not replaced while saving) and
+the alien bot (scythes, range 1, trade one for one); losses cluster on bases with a narrow exit (4-15 tiles), though
+the explorers were not killed there but simply not bought.
+
+**Against the pool the anti-rush preset gave up the economy:** it beats the original 55 / 1 but loses to
+`krusty+workers` 6 / 50, all on points (4 mines and 22 fighters against 8.4 and 40 at ten minutes). The commander
+waiting at the HQ hurt the economy bot (`krusty+workers+lieutenant` 18 / 35 / 3 against `krusty+workers`: the original
+puts its commander, 800 hp and the longest gun, into its groups); following the largest group (the form kept for every
+preset) gives **31 / 24 / 1** against `krusty+workers`, 52 / 4 against the original, 1 / 55 against the rusher.
+
+**The default** (maintainer, 8 Oct 2026: "make krusty+workers+lieutenant a default bot on the relay server"):
+`BOT_VARIANT=workers,lieutenant`. It is the strongest bot against the original and the economy bot; it does not hold
+against a fast rush, which only the anti-rush preset does (and which in turn loses to expansion) - no variant beats the
+whole pool yet. Tests: `test/krustyx.test.js` (6; the new switches parse, `tweak`, the default, the commander's slot and
+star commands in a game); 279 in all.
 
 ### 19.7 Risks and open points
 
