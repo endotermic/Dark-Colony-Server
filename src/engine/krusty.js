@@ -203,16 +203,21 @@ export function parseVariant(spec) {
     } else if (k === 'upgrades') {
       if (v !== 'experience') throw new Error(`variant upgrades=${v}: experience`);
       out.upgrades = v;
-    } else if (['pressure', 'fortify', 'react', 'mines', 'clear', 'airscout', 'focus', 'hold', 'landmines', 'factory', 'alarm', 'batch', 'safe', 'counter', 'escort', 'patrol', 'second', 'shield', 'gate', 'tech', 'upnow', 'mechfirst', 'lieutenant', 'noscout'].includes(k)) {
+    } else if (k === 'infup') {
+      // VARIANT infup: the infantry's level-1 upgrades once science stands and the first wave came; the order
+      if (!['true', 'armour', 'weapon', 'armouronly', 'weapononly'].includes(v)) throw new Error(`variant infup=${v}: armour (armour first), weapon (weapon first), armouronly or weapononly`);
+      out.infup = v === 'true' ? 'armour' : v;
+    } else if (['pressure', 'fortify', 'react', 'mines', 'clear', 'airscout', 'focus', 'hold', 'landmines', 'factory', 'alarm', 'batch', 'safe', 'counter', 'escort', 'patrol', 'second', 'shield', 'gate', 'tech', 'upnow', 'mechfirst', 'lieutenant', 'noscout', 'keep2', 'choke'].includes(k)) {
       if (!['true', 'false'].includes(v)) throw new Error(`variant ${k}=${v}: true or false`);
       out[k] = v === 'true';
     } else if (k === 'plus') {
       Object.assign(out, { workers: true, vents: 'zone', ratio: 13, pressure: true, fortify: true, react: true, upgrades: 'experience', mines: true, clear: true, airscout: true, focus: true, hold: true });
     } else if (k === 'tweak') {
       // the maintainer's selection of 8 Oct 2026: unlimited expansion, experience upgrades, hold (not react), focus,
-      // land mines out of the attack gate, the fixes of the rusher traces, the escorted expansion and the base
-      // patrol; not factory (the brief takes three mining sites before the factory)
-      Object.assign(out, { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, batch: true, safe: true, counter: true, escort: true, patrol: true });
+      // land mines out of the attack gate, the fixes of the rusher traces and the escorted expansion; not factory
+      // (the brief takes three mining sites before the factory); not batch and patrol (maintainer, 9 Oct 2026: "remove
+      // patrol and batch from the bot")
+      Object.assign(out, { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, safe: true, counter: true, escort: true });
     } else throw new Error(`unknown variant switch ${k}`);
   }
   return out;
@@ -240,6 +245,11 @@ function zoneOfTile(G, x, z) {
 
 /** `[0x07 nwp nobjs (x,z)* (obj)*][0x05 obj order]*` for the given objects; chunked in bot mode. */
 export function sendWaypointOrder(ctx, objs, points, order) {
+  // VARIANTS: only the commander retreats - a unit in contact is not sent away from its enemy (krustyx.js holdGround)
+  if (!ctx.exact && objs.length && points.length) {
+    objs = X.holdGround(ctx, objs, points[points.length - 1]);
+    if (!objs.length) return;
+  }
   const pts = points.map(([x, z]) => [sx16(x), sx16(z)]);
   const frame = (ids) => [build.waypointsObjects(pts, ids), ...ids.map((o) => build.order(o, order))];
   if (ctx.exact) {
@@ -801,7 +811,7 @@ const GOAL_ACTION = [
   (ctx) => {
     const { G, p } = ctx;
     for (const it of buyableTroops(G, p)) {
-      if (unitClass(it.type) !== 6) continue;
+      if (unitClass(it.type) !== 6 || !X.queueOpen(ctx, it.type)) continue; // queueOpen: not into a full or stalled queue
       if (money(G, p) < it.cost) return;
       spend(G, p, it.cost);
       sendBuildUnits(ctx, it.type, 1);
@@ -846,6 +856,7 @@ const GOAL_ACTION = [
       const c = unitClass(it.type);
       if (c === 8) continue;
       if (c === 5 && X.noScouting(ctx)) continue; // VARIANT noscout: no scout bought before the robot factory
+      if (!X.queueOpen(ctx, it.type)) continue; // not into a full or stalled production queue
       if (bestScore > score[c]) {
         best = it;
         bestScore = score[c];
@@ -1027,7 +1038,7 @@ function workerExpansion(ctx) {
     if (groundIdAt(G, vx, vz) === 0x3ff) free = true;
   }
   if (!free) return;
-  const it = buyableTroops(G, p).find((i) => unitClass(i.type) === 6);
+  const it = buyableTroops(G, p).find((i) => unitClass(i.type) === 6 && X.queueOpen(ctx, i.type));
   const factory = i32(gs, playerAddr(p) + P.SLOT_HP + 4 * 3) !== 0;
   if (!it || money(G, p) < it.cost + (factory ? EXPANSION_RESERVE : 0)) return; // in the opening the mines come first, no reserve
   spend(G, p, it.cost);
@@ -1757,6 +1768,7 @@ export function moveGroup(ctx, t, m) {
     const [ux, uz] = tileOf(gs, a);
     const unitZone = famAt(G, ux, uz); // raw family: a unit on a family-0 cell is 255 hops away
     const type = u8(gs, a + O.TYPE);
+    if (TOWER_BUILDER_TYPES.includes(type) && X.ownsTurrets(ctx)) continue; // the extension layer's turrets() moves and lands them
     if (TOWER_BUILDER_TYPES.includes(type) && hops(G, unitZone, zone) < 3 && u8(gs, a + OA.STUCK) > 3) {
       sendOrder(ctx, o, ORDER_DEPLOY);
       w8(gs, a + OA.STUCK, 0);

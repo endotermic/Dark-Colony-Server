@@ -89,7 +89,7 @@ test('the switches of 8 Oct 2026 parse, `tweak` expands, and the default server 
   for (const k of ['landmines', 'factory', 'alarm', 'batch', 'safe', 'counter', 'escort', 'patrol', 'second', 'shield', 'gate', 'tech', 'upnow', 'mechfirst', 'noscout']) {
     assert.deepEqual(Krusty.parseVariant(k), { [k]: true });
   }
-  assert.deepEqual(Krusty.parseVariant('tweak'), { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, batch: true, safe: true, counter: true, escort: true, patrol: true });
+  assert.deepEqual(Krusty.parseVariant('tweak'), { workers: true, upgrades: 'experience', hold: true, focus: true, landmines: true, alarm: true, safe: true, counter: true, escort: true });
   const { DEFAULTS } = await import('../src/config.js');
   assert.equal(DEFAULTS.BOT_VARIANT, 'workers,lieutenant');
 });

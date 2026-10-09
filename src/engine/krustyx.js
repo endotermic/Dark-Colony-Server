@@ -123,8 +123,6 @@ const HOLD_MARGIN = 6; // fighters at home wanted beyond the enemy's there befor
 const CALM_TICKS = 600; // ticks without a danger condition before the hold doctrine stands down
 const RALLY_EVERY = 128; // ticks between rally orders under danger (the rusher re-orders its defenders every 96)
 const RALLY_RADIUS = 18; // tiles around the HQ within which a known enemy fighter is hunted by the defenders
-const TURRET_RING = 3; // tiles from the HQ within which a turret builder deploys under danger
-const DEPLOY_REPEAT = 600; // ticks before a deploy order to a builder is repeated
 const SPLIT_HOLD = 0; // kai split: everything to the defend task
 const SPLIT_ORIGINAL = 0xc0; // the original 75 % attack
 const REACT_EVERY = 320; // ticks between reactive re-routes
@@ -139,10 +137,31 @@ const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant:
 const COMMANDER_ENGAGE = 14; // tiles around the commander or the HQ within which a seen enemy fighter matters
 const CLUSTER_RADIUS = 6; // tiles: a fighter and ours this close to it make a group (the largest one is followed)
 const COMMANDER_BEHIND = 3; // tiles behind the centre of our fighters, away from the enemy
+const LT_RETREAT = 4; // VARIANT lieutenant: tiles the commander steps back when hit
+const LT_RETREAT_HOLD = 96; // ... and ticks it stays back before it attacks again
 const STAR_REACH = 8; // tiles: enemies this close to our fighters, ours this close to the commander
 const STAR_MIN = 3; // our armed units within STAR_REACH of the commander before the star command
 // 8 Oct 2026 (factory, alarm, batch, safe, counter, escort)
 const ALARM_MEMORY = 320; // ticks a live sighting keeps the alarm on (then CALM_TICKS of hysteresis)
+const DEFEND_ASSET_RADIUS = 10; // tiles around an own mine or turret within which an enemy fighter is attacking it (the rusher's 10)
+const DEFEND_REACH = 30; // tiles from a threat within which every armed unit of ours joins the defence
+const PUSH_LINK = 12; // tiles: a seen enemy fighter this close to one the defence hunted last think belongs to the same attack
+const SHOOTER_RADIUS = 24; // tiles from the HQ or a mine / turret within which an enemy firing at us is a threat at once
+const NEAR_RADIUS = 32; // tiles from the HQ within which an enemy fighter is "nearby" while an attack is on ...
+const NEAR_ASSET_RADIUS = 16; // ... and from an own mine or turret
+const BACKUP_RADIUS = 48; // tiles from the HQ within which an enemy fighter coming closer is the attacker's backup
+const IN_FIGHT = 6; // tiles: a unit with a seen enemy fighter this close is fighting it - the defence does not re-target it
+const CONTACT = 8; // tiles: a unit with a seen enemy fighter this close is in contact - no order may take it away (holdGround)
+const RETREAT_SLACK = 2; // tiles: an order taking a unit in contact further than this from its nearest enemy is a retreat
+const TURRET_ENGAGE = 12; // tiles: an enemy fighter this close to a turret builder is an attack it lands against
+const TURRET_MARGIN = 2; // tiles beyond the enemies' weapon range where a turret builder lands (the deployment takes time)
+const TURRET_SPOT = 4; // tiles from the HQ of the spots a turret builder without a group zone goes to
+const QUEUE_FULL = 3; // units waiting in a production queue at which no more is bought into it
+const QUEUE_STALL = 256; // ticks without a unit out of a non-empty queue after which it counts as stalled
+const GATHER_FRONT = 5; // tiles from the HQ towards the danger where the rally gathers (on the HQ tile it crowded the doors)
+const DOOR_STEP = 2; // tiles a unit standing on a building's spawn tile is moved outwards
+const IDLE_ENGAGE = 8; // tiles: an idle armed unit of ours with an enemy fighter this close attacks it, wherever it stands
+const DEFEND_EVERY = 96; // ticks between two rounds of defence orders (the rusher's 96); an idle defender is ordered at once
 const MINE_RADIUS = 6; // tiles around an own mine or turret within which an enemy fighter raises the alarm
 const BATCH_SIZE = 3; // troopers bought and sent together
 const GATHER_RADIUS = 6; // tiles around the HQ where the defenders gather
@@ -165,6 +184,11 @@ const SHIELD_JOIN = 10; // VARIANT shield: tiles within which the explorer count
 const SHIELD_SCAN = 12; // VARIANT shield: tiles around the escort whose seen enemy fighters give the side to avoid
 const SHIELD_SIDE = 2; // VARIANT shield: tiles beyond the escort's centre on the far side
 const DECOY_RADIUS = 10; // tiles around the meeting point within which the decoy escort picks its enemy
+const DETOUR_CLEAR = 20; // VARIANT second, the detour: a vent this close to an enemy fighter seen is no way out
+const DETOUR_PATH = 8; // tiles: the detour's path keeps this far from every enemy fighter we see (closer only where it starts)
+const DETOUR_BASE = 30; // tiles: no detour to a vent this close to a known enemy building
+const DETOUR_MAX = 120; // steps: the longest detour path searched
+const ROUTE_POINTS = 8; // waypoints of a planned route (the game's object holds eight)
 const GUARD_OFFSET = 2; // tiles short of the vent where the escort stands (the vent tile is the explorer's)
 const ESCORT_MAX_REINF = 3; // reinforcement requests per expedition at most
 const REINFORCE_EVERY = 480; // ticks between reinforcement requests while in contact
@@ -178,6 +202,13 @@ const INTERPOSE_SCAN = 8; // tiles around an attacker searched for the building 
 const INTERPOSE_REISSUE = 384; // ticks before a defender still walking to its spot gets a new one
 const PATROL_OFFSET = 2; // tiles outside the buildings' box that the patrol ring keeps
 const PATROL_STEP = 320; // ticks between two steps of the patrol round
+const CHOKE_MAX = 7; // VARIANT choke: a base exit this many cells wide or narrower is held
+const CHOKE_RING = 4; // the walk starts on the ring this many tiles around the HQ (the buildings stand inside it)
+const CHOKE_FROM = 2; // ... and the exit is searched from this many steps beyond the ring
+const CHOKE_TO = 20; // ... to this many
+const CHOKE_FAR = 45; // a cell leads out of the base when a walk away from the HQ goes on to this many steps
+const CHOKE_BACK = [2, 3, 4]; // steps inside the exit where the defenders stand, the nearest rows first
+const CHOKE_SPREAD = 4; // tiles from the exit's centre within which a defender's spot lies
 const ESCORT_SITES = 3; // mining sites the escort reaches under danger too, as the brief has it (three sites, then the factory)
 const TYPE_VENT = 0x28;
 const O_VENT_RATE = 0x32;
@@ -198,6 +229,8 @@ const tileOf = (gs, a) => [gs.readUInt16LE(a + O.X) >> 8, gs.readUInt16LE(a + O.
 const isEnemy = (G, p, team) => team < 8 && team !== p && u8(G.gs, GS.ALLIANCE + 10 * p + team) === 0;
 const cheb = (ax, az, bx, bz) => Math.max(Math.abs(ax - bx), Math.abs(az - bz));
 const isIdle = (gs, a) => u8(gs, a + OA.BOTTOM_STATE) === 1;
+/** An idle unit that is not shooting (its top state is not the cooldown between two shots, 0x0B): it may be ordered. */
+const idleNotFiring = (gs, a) => isIdle(gs, a) && u8(gs, a + O.STACK + 2 * u8(gs, a + O.SP)) !== 0x0b;
 /** The influence map's ground strength of one unit of `type` (krusty_general's formula). */
 function gndOf(G, type) {
   const t = G.tables.types[type];
@@ -219,7 +252,8 @@ function active(ctx) {
   const v = variant(ctx);
   return !!(
     v.ratio || v.pressure || v.fortify || v.react || v.mines || v.clear || v.airscout || v.upgrades || v.focus || v.hold ||
-    v.landmines || v.factory || v.alarm || v.batch || v.safe || v.counter || v.escort || v.patrol || v.second || v.shield || v.gate || v.tech || v.upnow || v.mechfirst || v.lieutenant || v.noscout
+    v.landmines || v.factory || v.alarm || v.batch || v.safe || v.counter || v.escort || v.patrol || v.second || v.shield || v.gate || v.tech || v.upnow || v.mechfirst || v.lieutenant || v.noscout ||
+    v.infup || v.keep2 || v.choke
   );
 }
 
@@ -359,6 +393,7 @@ export function general(ctx) {
   let ownNearHome = 0;
   let power = 0;
   const assets = []; // tiles of our mines and turrets (VARIANT alarm)
+  const minePos = []; // tiles of our mines
   const maxObj = i32(gs, GS.MAX_OBJ);
   for (let o = 120; o <= maxObj; o++) {
     const a = objAddr(o);
@@ -375,6 +410,7 @@ export function general(ctx) {
       own.mines++;
       const [tx, tz] = tileOf(gs, a);
       assets.push([tx, tz]);
+      minePos.push([tx, tz]);
       const z = famAt(G, tx, tz);
       if (z) own.mineZones.push(z);
     } else if (HIDDEN_MINES.includes(type)) own.laid++;
@@ -396,6 +432,9 @@ export function general(ctx) {
   const enemy = { mines: [], buildings: [], hiddenMines: [], flyers: 0 };
   let enemyNearHome = 0;
   const intruders = [];
+  const threats = []; // seen enemy fighters at the base or at one of our mines / turrets (defend)
+  x.prevDist ??= new Map(); // enemy object -> its distance to our HQ at the last think (approaching backup)
+  const nowDist = new Map();
   const seenFighters = [];
   const enemyPower = new Array(8).fill(0);
   let liveThreat = 0;
@@ -410,14 +449,17 @@ export function general(ctx) {
     const t = G.tables.types[type];
     if (!t) continue;
     const rec = { o, x: u8(kai, ma), z: u8(kai, ma + 1), type, team };
-    if (isFighter(G, type)) {
+    if (isFighter(G, type) || COMMANDER_TYPES.includes(type)) { // an enemy commander fights too (its gun reaches 6 tiles)
       enemyPower[team] += powerOf(type);
       const d = cheb(rec.x, rec.z, x.hq[0], x.hq[1]);
       if (d <= HOME_RADIUS) enemyNearHome++;
       // a record our own vision covers right now was refreshed this think: a live position, not a ghost
       if (rec.x < G.map.w && rec.z < G.map.h && seenByPlayer(G, rec.x, rec.z, p)) {
+        rec.approaching = x.prevDist.has(o) && d < x.prevDist.get(o);
+        nowDist.set(o, d);
         seenFighters.push(rec);
         if (d <= RALLY_RADIUS) intruders.push(rec);
+        if (d <= RALLY_RADIUS || assets.some(([ax, az]) => cheb(rec.x, rec.z, ax, az) <= DEFEND_ASSET_RADIUS)) threats.push(rec);
         if (d <= RALLY_RADIUS || assets.some(([ax, az]) => cheb(rec.x, rec.z, ax, az) <= MINE_RADIUS)) liveThreat++;
       }
     }
@@ -436,6 +478,43 @@ export function general(ctx) {
   x.enemy = enemy;
   x.enemyNearHome = enemyNearHome;
   x.intruders = intruders;
+  x.threats = threats;
+  x.prevDist = nowDist;
+  x.assets = assets;
+  // an enemy firing at one of ours - the engine marks the shooter with its target's team (O.ATTACKED) and reveals its
+  // tile to that team: a threat from its first shot within SHOOTER_RADIUS of the HQ or a mine (maintainer, 9 Oct 2026: "base and mining
+  // sites must be defended immediately"; in the Hoops replay the attackers of a mine became targets only when our
+  // vision reached them)
+  for (let o = 120; o <= maxObj; o++) {
+    const a = objAddr(o);
+    const team = u8(gs, a + O.TEAM);
+    if (!alive(u8(gs, a + O.LIFE)) || !isEnemy(G, p, team)) continue;
+    const mark = u8(gs, a + O.ATTACKED);
+    if (!(mark & 0x1f) || mark >> 5 !== p) continue;
+    const type = u8(gs, a + O.TYPE);
+    if (!isFighter(G, type) && !COMMANDER_TYPES.includes(type)) continue; // the rusher's commander shot a Hoops mine for 500 ticks unseen
+    const [tx, tz] = tileOf(gs, a);
+    // at the perimeter only: a skirmish far afield is left to the units there (anywhere, it stalled the expansion)
+    if (cheb(tx, tz, x.hq[0], x.hq[1]) > SHOOTER_RADIUS && !assets.some(([ax, az]) => cheb(tx, tz, ax, az) <= SHOOTER_RADIUS)) continue;
+    let rec = seenFighters.find((r) => r.o === o);
+    if (rec) {
+      rec.x = tx;
+      rec.z = tz;
+    } else {
+      rec = { o, x: tx, z: tz, type, team, approaching: false };
+      seenFighters.push(rec);
+    }
+    rec.shooting = true;
+    if (!threats.includes(rec)) threats.push(rec);
+  }
+  // the production queues: when did each last move (a unit came out) - see queueOpen
+  x.queues ??= [0, 1, 2, 3].map(() => ({ len: 0, since: 0 }));
+  for (let k = 0; k < 4; k++) {
+    const q = x.queues[k];
+    const len = gs.readUInt16LE(pa + P.QUEUE_LEN + 2 * k);
+    if (len < q.len || q.len === 0) q.since = tick;
+    q.len = len;
+  }
   x.seenFighters = seenFighters;
   x.liveThreat = liveThreat;
   if (liveThreat > 0) {
@@ -455,7 +534,16 @@ export function general(ctx) {
   // troopers and the army goals spend every coin before science could
   // VARIANT tech (maintainer, 8 Oct 2026: "do science and factory right after barracks"): the saving from the barracks on
   const saveFor = (variant(ctx).factory && x.waveSeen) || (variant(ctx).gate && x.thirdFailed) || variant(ctx).tech;
-  x.saving = !!saveFor && i32(gs, pa + P.SLOT_HP + 4) !== 0 && !buyableTroops(G, p).some((it) => TANKS.includes(it.type));
+  // maintainer, 9 Oct 2026 (the Hoops replay): "delay purchase of factory until perimeter of the base and perimeter of
+  // the nearest to the base mine" are secured - while an enemy threatens either (x.threats within RALLY_RADIUS of the HQ
+  // or DEFEND_ASSET_RADIUS of the mine nearest to it) there is no saving for the tech and no factory (skipGoal): the
+  // money goes into the defence
+  let nearMine = null;
+  for (const m of minePos) if (!nearMine || cheb(m[0], m[1], x.hq[0], x.hq[1]) < cheb(nearMine[0], nearMine[1], x.hq[0], x.hq[1])) nearMine = m;
+  x.perimeterAttacked = x.threats.some(
+    (r) => cheb(r.x, r.z, x.hq[0], x.hq[1]) <= RALLY_RADIUS || (nearMine && cheb(r.x, r.z, nearMine[0], nearMine[1]) <= DEFEND_ASSET_RADIUS),
+  );
+  x.saving = !!saveFor && !x.perimeterAttacked && i32(gs, pa + P.SLOT_HP + 4) !== 0 && !buyableTroops(G, p).some((it) => TANKS.includes(it.type));
   // staleness: when did our own vision last cover a zone's centre
   for (let z = 1; z < 255; z++) {
     const [cx, cz] = centreOf(kai, z);
@@ -547,10 +635,25 @@ export function general(ctx) {
 
 // ---- production: one purchase before the goal chain ----------------------------------------------
 
+/**
+ * A unit of `type` may be bought: its production queue (the type's prodClass) holds fewer than QUEUE_FULL units and has
+ * not stood still for QUEUE_STALL ticks. Maintainer, 9 Oct 2026 (the Hoops of Fury replay: "money just disappears and
+ * nothing is bought!"): a building makes its next unit only when its spawn tile is free (city.js: it nudges the occupant
+ * and waits) - a rusher standing at the barracks door froze the queue, the bot paid 350 a think into it (18 greys queued,
+ * none came out) and lost it all with the barracks. True without the extension layer (the original's behaviour).
+ */
+export function queueOpen(ctx, type) {
+  const x = ctx.aux?.x;
+  if (!x?.queues) return true;
+  const q = x.queues[ctx.G.tables.types[type].prodClass];
+  if (!q) return true;
+  return q.len < QUEUE_FULL && !(q.len > 0 && (ctx.tick | 0) - q.since > QUEUE_STALL);
+}
+
 /** Buy one unit of the first buyable type in `types`; false when none is buyable or affordable. */
 function buy(ctx, types, n, reason) {
   const { G, p } = ctx;
-  const it = buyableTroops(G, p).find((i) => types.includes(i.type));
+  const it = buyableTroops(G, p).find((i) => types.includes(i.type) && queueOpen(ctx, i.type));
   if (!it || money(G, p) < it.cost * n) return false;
   spend(G, p, it.cost * n);
   sendBuildUnits(ctx, it.type, n);
@@ -583,8 +686,12 @@ function opening(ctx) {
  */
 export function skipGoal(ctx, kind, param) {
   if (kind === 1 && param === 0 && secondFirst(ctx)) return true; // VARIANT second: the barracks after the second explorer
+  // no robot factory (building kinds 1 and 2: its levels) while the perimeter of the base or of the nearest mine is attacked
+  if (kind === 1 && (param === 1 || param === 2) && state(ctx)?.perimeterAttacked) return true;
   // VARIANT factory: while saving for science and the robot factory no army goal spends (hold buys in an emergency)
   if (state(ctx)?.saving && kind === 2) return true;
+  // VARIANT infup: while an infantry upgrade is due the chain builds only HQ, barracks and science, and no army goal spends
+  if ((kind === 1 || kind === 2) && infupDue(ctx)) return kind === 2 || (param !== 8 && param !== 0 && param !== 3);
   if (!opening(ctx)) return false;
   if (kind === 1) return param !== 8 && param !== 0;
   return kind === 2;
@@ -604,6 +711,12 @@ export function production(ctx, have) {
   // type with most kills, armour: most losses) bought before hold's troopers and the chain, without a reserve, once a mech
   // can be bought - only an unguarded HQ comes first (under a rush hold's purchases would otherwise take every coin)
   if (v.upnow && !unguarded && (buyUpgrade(ctx) || upgradeDue(ctx))) return false; // bought, or the money waits for it
+  // VARIANT infup (maintainer, 9 Oct 2026: "trooper upgrades right after the hard rush is faced"): once science stands
+  // and the first wave came, the infantry's level-1 upgrades before hold's troopers, the factory and the army goals
+  if (infupDue(ctx) && !unguarded) {
+    buyInfup(ctx);
+    return false; // bought, or the money waits for it
+  }
   // the hold doctrine buys a fighter when intruders at the gates outnumber ours there, or, with nobody at
   // the gates, while fewer than HOLD_MIN_FIGHTERS stand; tanks first once the factory and science exist
   let holdBuys = v.hold && x.danger && x.fighters < (opening(ctx) ? HOLD_OPENING_MAX : 1000) && (x.enemyNearHome > 0 ? x.ownNearHome < x.enemyNearHome + HOLD_MARGIN : x.fighters < HOLD_BUY_MIN);
@@ -612,9 +725,9 @@ export function production(ctx, have) {
   if (x.saving && !emergency) holdBuys = false;
   // with hold on, hold rules the purchases (react's "a fighter per think while a threat is near" starved the mines in the arena)
   if (holdBuys || (v.react && !v.hold && x.threatZone >= 0)) {
-    // VARIANT batch: troopers BATCH_SIZE at a time (the money waits for the batch), one only when nobody guards an attacked HQ
-    const n = v.batch && !(x.ownNearHome === 0 && x.intruders.length) ? BATCH_SIZE : 1;
-    if (buy(ctx, TANKS, 1, 'Defence') || buy(ctx, INFANTRY, n, 'Defence')) x.stats.reacts++;
+    // one unit at a time as soon as the money is there (maintainer, 9 Oct 2026: "if you want to build several units, build
+    // one by one as soon as money is available" - VARIANT batch no longer makes the money wait for three)
+    if (buy(ctx, TANKS, 1, 'Defence') || buy(ctx, INFANTRY, 1, 'Defence')) x.stats.reacts++;
     return false;
   }
   if (x.saving) return false; // VARIANT factory: nothing else until the tanks can be bought
@@ -710,11 +823,17 @@ export function tasks(ctx) {
   if (v.pressure) squads(ctx);
   if (v.mines) engineers(ctx);
   if (v.clear) clearers(ctx);
-  if (v.hold && x.danger) rally(ctx);
-  else if (v.react) reactMoves(ctx);
+  const hunting = defend(ctx);
+  engageIdle(ctx);
+  turrets(ctx);
+  if (v.hold && x.danger) rally(ctx, hunting);
+  else if (hunting) {
+    // the defence has every armed unit near the threats
+  } else if (v.react) reactMoves(ctx);
   else if (v.patrol) patrolHome(ctx);
   if (escortOn(ctx)) escort(ctx);
   if (v.lieutenant) lieutenant(ctx);
+  clearDoors(ctx);
 }
 
 /** VARIANT noscout: no unit to the scouting task and no scout bought before the robot factory (slot 2) stands. */
@@ -745,17 +864,34 @@ function lieutenant(ctx) {
   const [lx, lz] = tileOf(gs, a);
   const [hx, hz] = x.hq;
   const friends = [];
+  // maintainer, 9 Oct 2026: "commander is sent with exploiter" - the escort of an expedition is no group to follow; with
+  // nobody else it waits at the HQ
+  const skip = x.special[ESCORT_SLOT] ? new Set(slotUnits(ctx, ESCORT_SLOT)) : null;
   const maxObj = i32(gs, GS.MAX_OBJ);
   for (let f = 120; f <= maxObj; f++) {
     const fa = objAddr(f);
     if (f === o || u8(gs, fa + O.TEAM) !== p || !alive(u8(gs, fa + O.LIFE)) || !isFighter(G, u8(gs, fa + O.TYPE))) continue;
+    if (skip?.has(f)) continue;
     const [fx, fz] = tileOf(gs, fa);
     friends.push([fx, fz]);
   }
   const last = x.lastOrder.get(o) ?? -1000000;
+  // maintainer, 9 Oct 2026: "lieutenant must be smart enough. it must fight unless he is under fire, then he must retreat
+  // few tiles back and retry offence again" - a unit under a move order does not shoot, and the commander got one every 64
+  // ticks (in the replay it fired in 65 of 1351 ticks beside the enemy). It moves by assault-moves and attacks the enemy
+  // nearest to it; hit (its hit points fell since the last think) it walks LT_RETREAT tiles straight away from the
+  // enemies around it (a plain move, at once), waits LT_RETREAT_HOLD ticks, then attacks again
+  const hp = i32(gs, a + O.HP);
+  const hit = hp < (x.ltHp ?? hp);
+  x.ltHp = hp;
+  if (hit) {
+    ltRetreat(ctx, o, lx, lz);
+    return;
+  }
+  if (tick < (x.ltRetreatUntil ?? 0)) return;
   const go = (tx, tz) => {
     if (cheb(lx, lz, tx, tz) <= 2 || tick - last < 64) return;
-    sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_MOVE);
+    sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_ASSAULT);
     x.lastOrder.set(o, tick);
   };
   if (!friends.length) {
@@ -796,6 +932,16 @@ function lieutenant(ctx) {
       ctx.say(`Star command at ${lx},${lz}: ${Math.min(inReach, 6)} units rallied.`);
       return;
     }
+    {
+      // the offence: an assault-move onto the enemy fighter nearest to it
+      let t = enemies[0];
+      for (const r of enemies) if (cheb(r.x, r.z, lx, lz) < cheb(t.x, t.z, lx, lz)) t = r;
+      if (tick - last >= 64 || isIdle(gs, a)) {
+        sendWaypointOrder(ctx, [o], [[(t.x << 8) + 128, (t.z << 8) + 128]], ORDER_ASSAULT);
+        x.lastOrder.set(o, tick);
+      }
+      return;
+    }
     let ex = 0;
     let ez = 0;
     for (const r of enemies) {
@@ -816,13 +962,383 @@ function lieutenant(ctx) {
 }
 
 /**
+ * The commander under fire: LT_RETREAT tiles away from the centre of the enemy fighters seen within COMMANDER_ENGAGE
+ * tiles of the commander (none seen: towards the HQ), a plain move given at once; no new order for LT_RETREAT_HOLD ticks.
+ */
+function ltRetreat(ctx, o, lx, lz) {
+  const x = state(ctx);
+  const { G } = ctx;
+  const tick = ctx.tick | 0;
+  const near = x.seenFighters.filter((r) => cheb(r.x, r.z, lx, lz) <= COMMANDER_ENGAGE);
+  let dx;
+  let dz;
+  if (near.length) {
+    dx = lx - near.reduce((s, r) => s + r.x, 0) / near.length;
+    dz = lz - near.reduce((s, r) => s + r.z, 0) / near.length;
+  } else {
+    dx = x.hq[0] - lx;
+    dz = x.hq[1] - lz;
+  }
+  const n = Math.hypot(dx, dz);
+  x.ltRetreatUntil = tick + LT_RETREAT_HOLD;
+  x.stats.ltRetreats = (x.stats.ltRetreats ?? 0) + 1;
+  if (n < 1) return;
+  const tx = Math.min(G.map.w - 1, Math.max(0, Math.round(lx + (dx / n) * LT_RETREAT)));
+  const tz = Math.min(G.map.h - 1, Math.max(0, Math.round(lz + (dz / n) * LT_RETREAT)));
+  sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_MOVE);
+  x.lastOrder.set(o, tick);
+}
+
+/**
+ * The defence (maintainer, 9 Oct 2026: "when base or mine is attacked, troops must fight accordingly. there must be no
+ * units which doesn't fight. Look at rusher logic"): while enemy fighters we see stand within RALLY_RADIUS tiles of the
+ * HQ or DEFEND_ASSET_RADIUS of one of our mines or turrets (x.threats), every armed unit of ours within DEFEND_REACH tiles
+ * of one of them - whatever its group: defenders, attack groups, scouts, the trooper the second site keeps at the HQ -
+ * assault-moves onto the threat nearest to it, every DEFEND_EVERY ticks, an idle one at once (an idle unit of a human
+ * seat fires only at what is in its weapon range and gives chase within 4 tiles: in the 9 Oct replay three of them slept
+ * beside the rushers). Left out: the commander (lieutenant: it fights and steps back by itself) and an expedition's
+ * escort on its way (it fights what it meets). The units are marked as ordered to their group's zone so that move_group
+ * leaves them alone. True while threats stand.
+ */
+function defend(ctx) {
+  const x = state(ctx);
+  const { G, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  // maintainer, 9 Oct 2026: "if enemy is attacking, we must push it until there are no single enemy in that attack",
+  // "continue fighting with intruders even when base is safe while opponent have backup which is approaching". Once an
+  // attack came (x.threats), the defence goes on against every enemy fighter we see that belongs to it - within
+  // PUSH_LINK tiles of one hunted last think, or within IN_FIGHT of one of our fighters - and against the backup: enemy
+  // fighters coming closer to our HQ within BACKUP_RADIUS. It ends when none of them is seen.
+  // On Circle of Friends (9 Oct 2026: "we don't go on the offensive, though we must keep pressing the enemy while it is
+  // nearby") one enemy stood by the base nearly all game, and while any did only those were hunted - the ones fighting
+  // our units 20 tiles out were left alone. While an attack is on, the targets are the UNION: the threats, every seen
+  // enemy fighter within PUSH_LINK of a threat or of last think's targets, within IN_FIGHT of one of our fighters,
+  // approaching within BACKUP_RADIUS, or nearby (NEAR_RADIUS of the HQ, NEAR_ASSET_RADIUS of a mine or turret).
+  let threats = x.threats ?? [];
+  if (threats.length || x.pushFront?.length) {
+    const ours = [];
+    const maxO = i32(gs, GS.MAX_OBJ);
+    for (let o = 120; o <= maxO; o++) {
+      const a = objAddr(o);
+      if (u8(gs, a + O.TEAM) === ctx.p && alive(u8(gs, a + O.LIFE)) && isFighter(G, u8(gs, a + O.TYPE))) ours.push(tileOf(gs, a));
+    }
+    const front = [...(x.pushFront ?? []), ...threats.map((r) => [r.x, r.z])];
+    const assets = x.assets ?? [];
+    threats = (x.seenFighters ?? []).filter(
+      (r) =>
+        threats.includes(r) ||
+        front.some(([fx, fz]) => cheb(r.x, r.z, fx, fz) <= PUSH_LINK) ||
+        ours.some(([ux, uz]) => cheb(r.x, r.z, ux, uz) <= IN_FIGHT) ||
+        (r.approaching && cheb(r.x, r.z, x.hq[0], x.hq[1]) <= BACKUP_RADIUS) ||
+        cheb(r.x, r.z, x.hq[0], x.hq[1]) <= NEAR_RADIUS ||
+        assets.some(([ax, az]) => cheb(r.x, r.z, ax, az) <= NEAR_ASSET_RADIUS),
+    );
+  }
+  x.pushFront = threats.map((r) => [r.x, r.z]);
+  x.pushing = threats.length > 0 && !x.threats?.length;
+  if (!threats.length) return false;
+  const round = tick - (x.lastDefend ?? -1000000) >= DEFEND_EVERY;
+  if (round) x.lastDefend = tick;
+  const expedition = x.esc.phase !== 'idle' && x.esc.phase !== 'gather';
+  const byTarget = new Map();
+  for (const t of [1, 2, 3]) {
+    for (let m = 0; m < NMINORS; m++) {
+      if (!u8(kai, minorAddr(t, m) + MN.ACTIVE)) continue;
+      if (t === 2 && (m === COMMANDER_SLOT || (m === ESCORT_SLOT && expedition))) continue;
+      const zone = i32(kai, minorAddr(t, m) + MN.ZONE) & 0xff;
+      for (const o of listOf(gs, kai, t, m)) {
+        const a = objAddr(o);
+        if (!alive(u8(gs, a + O.LIFE))) continue;
+        const type = u8(gs, a + O.TYPE);
+        if (!isFighter(G, type) || TOWER_BUILDERS.includes(type) || COMMANDER_TYPES.includes(type)) continue;
+        const [ux, uz] = tileOf(gs, a);
+        let best = null;
+        let bestD = 1e9;
+        for (const r of threats) {
+          const d = cheb(ux, uz, r.x, r.z);
+          if (d < bestD) {
+            bestD = d;
+            best = r;
+          }
+        }
+        // maintainer, 9 Oct 2026: "all these units (trooper, tank, artillery, sarge, turret) must take offensive actions
+        // while opponent is attacking" - no distance limit; a unit already fighting another enemy beside it keeps that fight
+        if (!(round || idleNotFiring(gs, a))) continue;
+        if (bestD > IN_FIGHT && (x.seenFighters ?? []).some((r) => cheb(r.x, r.z, ux, uz) <= IN_FIGHT)) continue;
+        w8(gs, a + OA.ZONE, zone);
+        const key = `${best.x},${best.z}`;
+        if (!byTarget.has(key)) byTarget.set(key, { x: best.x, z: best.z, objs: [] });
+        byTarget.get(key).objs.push(o);
+      }
+    }
+  }
+  for (const g of byTarget.values()) sendWaypointOrder(ctx, g.objs, [[(g.x << 8) + 128, (g.z << 8) + 128]], ORDER_ASSAULT);
+  if (byTarget.size) x.stats.defends = (x.stats.defends ?? 0) + 1;
+  return true;
+}
+
+/**
+ * Only the lieutenant retreats (maintainer, 9 Oct 2026: "retreat must be only for lieutenant!"): every order the bot
+ * gives (krusty.js sendWaypointOrder: the original's group moves, the rally, the escort, the defence) passes here. An
+ * armed unit in contact - an enemy fighter we see within CONTACT tiles - is taken out of an order whose destination
+ * lies more than RETREAT_SLACK tiles further from that enemy than the unit stands: it stays and fights. Left alone: the
+ * commander (it steps back by itself), unarmed units (explorers, turret builders before they land) and the doorkeeper's
+ * step off a spawn tile. Returns the objects that may go; the original's behaviour without the extension layer.
+ */
+export function holdGround(ctx, objs, dest) {
+  const x = ctx.aux?.x;
+  if (!x || x.doorStep || !x.seenFighters?.length) return objs;
+  const { G } = ctx;
+  const gs = G.gs;
+  const dx = dest[0] >> 8;
+  const dz = dest[1] >> 8;
+  const out = [];
+  for (const o of objs) {
+    const a = objAddr(o);
+    const type = u8(gs, a + O.TYPE);
+    if (!isFighter(G, type) || COMMANDER_TYPES.includes(type) || TOWER_BUILDERS.includes(type)) {
+      out.push(o);
+      continue;
+    }
+    const [ux, uz] = tileOf(gs, a);
+    let near = null;
+    let nd = CONTACT + 1;
+    for (const r of x.seenFighters) {
+      const d = cheb(ux, uz, r.x, r.z);
+      if (d < nd) {
+        nd = d;
+        near = r;
+      }
+    }
+    if (near && cheb(dx, dz, near.x, near.z) > nd + RETREAT_SLACK) {
+      x.stats.heldGround = (x.stats.heldGround ?? 0) + 1;
+      continue;
+    }
+    out.push(o);
+  }
+  return out;
+}
+
+/**
+ * The turret builders (TURR / XENO, unarmed until deployed; the turret's gun reaches 6 tiles, a trooper's 4) - maintainer,
+ * 9 Oct 2026: "turrets must not patrol the base. either they go to destination, either (in case of nearby enemy attack)
+ * they land as close to the enemy as they can", "as close to the enemy to not get killed before deployment, of course".
+ * move_group no longer moves them (krusty.js) and the rally does not either. Each builder: with an enemy fighter within
+ * TURRET_ENGAGE tiles of it (or a threat to the base within DEFEND_REACH) it walks towards the nearest one and lands
+ * TURRET_MARGIN tiles beyond the weapon range of that enemy's group - at once when hit; with none it walks to its
+ * destination (its group's zone centre when it first shows up, else one of eight spots TURRET_SPOT tiles around the HQ)
+ * and lands there. A landing that does not happen (blocked cell) is repeated, a tile nearer home after three tries.
+ */
+function turrets(ctx) {
+  const x = state(ctx);
+  const { G, p, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  x.turret ??= new Map();
+  const seen = x.seenFighters ?? [];
+  const threats = x.threats ?? [];
+  const rangeOf = (r) => {
+    const w = G.tables.types[r.type]?.weapon?.[0] ?? -1;
+    return w >= 0 ? G.tables.weapons[w].range : 0;
+  };
+  const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  const clampX = (v) => Math.min(G.map.w - 1, Math.max(0, v));
+  const clampZ = (v) => Math.min(G.map.h - 1, Math.max(0, v));
+  const maxObj = i32(gs, GS.MAX_OBJ);
+  const present = new Set();
+  for (let o = 120; o <= maxObj; o++) {
+    const a = objAddr(o);
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE)) || !TOWER_BUILDERS.includes(u8(gs, a + O.TYPE))) continue;
+    present.add(o);
+    const [ux, uz] = tileOf(gs, a);
+    let t = x.turret.get(o);
+    if (!t) {
+      const zone = u8(gs, a + OA.ZONE);
+      let dest = zone ? centreOf(kai, zone) : null;
+      if (!dest || (dest[0] === 0 && dest[1] === 0)) {
+        const k = (x.stats.turretSpots = (x.stats.turretSpots ?? 0) + 1) % 8;
+        dest = [x.hq[0] + dirs[k][0] * TURRET_SPOT, x.hq[1] + dirs[k][1] * TURRET_SPOT];
+      }
+      t = { dest: [clampX(dest[0]), clampZ(dest[1])], hp: i32(gs, a + O.HP), last: -1000000, lands: 0, landAt: null };
+      x.turret.set(o, t);
+    }
+    const hp = i32(gs, a + O.HP);
+    const hit = hp < t.hp;
+    t.hp = hp;
+    let foe = null;
+    let fd = 1e9;
+    for (const r of seen) {
+      const d = cheb(ux, uz, r.x, r.z);
+      if (d < fd && (d <= TURRET_ENGAGE || (threats.includes(r) && d <= DEFEND_REACH))) {
+        fd = d;
+        foe = r;
+      }
+    }
+    const here = t.landAt && t.landAt[0] === ux && t.landAt[1] === uz;
+    const land = () => {
+      if (here && tick - t.last < 64) return;
+      t.lands = here ? t.lands + 1 : 1;
+      if (t.lands > 3) {
+        // the cell does not take a turret: one tile nearer home, then again
+        const sx = Math.sign(x.hq[0] - ux) || 1;
+        const sz = Math.sign(x.hq[1] - uz) || 1;
+        sendWaypointOrder(ctx, [o], [[(clampX(ux + sx) << 8) + 128, (clampZ(uz + sz) << 8) + 128]], ORDER_MOVE);
+        t.lands = 0;
+        t.landAt = null;
+        t.last = tick;
+        return;
+      }
+      sendOrder(ctx, o, ORDER_DEPLOY);
+      t.landAt = [ux, uz];
+      t.last = tick;
+      if (t.lands === 1) {
+        x.stats.turrets = (x.stats.turrets ?? 0) + 1;
+        ctx.say(foe ? `Turret lands at ${ux},${uz} against the enemy at ${foe.x},${foe.z}.` : `Turret lands at ${ux},${uz}.`);
+      }
+    };
+    if (foe) {
+      // the enemy's reach: the longest weapon among the enemy fighters around the nearest one
+      let reach = 0;
+      for (const r of seen) if (cheb(r.x, r.z, foe.x, foe.z) <= 4) reach = Math.max(reach, rangeOf(r));
+      const stop = reach + TURRET_MARGIN;
+      if (hit || fd <= stop) {
+        land();
+        continue;
+      }
+      if (isIdle(gs, a) || tick - t.last >= 64) {
+        const n = Math.max(1, fd);
+        const tx = clampX(Math.round(foe.x + ((ux - foe.x) / n) * stop));
+        const tz = clampZ(Math.round(foe.z + ((uz - foe.z) / n) * stop));
+        sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_MOVE);
+        t.last = tick;
+        t.landAt = null;
+      }
+      continue;
+    }
+    const dd = cheb(ux, uz, t.dest[0], t.dest[1]);
+    if (dd <= 1 || (isIdle(gs, a) && dd <= 3)) {
+      land();
+      continue;
+    }
+    if (isIdle(gs, a) || tick - t.last >= REISSUE) {
+      sendWaypointOrder(ctx, [o], [[(t.dest[0] << 8) + 128, (t.dest[1] << 8) + 128]], ORDER_MOVE);
+      t.last = tick;
+      t.landAt = null;
+    }
+  }
+  for (const o of [...x.turret.keys()]) if (!present.has(o)) x.turret.delete(o);
+}
+
+/** krusty.js move_group: once the extension layer runs, turrets() moves and lands the turret builders. */
+export const ownsTurrets = (ctx) => !!ctx.aux?.x;
+
+/**
+ * Where the rally gathers with no intruder to hunt: GATHER_FRONT tiles from the HQ towards the nearest enemy fighter we
+ * see (else the threat zone, else the map's centre) - beside the HQ, not on it (maintainer, 9 Oct 2026: "own unit
+ * blocked barracks!": sent to the HQ tile every 128 ticks, the defenders crowded round the building and one stood on the
+ * barracks' spawn tile for 2200 ticks while three paid-for greys waited). Raw coordinates for sendWaypointOrder.
+ */
+function gatherPoint(ctx) {
+  const x = state(ctx);
+  const { G, kai } = ctx;
+  const [hx, hz] = x.hq;
+  let to = null;
+  let bd = 1e9;
+  for (const r of x.seenFighters ?? []) {
+    const d = cheb(r.x, r.z, hx, hz);
+    if (d < bd) {
+      bd = d;
+      to = [r.x, r.z];
+    }
+  }
+  if (!to && x.threatZone >= 0) to = centreOf(kai, x.threatZone);
+  if (!to || (to[0] === hx && to[1] === hz)) to = [G.map.w >> 1, G.map.h >> 1];
+  const dx = to[0] - hx;
+  const dz = to[1] - hz;
+  const n = Math.hypot(dx, dz) || 1;
+  const gx = Math.min(G.map.w - 1, Math.max(0, Math.round(hx + (dx / n) * GATHER_FRONT)));
+  const gz = Math.min(G.map.h - 1, Math.max(0, Math.round(hz + (dz / n) * GATHER_FRONT)));
+  return [(gx << 8) + 128, (gz << 8) + 128];
+}
+
+/**
+ * Our own units off the buildings' doors: a building makes its next unit only when its spawn tile is free, and a unit
+ * under an order does not step aside when the building nudges it. Every think, for each production queue with units
+ * waiting, a mobile unit of ours standing on that building's ground spawn tile is sent DOOR_STEP tiles further out
+ * (an assault-move: it keeps fighting).
+ */
+function clearDoors(ctx) {
+  const x = state(ctx);
+  const { G, p } = ctx;
+  const gs = G.gs;
+  const pa = playerAddr(p);
+  const off = G.consts.spawnOffsets.values;
+  const [hx, hz] = x.hq;
+  for (let k = 0; k < 4; k++) {
+    if (!gs.readUInt16LE(pa + P.QUEUE_LEN + 2 * k)) continue;
+    const sx = hx + off[k * 3 * 2];
+    const sz = hz + off[k * 3 * 2 + 1];
+    if (sx < 0 || sz < 0 || sx >= G.map.w || sz >= G.map.h) continue;
+    const o = G.map.ground[sz * G.map.w + sx] & 0x3ff;
+    if (o < 120 || o >= MAX_OBJECTS) continue;
+    const a = objAddr(o);
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE)) || !G.tables.types[u8(gs, a + O.TYPE)]?.speed) continue;
+    const ox = Math.sign(sx - hx);
+    const oz = Math.sign(sz - hz);
+    const tx = Math.min(G.map.w - 1, Math.max(0, sx + (ox || 1) * DOOR_STEP));
+    const tz = Math.min(G.map.h - 1, Math.max(0, sz + (oz || 1) * DOOR_STEP));
+    x.doorStep = true; // holdGround lets this step through
+    sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_MOVE);
+    x.doorStep = false;
+    x.stats.doors = (x.stats.doors ?? 0) + 1;
+  }
+}
+
+/**
+ * No unit stands idle beside the enemy (maintainer, 9 Oct 2026: "there must be no units which doesn't fight"): an idle
+ * armed unit of ours (the commander and turret builders aside) with an enemy fighter we see within IDLE_ENGAGE tiles
+ * assault-moves onto the nearest one - out in the field too, where the defence does not reach (an idle unit of a human
+ * seat fires only at what is in its weapon range and sleeps up to 45 ticks at a time).
+ */
+function engageIdle(ctx) {
+  const x = state(ctx);
+  const { G, p } = ctx;
+  const gs = G.gs;
+  const foes = x.seenFighters ?? [];
+  if (!foes.length) return;
+  const maxObj = i32(gs, GS.MAX_OBJ);
+  let n = 0;
+  for (let o = 120; o <= maxObj; o++) {
+    const a = objAddr(o);
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE)) || !idleNotFiring(gs, a)) continue;
+    const type = u8(gs, a + O.TYPE);
+    if (!isFighter(G, type) || TOWER_BUILDERS.includes(type) || COMMANDER_TYPES.includes(type)) continue;
+    const [ux, uz] = tileOf(gs, a);
+    let best = null;
+    let bestD = IDLE_ENGAGE + 1;
+    for (const r of foes) {
+      const d = cheb(ux, uz, r.x, r.z);
+      if (d < bestD) {
+        bestD = d;
+        best = r;
+      }
+    }
+    if (!best) continue;
+    sendWaypointOrder(ctx, [o], [[(best.x << 8) + 128, (best.z << 8) + 128]], ORDER_ASSAULT);
+    n++;
+  }
+  if (n) x.stats.engaged = (x.stats.engaged ?? 0) + n;
+}
+
+/**
  * Under danger every defender (all defend groups) and every parked attack group hunts the intruders:
  * each fighter assault-moves onto the nearest known enemy fighter within RALLY_RADIUS of the HQ (one
  * order per intruder, re-issued every RALLY_EVERY ticks, like the rusher's own defence), or, with no
  * intruder known, gathers at the HQ tile. The units are marked as ordered to their group's zone so that
  * move_group leaves them alone, and the home guard's destination is pinned to the home zone.
  */
-function rally(ctx) {
+function rally(ctx, hunting = false) {
   const x = state(ctx);
   const { G, kai } = ctx;
   const gs = G.gs;
@@ -832,18 +1348,13 @@ function rally(ctx) {
   if (tick - x.lastRally < RALLY_EVERY) return;
   x.lastRally = tick;
   const objs = [];
-  const builders = [];
   const collect = (t, m) => {
     const zone = i32(kai, minorAddr(t, m) + MN.ZONE) & 0xff;
     for (const o of listOf(gs, kai, t, m)) {
       const a = objAddr(o);
       if (!alive(u8(gs, a + O.LIFE))) continue;
       const type = u8(gs, a + O.TYPE);
-      if (TOWER_BUILDERS.includes(type)) {
-        w8(gs, a + OA.ZONE, zone);
-        builders.push(o);
-        continue;
-      }
+      if (TOWER_BUILDERS.includes(type)) continue; // turrets() moves and lands them
       if (!(type < 16) || G.tables.types[type].weapon[0] === -1) continue;
       w8(gs, a + OA.ZONE, zone);
       objs.push(o);
@@ -856,25 +1367,11 @@ function rally(ctx) {
     const st = u8(kai, mn + MN.STATE);
     if (st === 2 || st === 3) collect(2, m);
   }
-  // turret builders: to the HQ, and deploy once within TURRET_RING of it
-  for (const o of builders) {
-    const a = objAddr(o);
-    const [ux, uz] = tileOf(gs, a);
-    const last = x.lastOrder.get(o) ?? -1000000;
-    if (cheb(ux, uz, x.hq[0], x.hq[1]) <= TURRET_RING) {
-      if (tick - last > DEPLOY_REPEAT) {
-        sendOrder(ctx, o, ORDER_DEPLOY);
-        x.lastOrder.set(o, tick);
-        ctx.say(`Turret deployed at ${ux},${uz}.`);
-      }
-    } else if (isIdle(gs, a) || tick - last > REISSUE) {
-      sendWaypointOrder(ctx, [o], [[(x.hq[0] << 8) + 128, (x.hq[1] << 8) + 128]], ORDER_MOVE);
-      x.lastOrder.set(o, tick);
-    }
-  }
-  if (!objs.length) return;
+  if (!objs.length || hunting) return; // the defence (defend) orders the fighters while threats stand
   x.stats.rallies = (x.stats.rallies ?? 0) + 1;
-  const hqPoint = [(x.hq[0] << 8) + 128, (x.hq[1] << 8) + 128];
+  // VARIANT choke: with one narrow exit the defenders hold its inner mouth; only intruders inside it are hunted
+  if (variant(ctx).choke && holdChoke(ctx, objs)) return;
+  const hqPoint = gatherPoint(ctx);
   if (!x.intruders.length) {
     if (variant(ctx).patrol) walkRing(ctx, objs); // VARIANT patrol: around the base instead of on the HQ tile
     else sendWaypointOrder(ctx, objs, [hqPoint], ORDER_ASSAULT);
@@ -922,6 +1419,167 @@ function rally(ctx) {
     byTarget.get(key).objs.push(o);
   }
   for (const t of byTarget.values()) sendWaypointOrder(ctx, t.objs, [[(t.x << 8) + 128, (t.z << 8) + 128]], ORDER_ASSAULT);
+}
+
+// ---- the base exit (VARIANT choke) -------------------------------------------------------------------
+
+/**
+ * VARIANT choke (maintainer, 9 Oct 2026: "blocking tight passages where they exist, so the opponent is limited in
+ * firepower on our troops"): the base's exit, found once per game. A walk (8 directions, walkable cells) from the ring
+ * CHOKE_RING tiles around the HQ; a cell LEADS OUT when the walk goes on from it to CHOKE_FAR steps. W(d) = the cells
+ * at step d that lead out: the width of the way out at that distance (an open base grows by about eight per step, a
+ * ramp or a corridor stays narrow). The exit is the d in CHOKE_FROM..CHOKE_TO with the smallest W, held only when W is
+ * at most CHOKE_MAX; its cells fall into GAPS (8-connected pieces: Armageddon has bases with one passage seven wide and
+ * bases with two or three gaps of one to four cells), each with its own defenders' spots. Of the 56 arena seats only
+ * five on Armageddon qualify. Returns null or { d, width, dist, gaps: [{ cells, cx, cz, spots }], held }.
+ */
+function chokeOf(ctx) {
+  const x = state(ctx);
+  if (x.choke !== undefined) return x.choke;
+  x.choke = null;
+  const { G } = ctx;
+  const W = G.map.w;
+  const H = G.map.h;
+  const ok = (cx, cz) => cx >= 0 && cz >= 0 && cx < W && cz < H && Grid.isWalkable(G, cx, cz);
+  const [hx, hz] = x.hq;
+  const dist = new Int16Array(W * H).fill(-1);
+  let front = [];
+  for (let dz = -CHOKE_RING; dz <= CHOKE_RING; dz++) {
+    for (let dx = -CHOKE_RING; dx <= CHOKE_RING; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== CHOKE_RING || !ok(hx + dx, hz + dz)) continue;
+      dist[(hz + dz) * W + hx + dx] = 0;
+      front.push([hx + dx, hz + dz]);
+    }
+  }
+  const order = [];
+  while (front.length) {
+    const next = [];
+    for (const [cx, cz] of front) {
+      order.push([cx, cz]);
+      const d = dist[cz * W + cx];
+      if (d >= CHOKE_FAR) continue;
+      for (let k = 0; k < 9; k++) {
+        const nx = cx + (k % 3) - 1;
+        const nz = cz + Math.floor(k / 3) - 1;
+        if (k !== 4 && ok(nx, nz) && dist[nz * W + nx] < 0) {
+          dist[nz * W + nx] = d + 1;
+          next.push([nx, nz]);
+        }
+      }
+    }
+    front = next;
+  }
+  const out = new Uint8Array(W * H);
+  for (let i = order.length - 1; i >= 0; i--) {
+    const [cx, cz] = order[i];
+    const d = dist[cz * W + cx];
+    if (d >= CHOKE_FAR) {
+      out[cz * W + cx] = 1;
+      continue;
+    }
+    for (let k = 0; k < 9 && !out[cz * W + cx]; k++) {
+      const nx = cx + (k % 3) - 1;
+      const nz = cz + Math.floor(k / 3) - 1;
+      if (ok(nx, nz) && dist[nz * W + nx] === d + 1 && out[nz * W + nx]) out[cz * W + cx] = 1;
+    }
+  }
+  const width = new Array(CHOKE_TO + 1).fill(0);
+  const rows = Array.from({ length: CHOKE_TO + 1 }, () => []);
+  for (const [cx, cz] of order) {
+    const d = dist[cz * W + cx];
+    if (d <= CHOKE_TO && out[cz * W + cx]) {
+      width[d]++;
+      rows[d].push([cx, cz]);
+    }
+  }
+  let best = CHOKE_FROM;
+  for (let d = CHOKE_FROM; d <= CHOKE_TO; d++) if (width[d] < width[best]) best = d;
+  const cells = rows[best];
+  if (!cells.length || cells.length > CHOKE_MAX) return null;
+  // the gaps: 8-connected pieces of the exit's cells
+  const gaps = [];
+  const taken = new Set();
+  for (let s0 = 0; s0 < cells.length; s0++) {
+    if (taken.has(s0)) continue;
+    taken.add(s0);
+    const piece = [cells[s0]];
+    const stack = [s0];
+    while (stack.length) {
+      const i = stack.pop();
+      for (let j = 0; j < cells.length; j++) {
+        if (!taken.has(j) && cheb(cells[i][0], cells[i][1], cells[j][0], cells[j][1]) <= 1) {
+          taken.add(j);
+          piece.push(cells[j]);
+          stack.push(j);
+        }
+      }
+    }
+    const cx = piece.reduce((acc, c) => acc + c[0], 0) / piece.length;
+    const cz = piece.reduce((acc, c) => acc + c[1], 0) / piece.length;
+    // the defenders' spots: cells CHOKE_BACK steps inside the gap and within CHOKE_SPREAD of its centre, nearest row first
+    const spots = [];
+    for (const back of CHOKE_BACK) {
+      const row = [];
+      for (const [sx, sz] of order) {
+        if (dist[sz * W + sx] !== best - back) continue;
+        if (Math.max(Math.abs(sx - cx), Math.abs(sz - cz)) > CHOKE_SPREAD) continue;
+        row.push([sx, sz]);
+      }
+      row.sort((a, b) => (a[0] - cx) ** 2 + (a[1] - cz) ** 2 - ((b[0] - cx) ** 2 + (b[1] - cz) ** 2));
+      spots.push(...row);
+    }
+    if (spots.length) gaps.push({ cells: piece, cx, cz, spots });
+  }
+  if (!gaps.length) return null;
+  x.choke = { d: best, width: cells.length, dist, gaps, held: gaps.reduce((a, g) => (g.cells.length > a.cells.length ? g : a)) };
+  ctx.say(`The base exit is ${cells.length} wide in ${gaps.length} gap(s) (${gaps.map((g) => `${Math.round(g.cx)},${Math.round(g.cz)}`).join(' ')}): the defenders hold it under danger.`);
+  return x.choke;
+}
+
+/**
+ * VARIANT choke, under danger: intruders inside the exit (fewer steps from the base than the exit) are left to the
+ * usual hunt; with none inside, every defender assault-moves to its own spot on the inner mouth of the gap nearest to
+ * the nearest enemy fighter we see (else the gap held last; the widest at first; the spots shared out in a fixed order,
+ * so a defender keeps its spot from rally to rally) and fires at whatever comes out of the passage - every enemy that
+ * steps out meets all of ours, the ones behind it in the passage are out of range. True when the defenders were
+ * ordered to the exit.
+ */
+function holdChoke(ctx, objs) {
+  const x = state(ctx);
+  const ch = chokeOf(ctx);
+  if (!ch) return false;
+  const { G } = ctx;
+  const inside = x.intruders.filter((r) => {
+    const d = r.x < G.map.w && r.z < G.map.h ? ch.dist[r.z * G.map.w + r.x] : -1;
+    return d >= 0 && d < ch.d - 1;
+  });
+  if (inside.length) {
+    x.intruders = inside; // the hunt below goes after the ones inside only
+    return false;
+  }
+  if (ch.gaps.length > 1 && x.seenFighters.length) {
+    let bestD = 1e9;
+    for (const g of ch.gaps) {
+      for (const r of x.seenFighters) {
+        const d = cheb(r.x, r.z, g.cx, g.cz);
+        if (d < bestD) {
+          bestD = d;
+          ch.held = g;
+        }
+      }
+    }
+  }
+  const spots = ch.held.spots;
+  const groups = new Map();
+  [...objs].sort((a, b) => a - b).forEach((o, i) => {
+    const sp = spots[i % spots.length];
+    const key = `${sp[0]},${sp[1]}`;
+    if (!groups.has(key)) groups.set(key, { sp, objs: [] });
+    groups.get(key).objs.push(o);
+  });
+  for (const { sp, objs: g } of groups.values()) sendWaypointOrder(ctx, g, [[(sp[0] << 8) + 128, (sp[1] << 8) + 128]], ORDER_ASSAULT);
+  x.stats.chokes = (x.stats.chokes ?? 0) + 1;
+  return true;
 }
 
 // ---- the base patrol (VARIANT patrol) -----------------------------------------------------------------
@@ -1118,7 +1776,7 @@ function squads(ctx) {
   const barracks = i32(gs, playerAddr(p) + P.SLOT_HP + 4) !== 0;
   const cap = i32(gs, GS.UNIT_CAP);
   if (x.forming < 0 && barracks && !x.danger && x.own.mines >= 1 && tick - x.lastPressure >= PRESSURE_EVERY && activeSquads < MAX_SQUADS && G.stat(6, p) + PRESSURE_SIZE <= cap) {
-    const it = buyableTroops(G, p).find((i) => INFANTRY.includes(i.type));
+    const it = buyableTroops(G, p).find((i) => INFANTRY.includes(i.type) && queueOpen(ctx, i.type));
     const slot = SQUAD_SLOTS.find((m) => !x.special[m]);
     if (it && slot !== undefined && money(G, p) >= it.cost * PRESSURE_SIZE + RESERVE) {
       spend(G, p, it.cost * PRESSURE_SIZE);
@@ -1486,7 +2144,17 @@ export function expansionPaused(ctx) {
   const x = state(ctx);
   if (!x) return false;
   const v = variant(ctx);
+  if (v.keep2 && keep2Due(ctx)) return false; // VARIANT keep2: below two mining sites the lane never waits
   return x.saving || (v.safe && (ctx.tick | 0) - x.lastExplLoss < EXPL_COOLDOWN) || mechsFirst(ctx);
+}
+
+/**
+ * VARIANT keep2 (maintainer, 9 Oct 2026: "face the rusher with two mines"): fewer than two mines stand (a lost mine
+ * counts as missing) - the expansion lane buys the explorer whatever the saving modes say.
+ */
+function keep2Due(ctx) {
+  const x = state(ctx);
+  return !!x && x.own.mines < 2;
 }
 
 /**
@@ -1526,24 +2194,25 @@ function escortBuy(ctx) {
     }
     return false; // the money waits for the tank
   }
-  if (e.reinfInf > 0 && buy(ctx, INFANTRY, e.reinfInf, 'Escort reinforcement')) {
-    e.pendInf += e.reinfInf;
-    e.reinfInf = 0;
+  if (e.reinfInf > 0 && buy(ctx, INFANTRY, 1, 'Escort reinforcement')) {
+    // one trooper at a time as the money comes
+    e.reinfInf--;
+    e.pendInf++;
     e.pendSince = tick;
-    x.stats.reinforcements = (x.stats.reinforcements ?? 0) + 1;
+    if (!e.reinfInf) x.stats.reinforcements = (x.stats.reinforcements ?? 0) + 1;
     return true;
   }
   return false;
 }
 
-/** The troopers of the expedition that the defenders could not give, bought at once when the money allows. */
+/** The troopers of the expedition that the defenders could not give, bought one at a time as the money comes. */
 function escortRecruit(ctx) {
   const x = state(ctx);
   const e = x.esc;
   if (e.phase !== 'gather' || e.recruits <= 0) return false;
-  if (!buy(ctx, INFANTRY, e.recruits, 'Escort')) return false;
-  e.pendInf += e.recruits;
-  e.recruits = 0;
+  if (!buy(ctx, INFANTRY, 1, 'Escort')) return false;
+  e.recruits--;
+  e.pendInf++;
   e.pendSince = ctx.tick | 0;
   return true;
 }
@@ -1735,6 +2404,124 @@ function shieldMarch(ctx, units, cx, cz, ex, ez, guardPoint) {
 }
 
 /**
+ * VARIANT second, the detour (maintainer, 9 Oct 2026: "exploiter is not avoiding offenders ... sent right in the direction of the
+ * opponents"; on contact: "detour to another vent"): at the second site's first exchange of fire the explorer gives up
+ * its vent (a fail mark, as failEscort) for the nearest free vent (zone hops from home, then tiles from the explorer)
+ * that lies DETOUR_CLEAR tiles from every enemy fighter seen and whose straight way from the explorer keeps DETOUR_PATH
+ * tiles from them; the escort holds the enemy at the meeting point as before. False when there is no such vent.
+ */
+function detour(ctx, ex, ez) {
+  const x = state(ctx);
+  const e = x.esc;
+  const { G, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  const foes = x.seenFighters ?? [];
+  const bases = x.enemy?.buildings ?? [];
+  const taken = new Set(listOf(gs, kai, 0, 0).filter((o) => o !== e.expl).map((o) => u8(gs, objAddr(o) + OA.ZONE)));
+  const plan = safeSearch(ctx, ex, ez);
+  let best = -1;
+  let bestLen = 1e9;
+  for (let o = 0; o < MAX_OBJECTS; o++) {
+    const a = objAddr(o);
+    if (o === e.vent || u8(gs, a + O.TYPE) !== TYPE_VENT || i16(gs, a + O_VENT_RATE) === 0 || !alive(u8(gs, a + O.LIFE))) continue;
+    const [vx, vz] = tileOf(gs, a);
+    if (groundIdAt(G, vx, vz) !== 0x3ff) continue;
+    const vfam = famAt(G, vx, vz);
+    if (!vfam || taken.has(vfam)) continue;
+    if (foes.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_CLEAR)) continue;
+    if (bases.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_BASE)) continue;
+    const len = plan.dist[vz * G.map.w + vx];
+    if (len < 0 || len >= bestLen) continue;
+    bestLen = len;
+    best = o;
+  }
+  if (best < 0) return false;
+  const f = e.fails.get(e.vent);
+  e.fails.set(e.vent, { n: (f && tick - f.tick < FAIL_MEMORY ? f.n : 0) + 1, tick });
+  const [vx, vz] = tileOf(gs, objAddr(best));
+  ctx.say(`Escort: detour from the vent at ${e.vx},${e.vz} to the one at ${vx},${vz} (${bestLen} steps, clear of the enemy).`);
+  Object.assign(e, { vent: best, vx, vz, zone: famAt(G, vx, vz), since: tick, route: routeTo(plan, vx, vz, G.map.w) });
+  x.stats.detours = (x.stats.detours ?? 0) + 1;
+  return true;
+}
+
+/**
+ * The detour's search: a walk (8 directions, walkable cells) from (ex, ez) that keeps DETOUR_PATH tiles from every
+ * enemy fighter we see - near the start only as far as the explorer already is - up to DETOUR_MAX steps. Returns
+ * { dist, prev } over the map's cells (-1 = not reached).
+ */
+function safeSearch(ctx, ex, ez) {
+  const x = state(ctx);
+  const { G } = ctx;
+  const W = G.map.w;
+  const H = G.map.h;
+  const foes = x.seenFighters ?? [];
+  const startD = foes.reduce((m, r) => Math.min(m, cheb(r.x, r.z, ex, ez)), 99);
+  const keep = Math.max(1, Math.min(DETOUR_PATH, startD));
+  const dist = new Int16Array(W * H).fill(-1);
+  const prev = new Int32Array(W * H).fill(-1);
+  const blocked = (cx, cz) => foes.some((r) => cheb(r.x, r.z, cx, cz) < keep);
+  dist[ez * W + ex] = 0;
+  let front = [[ex, ez]];
+  for (let d = 1; d <= DETOUR_MAX && front.length; d++) {
+    const next = [];
+    for (const [cx, cz] of front) {
+      for (let k = 0; k < 9; k++) {
+        if (k === 4) continue;
+        const nx = cx + (k % 3) - 1;
+        const nz = cz + Math.floor(k / 3) - 1;
+        if (nx < 0 || nz < 0 || nx >= W || nz >= H || dist[nz * W + nx] >= 0) continue;
+        if (!Grid.isWalkable(G, nx, nz) || blocked(nx, nz)) continue;
+        dist[nz * W + nx] = d;
+        prev[nz * W + nx] = cz * W + cx;
+        next.push([nx, nz]);
+      }
+    }
+    front = next;
+  }
+  return { dist, prev };
+}
+
+/** Up to ROUTE_POINTS evenly spaced tiles of the searched path to (tx, tz), the last one (tx, tz) itself. */
+function routeTo(plan, tx, tz, W) {
+  const cells = [];
+  for (let i = tz * W + tx; i >= 0; i = plan.prev[i]) cells.push(i);
+  cells.reverse();
+  const out = [];
+  for (let k = 1; k <= ROUTE_POINTS; k++) {
+    const i = cells[Math.min(cells.length - 1, Math.round((k * (cells.length - 1)) / ROUTE_POINTS))];
+    const p = [i % W, Math.floor(i / W)];
+    if (!out.length || out.at(-1)[0] !== p[0] || out.at(-1)[1] !== p[1]) out.push(p);
+  }
+  return out;
+}
+
+/** The explorer along its planned route (the points still ahead of it), else straight to the vent at `va`. */
+function sendExplorerRoute(ctx, va) {
+  const e = state(ctx).esc;
+  const gs = ctx.G.gs;
+  const [ex, ez] = tileOf(gs, objAddr(e.expl));
+  if (e.route?.length) {
+    let k = 0;
+    let bd = 1e9;
+    e.route.forEach(([px, pz], i) => {
+      const d = cheb(px, pz, ex, ez);
+      if (d < bd) {
+        bd = d;
+        k = i;
+      }
+    });
+    const ahead = e.route.slice(bd <= 2 ? k + 1 : k);
+    if (ahead.length) {
+      sendWaypointOrder(ctx, [e.expl], ahead.map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
+      return;
+    }
+  }
+  sendWaypointOrder(ctx, [e.expl], [[gs.readUInt16LE(va + O.X), gs.readUInt16LE(va + O.Z)]], ORDER_MOVE);
+}
+
+/**
  * VARIANT second (maintainer, 8 Oct 2026): at the first exchange of fire the explorer runs on to the vent alone, not
  * waiting for the escort, which stays and fights where it met the enemy (cx, cz), drawing the enemy's troops onto itself.
  */
@@ -1746,7 +2533,7 @@ function startDecoy(ctx, units, va, cx, cz, why) {
   e.cx = cx;
   e.cz = cz;
   w8(gs, objAddr(e.expl) + OA.ZONE, e.zone);
-  sendWaypointOrder(ctx, [e.expl], [[gs.readUInt16LE(va + O.X), gs.readUInt16LE(va + O.Z)]], ORDER_MOVE);
+  sendExplorerRoute(ctx, va);
   e.explOrdered = ctx.tick | 0;
   e.issued = -1000000;
   x.stats.decoys = (x.stats.decoys ?? 0) + 1;
@@ -1767,7 +2554,7 @@ function decoy(ctx, units, va) {
   const ea = objAddr(e.expl);
   const [ex, ez] = tileOf(gs, ea);
   if ((ex !== e.vx || ez !== e.vz) && (isIdle(gs, ea) || tick - e.explOrdered > REISSUE)) {
-    sendWaypointOrder(ctx, [e.expl], [[gs.readUInt16LE(va + O.X), gs.readUInt16LE(va + O.Z)]], ORDER_MOVE);
+    sendExplorerRoute(ctx, va);
     e.explOrdered = tick;
   }
   if (!units.length || tick - e.issued < RALLY_EVERY) return;
@@ -1793,8 +2580,9 @@ function escort(ctx) {
   const tick = ctx.tick | 0;
   if ((e.pendInf || e.pendTank) && tick - e.pendSince > PEND_MAX) e.pendInf = e.pendTank = 0; // the recruits went elsewhere
   if (e.phase === 'idle') {
-    // VARIANT second: the reserved trooper waits at the HQ
-    if (x.special[ESCORT_SLOT] && tick - e.issued >= REISSUE) {
+    // VARIANT second: the reserved trooper waits at the HQ - not while the perimeter is attacked (the defence has it);
+    // during the push beyond it, it waits for the next explorer
+    if (x.special[ESCORT_SLOT] && tick - e.issued >= REISSUE && !x.threats.length) {
       const away = slotUnits(ctx, ESCORT_SLOT).filter((o) => {
         const [ux, uz] = tileOf(gs, objAddr(o));
         return cheb(ux, uz, x.hq[0], x.hq[1]) > 3;
@@ -1853,7 +2641,10 @@ function escort(ctx) {
       failEscort(ctx, 'no troopers came');
       return;
     } else {
-      if (units.length && (idleAny || tick - e.issued >= REISSUE)) {
+      // maintainer, 9 Oct 2026: "why can't you start expansion in parallel to the battle, when perimeter of the base is
+      // secured and forces are pushing enemy further?" - the expedition waits only while the perimeter is attacked
+      // (x.threats: the base, a mine, a shooter at us); during the push beyond it the escort gathers and marches
+      if (units.length && !x.threats?.length && (idleAny || tick - e.issued >= REISSUE)) {
         sendWaypointOrder(ctx, units, [[(hx << 8) + 128, (hz << 8) + 128]], ORDER_ASSAULT);
         e.issued = tick;
       }
@@ -1913,7 +2704,18 @@ function escort(ctx) {
     e.issued = -1000000; // the march orders again at once (assault: fire at what they meet)
   }
   if (e.phase === 'march' && contact && second) {
-    startDecoy(ctx, units, va, cx, cz, `escort in contact near ${cx},${cz}`);
+    if (!detour(ctx, ex, ez)) {
+      // no vent clear of the enemy: home, along a path clear of it where there is one
+      const plan = safeSearch(ctx, ex, ez);
+      const [hx0, hz0] = x.hq;
+      let home = null;
+      for (let dz = -3; dz <= 3 && !home; dz++) for (let dx = -3; dx <= 3 && !home; dx++) if (plan.dist[(hz0 + dz) * G.map.w + hx0 + dx] >= 0) home = [hx0 + dx, hz0 + dz];
+      const expl = e.expl;
+      failEscort(ctx, `escort in contact near ${cx},${cz} and no vent clear of the enemy, the explorer comes home`);
+      if (home) sendWaypointOrder(ctx, [expl], routeTo(plan, home[0], home[1], G.map.w).map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
+      return;
+    }
+    startDecoy(ctx, units, objAddr(e.vent), cx, cz, `escort in contact near ${cx},${cz}`);
     return;
   }
   if (e.phase === 'march') {
@@ -2088,6 +2890,40 @@ function buyUpgrade(ctx) {
   ctx.say(`${up.which ? 'Armour' : 'Weapon'} upgrade ${up.level} for ${G.tables.types[up.type].name.toLowerCase()}.`);
   const x = state(ctx);
   x.stats.upgrades = (x.stats.upgrades ?? 0) + 1;
+  return true;
+}
+
+/**
+ * VARIANT infup: the next level-1 upgrade of the infantry (trooper / grey) in the switch's order - armour first by default
+ * (the duels of 9 Oct 2026: armour turns a trooper's 25 damage per shot into 19, 43 shots to kill instead of 32; the
+ * weapon upgrade 31, 26 shots - eight armoured troopers beat nine plain ones in 10 of 16 clumps, eight with the weapon
+ * upgrade in 4) - once science stands and the first wave was seen; null when none is left or the conditions fail.
+ */
+function infupNext(ctx) {
+  const x = state(ctx);
+  const mode = variant(ctx).infup;
+  if (!x || !mode || !x.waveSeen) return null;
+  const { G, p } = ctx;
+  const order = mode === 'armour' ? [1, 0] : mode === 'weapon' ? [0, 1] : mode === 'armouronly' ? [1] : [0];
+  for (const which of order) {
+    const up = buyableUpgrades(G, p, which).find((u) => INFANTRY.includes(u.type) && u.level === 1);
+    if (up) return up;
+  }
+  return null;
+}
+
+const infupDue = (ctx) => infupNext(ctx) !== null;
+
+function buyInfup(ctx) {
+  const { G, p } = ctx;
+  const up = infupNext(ctx);
+  if (!up || money(G, p) < up.cost) return false;
+  spend(G, p, up.cost);
+  ctx.emit([build.upgrade(up.which, up.type, up.level, p)]);
+  ctx.say(`${up.which ? 'Armour' : 'Weapon'} upgrade ${up.level} for ${G.tables.types[up.type].name.toLowerCase()} (infantry).`);
+  const x = state(ctx);
+  x.stats.infups = (x.stats.infups ?? 0) + 1;
+  x.stats[`infup${up.which}At`] = ctx.tick | 0;
   return true;
 }
 

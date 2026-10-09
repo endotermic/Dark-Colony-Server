@@ -2985,6 +2985,57 @@ against a fast rush, which only the anti-rush preset does (and which in turn los
 whole pool yet. Tests: `test/krustyx.test.js` (6; the new switches parse, `tweak`, the default, the commander's slot and
 star commands in a game); 279 in all.
 
+### 19.15 Units that did not fight, the rules of the fight, and the factory behind a secured perimeter (9 Oct 2026)
+
+Driven by replays: arena games are exported as relay recordings (one frame per tick, the commands the arena applied
+before the step to `until`, lookahead 2, the engine's 0x08 in every frame, tick 33 ms = 200 %) and watched through
+REPLAY ONLINE GAME of a local relay (`RECORD_DIR=<dir>`; the only path where the exe's viewer money fix runs; never
+`REPLAY_FULL_MAP` - the reveal alters the game). Every finding below came from the maintainer watching such a replay
+and a per-unit probe confirming it. **Bugs are fixed in the default behaviour, not behind switches** (maintainer: "fix
+default behaviour"); everything here runs for every bot with the extension layer (the deployed `workers,lieutenant`
+and the presets), the pool's `krusty` / `krusty+workers` are untouched.
+
+**What was wrong.** The commander got a MOVE order every 64 ticks (moving units do not shoot: it fired in 65 of 1351
+ticks beside the enemy). The second site's reserved trooper sat outside the rally. An idle unit of a human seat fires
+only at what is in its weapon range and gives chase within 4 tiles, so defenders slept beside the rushers (~61 % of
+their ticks near an enemy). A mine under attack raised the danger but nobody went there. The rally gathered on the HQ
+tile: a grey stood on the barracks' spawn tile for 2200 ticks (a building spawns only onto a free tile and an ordered
+unit ignores its nudge) while the bot paid 350 a think into the frozen queue and lost it with the barracks. Enemy
+commanders (types 69..76) were invisible: `isFighter` is types < 16 - the rusher's commander shot a Hoops mine for 500
+ticks unanswered. The second site's detour checked a straight line only and the game's pathfinder walked the explorer
+through the enemy.
+
+**The rules now** (maintainer, 9 Oct 2026): (1) "retreat must be only for lieutenant!" - `holdGround` in krusty.js
+`sendWaypointOrder` drops an armed non-commander unit in contact (a seen enemy within 8) from any order taking it more
+than 2 tiles further from that enemy; (2) "push it until there are no single enemy in that attack" and (4) "continue
+fighting ... while opponent have backup which is approaching" - `defend` hunts, while an attack is on, the union of the
+threats (seen enemies within 18 of the HQ or 10 of a mine / turret, and enemies firing at us within 24 of them - the
+engine marks a shooter with its target's team in `O.ATTACKED` and reveals its tile), every seen enemy within 12 of
+those or of last think's targets, within 6 of a fighter of ours, approaching within 48, or within 32 of the HQ / 16
+of a mine; (3) "all these units (trooper, tank, artillery, sarge, turret) must take offensive actions" - every armed
+unit at any distance, except one already fighting another enemy beside it; an idle unit attacks a seen enemy within 8.
+The lieutenant attacks the nearest enemy, steps back 4 tiles when hit, waits 96 ticks and attacks again, and does not
+follow the escort. Turret builders are moved only by `turrets()`: to their destination and land, or (enemy within 12)
+land just outside the enemies' weapon range + 2. Production: no purchase into a queue with 3 waiting or stalled for 256
+ticks (`queueOpen`), `clearDoors` moves an own unit off a spawn tile (a plain move), every purchase one unit at a time,
+the rally gathers 5 tiles from the HQ towards the danger. The detour (`second`, on contact) searches a path over the
+walkable cells that keeps 8 tiles from every seen enemy, takes the vent with the shortest such path (none within 30 of
+an enemy building) and walks the explorer along it with up to 8 waypoints; with no safe vent it comes home that way.
+The expansion waits only while the perimeter is attacked ("start expansion in parallel to the battle, when perimeter of
+the base is secured"). **The factory waits too** ("delay purchase of factory until perimeter of the base and perimeter
+of the nearest to the base mine" are secured): while a threat stands within 18 of the HQ or 10 of the mine nearest to
+it, no tech saving and no robot factory (building kinds 1 and 2), the money goes into the defence. `tweak` lost `batch`
+and `patrol` (maintainer: "remove patrol and batch from the bot"). Tried and reverted (the maintainer watched it:
+"units are just wandering"): re-ordering busy units every 64 ticks, short-range units flanking beside the enemy.
+
+**Arena** (56 ten-minute games per opponent, seed 5 unless noted). The anti-rush preset
+`tweak+second+shield+tech+upnow+lieutenant+noscout+infup=armour` against the rusher: 39 / 17 at the start of the day,
+**51 / 5** now (seed 7: 53 / 2 / 1, seed 9: 50 / 6), 56 / 0 against `krusty`, 7 / 48 / 1 against `krusty+workers`.
+The default `workers,lieutenant`: 1 / 55 against the rusher before, **34 / 22** now, 56 / 0 against `krusty`, 39 / 17
+against `krusty+workers` (was 31 / 24 / 1). The trooper upgrade order (`infup`: armour or weapon first, either alone)
+changed nothing measurable; armour first stays (+33 % effective hit points against +24 % damage). `keep2` never fires.
+Not deployed yet.
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in
