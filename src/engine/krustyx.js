@@ -147,6 +147,7 @@ const DEFEND_ASSET_RADIUS = 10; // tiles around an own mine or turret within whi
 const DEFEND_REACH = 30; // tiles from a threat within which every armed unit of ours joins the defence
 const PUSH_LINK = 12; // tiles: a seen enemy fighter this close to one the defence hunted last think belongs to the same attack
 const SHOOTER_RADIUS = 24; // tiles from the HQ or a mine / turret within which an enemy firing at us is a threat at once
+const PERIMETER_SUPERIORITY = 2; // our fighters at the perimeter per enemy there at which it counts as held
 const NEAR_RADIUS = 32; // tiles from the HQ within which an enemy fighter is "nearby" while an attack is on ...
 const NEAR_ASSET_RADIUS = 16; // ... and from an own mine or turret
 const BACKUP_RADIUS = 48; // tiles from the HQ within which an enemy fighter coming closer is the attacker's backup
@@ -399,6 +400,7 @@ export function general(ctx) {
   let power = 0;
   const assets = []; // tiles of our mines and turrets (VARIANT alarm)
   const minePos = []; // tiles of our mines
+  const ownFighterTiles = []; // tiles of our fighters
   const maxObj = i32(gs, GS.MAX_OBJ);
   for (let o = 120; o <= maxObj; o++) {
     const a = objAddr(o);
@@ -410,6 +412,7 @@ export function general(ctx) {
       power += powerOf(type);
       const [tx, tz] = tileOf(gs, a);
       if (cheb(tx, tz, x.hq[0], x.hq[1]) <= HOME_RADIUS) ownNearHome++;
+      ownFighterTiles.push([tx, tz]);
     }
     if (MINING_TOWERS.includes(type)) {
       own.mines++;
@@ -545,9 +548,13 @@ export function general(ctx) {
   // money goes into the defence
   let nearMine = null;
   for (const m of minePos) if (!nearMine || cheb(m[0], m[1], x.hq[0], x.hq[1]) < cheb(nearMine[0], nearMine[1], x.hq[0], x.hq[1])) nearMine = m;
-  x.perimeterAttacked = x.threats.some(
-    (r) => cheb(r.x, r.z, x.hq[0], x.hq[1]) <= RALLY_RADIUS || (nearMine && cheb(r.x, r.z, nearMine[0], nearMine[1]) <= DEFEND_ASSET_RADIUS),
-  );
+  // ... and held only while our fighters there are fewer than PERIMETER_SUPERIORITY times the enemies there (maintainer, 9
+  // Oct 2026, Circle of Friends: "base is successfully defended but production stalls on infinite troopers" - a few
+  // rushers hovered at the edge all game, 28 of ours against 8..13 of them, and the factory never came)
+  const atPerimeter = (px, pz) => cheb(px, pz, x.hq[0], x.hq[1]) <= RALLY_RADIUS || (nearMine && cheb(px, pz, nearMine[0], nearMine[1]) <= DEFEND_ASSET_RADIUS);
+  const enemiesThere = x.threats.filter((r) => atPerimeter(r.x, r.z)).length;
+  const oursThere = ownFighterTiles.filter(([fx, fz]) => atPerimeter(fx, fz)).length;
+  x.perimeterAttacked = enemiesThere > 0 && oursThere < PERIMETER_SUPERIORITY * enemiesThere;
   x.saving = !!saveFor && !x.perimeterAttacked && i32(gs, pa + P.SLOT_HP + 4) !== 0 && !buyableTroops(G, p).some((it) => TANKS.includes(it.type));
   // staleness: when did our own vision last cover a zone's centre
   for (let z = 1; z < 255; z++) {
@@ -2150,7 +2157,18 @@ export function expansionPaused(ctx) {
   if (!x) return false;
   const v = variant(ctx);
   if (v.keep2 && keep2Due(ctx)) return false; // VARIANT keep2: below two mining sites the lane never waits
-  return x.saving || (v.safe && (ctx.tick | 0) - x.lastExplLoss < EXPL_COOLDOWN) || mechsFirst(ctx);
+  return x.saving || (v.safe && (ctx.tick | 0) - x.lastExplLoss < EXPL_COOLDOWN) || mechsFirst(ctx) || thirdWaits(ctx);
+}
+
+/**
+ * The third mining site waits for the robot factory (maintainer, 9 Oct 2026, Armageddon: "third exploiter is built too
+ * early" - bought under the rush, its escort took three greys out of the defence for 4700 ticks and the factory came
+ * at tick 8800): with escorted expansion, two workers-or-mines out and no factory, the lane buys no explorer.
+ */
+function thirdWaits(ctx) {
+  if (!variant(ctx).escort) return false;
+  const { G, p, kai } = ctx;
+  return listOf(G.gs, kai, 0, 0).length >= 2 && i32(G.gs, playerAddr(p) + P.SLOT_HP + 4 * 2) === 0;
 }
 
 /**
