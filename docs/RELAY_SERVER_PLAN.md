@@ -3028,6 +3028,8 @@ it, no tech saving and no robot factory (building kinds 1 and 2), the money goes
 and `patrol` (maintainer: "remove patrol and batch from the bot"). Tried and reverted (the maintainer watched it:
 "units are just wandering"): re-ordering busy units every 64 ticks, short-range units flanking beside the enemy.
 
+**The detour, second form** (same day, commit after 24f083c; maintainer: "rerouting to another vent is wrong and leads exploiter to the group of enemies", then "there are a lot of vents all around the map. you must send exploiter to the nearest vent in the opposite direction"): the candidates are the vents in the half-plane away from the enemies seen within 15 tiles of the explorer, the nearest by a path that never comes closer to an enemy than the explorer already is (6..16 tiles); the explorer gets waypoints every 3 cells, renewed every 64 ticks, its progress along the route never goes back (looking up the nearest route cell sent it back and forth on a bending route), and an enemy within 6 tiles of the rest of the route makes it plan again or come home. Anti-rush preset against the rusher: 53 / 3 (seed 7: 51 / 4 / 1, seed 9: 52 / 4), no base lost in the seed-5 games.
+
 **Arena** (56 ten-minute games per opponent, seed 5 unless noted). The anti-rush preset
 `tweak+second+shield+tech+upnow+lieutenant+noscout+infup=armour` against the rusher: 39 / 17 at the start of the day,
 **51 / 5** now (seed 7: 53 / 2 / 1, seed 9: 50 / 6), 56 / 0 against `krusty`, 7 / 48 / 1 against `krusty+workers`.

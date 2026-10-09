@@ -189,6 +189,11 @@ const DETOUR_PATH = 8; // tiles: the detour's path keeps this far from every ene
 const DETOUR_BASE = 30; // tiles: no detour to a vent this close to a known enemy building
 const DETOUR_MAX = 120; // steps: the longest detour path searched
 const ROUTE_POINTS = 8; // waypoints of a planned route (the game's object holds eight)
+const ROUTE_STEP = 3; // cells between two of them, so that the explorer cannot cut a corner towards the enemy
+const DETOUR_AWAY_NEAR = 15; // tiles: the enemies this close to the explorer give the direction it turns away from
+const DETOUR_KEEP_MIN = 6; // tiles: the detour keeps at least this far from every seen enemy ...
+const DETOUR_KEEP_MAX = 16; // ... and at most this far (as far as the explorer was at the contact, in between)
+const REPLAN_NEAR = 6; // tiles: a seen enemy this close to the rest of the way makes the explorer plan again
 const GUARD_OFFSET = 2; // tiles short of the vent where the escort stands (the vent tile is the explorer's)
 const ESCORT_MAX_REINF = 3; // reinforcement requests per expedition at most
 const REINFORCE_EVERY = 480; // ticks between reinforcement requests while in contact
@@ -2420,6 +2425,12 @@ function detour(ctx, ex, ez) {
   const bases = x.enemy?.buildings ?? [];
   const taken = new Set(listOf(gs, kai, 0, 0).filter((o) => o !== e.expl).map((o) => u8(gs, objAddr(o) + OA.ZONE)));
   const plan = safeSearch(ctx, ex, ez);
+  // the direction away from the enemy: from the centre of the enemy fighters seen within DETOUR_AWAY_NEAR of the explorer
+  // (all seen ones when none is that near) to the explorer
+  const near = foes.filter((r) => cheb(r.x, r.z, ex, ez) <= DETOUR_AWAY_NEAR);
+  const from = near.length ? near : foes;
+  const ax = from.length ? ex - from.reduce((t, r) => t + r.x, 0) / from.length : 0;
+  const az = from.length ? ez - from.reduce((t, r) => t + r.z, 0) / from.length : 0;
   let best = -1;
   let bestLen = 1e9;
   for (let o = 0; o < MAX_OBJECTS; o++) {
@@ -2431,6 +2442,9 @@ function detour(ctx, ex, ez) {
     if (!vfam || taken.has(vfam)) continue;
     if (foes.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_CLEAR)) continue;
     if (bases.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_BASE)) continue;
+    // maintainer, 9 Oct 2026: "there are a lot of vents all around the map. you must send exploiter to the nearest vent in
+    // the opposite direction" - only vents on the far side of the explorer from the enemy (the half-plane away from it)
+    if ((ax || az) && (vx - ex) * ax + (vz - ez) * az <= 0) continue;
     const len = plan.dist[vz * G.map.w + vx];
     if (len < 0 || len >= bestLen) continue;
     bestLen = len;
@@ -2441,7 +2455,7 @@ function detour(ctx, ex, ez) {
   e.fails.set(e.vent, { n: (f && tick - f.tick < FAIL_MEMORY ? f.n : 0) + 1, tick });
   const [vx, vz] = tileOf(gs, objAddr(best));
   ctx.say(`Escort: detour from the vent at ${e.vx},${e.vz} to the one at ${vx},${vz} (${bestLen} steps, clear of the enemy).`);
-  Object.assign(e, { vent: best, vx, vz, zone: famAt(G, vx, vz), since: tick, route: routeTo(plan, vx, vz, G.map.w) });
+  Object.assign(e, { vent: best, vx, vz, zone: famAt(G, vx, vz), since: tick, route: pathCells(plan, vx, vz, G.map.w), routeK: 0 });
   x.stats.detours = (x.stats.detours ?? 0) + 1;
   return true;
 }
@@ -2458,7 +2472,8 @@ function safeSearch(ctx, ex, ez) {
   const H = G.map.h;
   const foes = x.seenFighters ?? [];
   const startD = foes.reduce((m, r) => Math.min(m, cheb(r.x, r.z, ex, ez)), 99);
-  const keep = Math.max(1, Math.min(DETOUR_PATH, startD));
+  // never closer to an enemy than the explorer already is (within DETOUR_KEEP_MIN..DETOUR_KEEP_MAX)
+  const keep = Math.max(1, Math.min(startD, Math.max(DETOUR_KEEP_MIN, Math.min(DETOUR_KEEP_MAX, startD))));
   const dist = new Int16Array(W * H).fill(-1);
   const prev = new Int32Array(W * H).fill(-1);
   const blocked = (cx, cz) => foes.some((r) => cheb(r.x, r.z, cx, cz) < keep);
@@ -2483,6 +2498,13 @@ function safeSearch(ctx, ex, ez) {
   return { dist, prev };
 }
 
+/** Every cell of the searched path from the start to (tx, tz). */
+function pathCells(plan, tx, tz, W) {
+  const cells = [];
+  for (let i = tz * W + tx; i >= 0; i = plan.prev[i]) cells.push([i % W, Math.floor(i / W)]);
+  return cells.reverse();
+}
+
 /** Up to ROUTE_POINTS evenly spaced tiles of the searched path to (tx, tz), the last one (tx, tz) itself. */
 function routeTo(plan, tx, tz, W) {
   const cells = [];
@@ -2497,28 +2519,78 @@ function routeTo(plan, tx, tz, W) {
   return out;
 }
 
-/** The explorer along its planned route (the points still ahead of it), else straight to the vent at `va`. */
+/**
+ * How far along its route the explorer is: the route cell nearest to (ex, ez) from the progress reached so far on (it
+ * never goes back - on a bending route an earlier cell can be as near, and the explorer was sent back and forth).
+ */
+function routeIndex(e, ex, ez) {
+  let k = e.routeK ?? 0;
+  let bd = 1e9;
+  for (let i = e.routeK ?? 0; i < e.route.length; i++) {
+    const d = cheb(e.route[i][0], e.route[i][1], ex, ez);
+    if (d < bd) {
+      bd = d;
+      k = i;
+    }
+  }
+  e.routeK = k;
+  return k;
+}
+
+/**
+ * The explorer along its planned route: the next ROUTE_POINTS cells ROUTE_STEP apart from where it stands (the last
+ * one the route's end when it is that near), else straight to the vent at `va`.
+ */
 function sendExplorerRoute(ctx, va) {
   const e = state(ctx).esc;
   const gs = ctx.G.gs;
   const [ex, ez] = tileOf(gs, objAddr(e.expl));
   if (e.route?.length) {
-    let k = 0;
-    let bd = 1e9;
-    e.route.forEach(([px, pz], i) => {
-      const d = cheb(px, pz, ex, ez);
-      if (d < bd) {
-        bd = d;
-        k = i;
-      }
-    });
-    const ahead = e.route.slice(bd <= 2 ? k + 1 : k);
-    if (ahead.length) {
-      sendWaypointOrder(ctx, [e.expl], ahead.map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
+    const k = routeIndex(e, ex, ez);
+    const pts = [];
+    for (let i = k + ROUTE_STEP; pts.length < ROUTE_POINTS && i < e.route.length + ROUTE_STEP - 1; i += ROUTE_STEP) pts.push(e.route[Math.min(i, e.route.length - 1)]);
+    if (pts.length) {
+      sendWaypointOrder(ctx, [e.expl], pts.map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
       return;
     }
   }
   sendWaypointOrder(ctx, [e.expl], [[gs.readUInt16LE(va + O.X), gs.readUInt16LE(va + O.Z)]], ORDER_MOVE);
+}
+
+/**
+ * On the way: a seen enemy within REPLAN_NEAR of the explorer or of the rest of its route - plan again from where it
+ * stands (detour; the current vent is out), else home along a path clear of the enemy. True when the expedition ended.
+ */
+function replanDetour(ctx) {
+  const x = state(ctx);
+  const e = x.esc;
+  const { G } = ctx;
+  if (!e.route?.length) return false;
+  const [ex, ez] = tileOf(G.gs, objAddr(e.expl));
+  const rest = e.route.slice(routeIndex(e, ex, ez));
+  const foes = x.seenFighters ?? [];
+  if (!foes.some((r) => cheb(r.x, r.z, ex, ez) <= REPLAN_NEAR || rest.some(([px, pz]) => cheb(r.x, r.z, px, pz) <= REPLAN_NEAR))) return false;
+  if (detour(ctx, ex, ez)) {
+    sendExplorerRoute(ctx, objAddr(e.vent));
+    e.explOrdered = ctx.tick | 0;
+    return false;
+  }
+  explorerHome(ctx, ex, ez, 'an enemy is on the way and no vent is clear of it');
+  return true;
+}
+
+/** End the expedition; the explorer comes home along a path clear of the enemy where there is one. */
+function explorerHome(ctx, ex, ez, why) {
+  const x = state(ctx);
+  const e = x.esc;
+  const { G } = ctx;
+  const plan = safeSearch(ctx, ex, ez);
+  const [hx0, hz0] = x.hq;
+  let home = null;
+  for (let dz = -3; dz <= 3 && !home; dz++) for (let dx = -3; dx <= 3 && !home; dx++) if (plan.dist[(hz0 + dz) * G.map.w + hx0 + dx] >= 0) home = [hx0 + dx, hz0 + dz];
+  const expl = e.expl;
+  failEscort(ctx, `${why}, the explorer comes home`);
+  if (home) sendWaypointOrder(ctx, [expl], routeTo(plan, home[0], home[1], G.map.w).map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
 }
 
 /**
@@ -2551,9 +2623,11 @@ function decoy(ctx, units, va) {
   const e = x.esc;
   const gs = ctx.G.gs;
   const tick = ctx.tick | 0;
+  if (replanDetour(ctx)) return;
+  va = objAddr(e.vent);
   const ea = objAddr(e.expl);
   const [ex, ez] = tileOf(gs, ea);
-  if ((ex !== e.vx || ez !== e.vz) && (isIdle(gs, ea) || tick - e.explOrdered > REISSUE)) {
+  if ((ex !== e.vx || ez !== e.vz) && (isIdle(gs, ea) || tick - e.explOrdered > (e.route?.length ? 64 : REISSUE))) {
     sendExplorerRoute(ctx, va);
     e.explOrdered = tick;
   }
@@ -2705,14 +2779,7 @@ function escort(ctx) {
   }
   if (e.phase === 'march' && contact && second) {
     if (!detour(ctx, ex, ez)) {
-      // no vent clear of the enemy: home, along a path clear of it where there is one
-      const plan = safeSearch(ctx, ex, ez);
-      const [hx0, hz0] = x.hq;
-      let home = null;
-      for (let dz = -3; dz <= 3 && !home; dz++) for (let dx = -3; dx <= 3 && !home; dx++) if (plan.dist[(hz0 + dz) * G.map.w + hx0 + dx] >= 0) home = [hx0 + dx, hz0 + dz];
-      const expl = e.expl;
-      failEscort(ctx, `escort in contact near ${cx},${cz} and no vent clear of the enemy, the explorer comes home`);
-      if (home) sendWaypointOrder(ctx, [expl], routeTo(plan, home[0], home[1], G.map.w).map(([px, pz]) => [(px << 8) + 128, (pz << 8) + 128]), ORDER_MOVE);
+      explorerHome(ctx, ex, ez, `escort in contact near ${cx},${cz} and no vent clear of the enemy`);
       return;
     }
     startDecoy(ctx, units, objAddr(e.vent), cx, cz, `escort in contact near ${cx},${cz}`);
