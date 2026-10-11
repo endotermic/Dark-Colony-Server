@@ -163,6 +163,10 @@ const PURSUE_MAX = 900; // ticks that move may take at most
 const WON_COOLDOWN_MS = 5000; // a group that won its offensive waits this long (no enemy seen near it) before it disbands into scouts
 const VENT_STALE = 1500; // ticks after which a vent we do not see is worth a scout's visit
 const OFFENDER_SIGHT = 10; // tiles: an offending scout attacks every enemy it sees this close (fighter, turret, building, mine)
+const GUARD_RADIUS = 10; // tiles around a mine or explorer of ours within which a seen enemy (or flyer) attacks it
+const GUARD_SHOOTER = 14; // tiles within which an enemy firing at us counts against it (artillery reaches 12)
+const GUARD_POST = 3; // tiles from its mine beyond which a guard walks back
+const GUARD_BUY_EVERY = 96; // ticks between two purchases for the guards
 const FIELD_ARRIVED = 2; // tiles: a ground scout this close to its destination picks the next one
 const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant: the four ranks of both races
 const COMMANDER_ENGAGE = 14; // tiles around the commander or the HQ within which a seen enemy fighter matters
@@ -292,6 +296,11 @@ function gndOf(G, type) {
 
 /** An armed ground unit (the census' fighters). */
 const isFighter = (G, type) => type < 16 && G.tables.types[type].weapon[0] !== -1 && !G.tables.types[type].fly;
+/** The unit's weapon can hit a flyer (magic_bullet[weapon class][defence class 2] > 0): infantry, sergeants, commanders, turrets. */
+const hitsAir = (G, type) => {
+  const w = G.tables.types[type]?.weapon?.[0] ?? -1;
+  return w !== -1 && G.tables.mbullet.rows[G.tables.weapons[w].weaponClass][2] > 0;
+};
 /** VARIANT counter: the fighting power of one unit - infantry 1, mech 3 (it kills a trooper four times faster), other 2. */
 const powerOf = (type) => (INFANTRY.includes(type) ? 1 : TANKS.includes(type) ? 3 : 2);
 
@@ -488,6 +497,8 @@ export function general(ctx) {
   x.prevDist ??= new Map(); // enemy object -> its distance to our HQ at the last think (approaching backup)
   const nowDist = new Map();
   const seenFighters = [];
+  const seenFlyers = []; // armed enemy flyers seen now, and those firing at us (the guard battles, engageIdle)
+  const shooters = []; // every enemy firing at us, wherever it stands (the guard battles)
   const knownFighters = [];
   const enemyPower = new Array(8).fill(0);
   let liveThreat = 0;
@@ -524,6 +535,9 @@ export function general(ctx) {
         if (d <= RALLY_RADIUS || assets.some(([ax, az]) => cheb(rec.x, rec.z, ax, az) <= MINE_RADIUS)) liveThreat++;
       }
     }
+    // an armed enemy flyer we see now (maintainer, 11 Oct 2026: "mining must always secured! ... enemy scouts are
+    // destroying mining exploiters" - flyers were nobody's threat: isFighter is ground units only)
+    else if (t.fly && t.weapon[0] !== -1 && rec.x < G.map.w && rec.z < G.map.h && seenByPlayer(G, rec.x, rec.z, p)) seenFlyers.push(rec);
     if (MINING_TOWERS.includes(type)) enemy.mines.push(rec);
     else if (HIDDEN_MINES.includes(type)) enemy.hiddenMines.push(rec);
     else if (TURRETS.includes(type)) enemy.towers.push(rec); // deployed turrets (the field army's battles count them)
@@ -555,8 +569,15 @@ export function general(ctx) {
     const mark = u8(gs, a + O.ATTACKED);
     if (!(mark & 0x1f) || mark >> 5 !== p) continue;
     const type = u8(gs, a + O.TYPE);
+    const [sx, sz] = tileOf(gs, a);
+    shooters.push({ o, x: sx, z: sz, type, team, fly: !!G.tables.types[type]?.fly });
+    if (G.tables.types[type]?.fly) {
+      // a flyer firing at us is revealed to us like a ground shooter
+      if (!seenFlyers.some((r) => r.o === o)) seenFlyers.push({ o, x: sx, z: sz, type, team, shooting: true });
+      continue;
+    }
     if (!isFighter(G, type) && !COMMANDER_TYPES.includes(type)) continue; // the rusher's commander shot a Hoops mine for 500 ticks unseen
-    const [tx, tz] = tileOf(gs, a);
+    const [tx, tz] = [sx, sz];
     // at the perimeter only: a skirmish far afield is left to the units there (anywhere, it stalled the expansion)
     if (cheb(tx, tz, x.hq[0], x.hq[1]) > SHOOTER_RADIUS && !assets.some(([ax, az]) => cheb(tx, tz, ax, az) <= SHOOTER_RADIUS)) continue;
     let rec = seenFighters.find((r) => r.o === o);
@@ -579,6 +600,8 @@ export function general(ctx) {
     q.len = len;
   }
   x.seenFighters = seenFighters;
+  x.seenFlyers = seenFlyers;
+  x.shooters = shooters;
   x.knownFighters = knownFighters; // seen now or remembered (the detour keeps away from both)
   x.liveThreat = liveThreat;
   if (liveThreat > 0) {
@@ -786,6 +809,7 @@ export function production(ctx, have) {
   const { G, p } = ctx;
   if (G.stat(6, p) >= i32(G.gs, GS.UNIT_CAP)) return false;
   if (escortOn(ctx) && escortBuy(ctx)) return false; // VARIANT escort: its reinforcements first, the expedition is under fire
+  if (v.hold && guardBuy(ctx)) return false; // the guards of our mines
   // VARIANT escort: up to the third mining site its troopers come before hold's, unless the HQ stands unguarded
   const unguarded = x.fighters < HOLD_BUY_MIN || (x.ownNearHome === 0 && x.intruders.length > 0);
   if (escortOn(ctx) && x.own.mines < ESCORT_SITES && !unguarded && escortRecruit(ctx)) return false;
@@ -1056,6 +1080,61 @@ function updateBattles(ctx, ours) {
   const seen = x.seenFighters ?? [];
   const seenSet = new Set(seen.map((r) => r.o));
   const near = (b, list, r = BATTLE_REACH) => list.filter((q) => cheb(q.x, q.z, b.x, b.z) <= r);
+  // the guards (maintainer, 11 Oct 2026: "mining must always secured! from failing games i see that enemy scouts are
+  // destroying mining exploiters"): a mine of ours under attack is a guard battle - the first to get units, at once, also
+  // while the perimeter is attacked - until no attacker was seen for the cooldown. Attackers: seen enemy fighters and
+  // flyers within GUARD_RADIUS, enemies firing at us within GUARD_SHOOTER (flyers were nobody's threat before).
+  // Measured and rejected, 30-minute arena, seeds 5/7/9 against krusty+workers: a STANDING guard of two troopers at every
+  // mine ("mined sites must always contain a guard") - 45 of 168 wins against 60, 6 rusher losses, fewer mines at the end
+  // (1.67 against 2.14); guard battles for attacked explorers too (13 / 43 on seed 5). This form: 64 of 168, 2.28 mines,
+  // the rusher 56 / 0 three times; the maintainer chose it.
+  {
+    const { G, p } = ctx;
+    const gs = G.gs;
+    const flyers = x.seenFlyers ?? [];
+    const shooters = x.shooters ?? [];
+    const present = new Set();
+    const maxObj = i32(gs, GS.MAX_OBJ);
+    for (let o = 120; o <= maxObj; o++) {
+      const a = objAddr(o);
+      if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE))) continue;
+      const type = u8(gs, a + O.TYPE);
+      // the mines only (the escort protects the explorers)
+      const what = MINING_TOWERS.includes(type) ? 'mine' : null;
+      if (!what) continue;
+      const [ax, az] = tileOf(gs, a);
+      const by = (r, rad) => cheb(r.x, r.z, ax, az) <= rad;
+      const ground = seen.filter((r) => by(r, GUARD_RADIUS) || (r.shooting && by(r, GUARD_SHOOTER)));
+      const air = flyers.filter((r) => by(r, GUARD_RADIUS) || (r.shooting && by(r, GUARD_SHOOTER)));
+      for (const r of shooters) {
+        if (!by(r, GUARD_SHOOTER)) continue;
+        const list = r.fly ? air : ground;
+        if (!list.some((q) => q.o === r.o)) list.push(r);
+      }
+      const key = `guard:${o}`;
+      let b = x.battles.get(key);
+      const attacked = ground.length + air.length > 0;
+      if (!b && attacked) {
+        b = { key, kind: 'guard', what, o, x: ax, z: az, since: tick, quiet: tick };
+        x.battles.set(key, b);
+      }
+      if (!b) continue;
+      present.add(key);
+      if (attacked && !b.attacked) {
+        x.stats.guardAlarms = (x.stats.guardAlarms ?? 0) + 1;
+        ctx.say(`Guard: our ${what} at ${ax},${az} is attacked (${ground.length} on the ground, ${air.length} in the air).`);
+        x.guardAlarm = true; // allocate at once
+      }
+      Object.assign(b, { x: ax, z: az, attacked, groundFoes: ground, airFoes: air });
+      if (attacked) b.quiet = tick;
+    }
+    for (const [key, b] of [...x.battles]) {
+      if (b.kind !== 'guard') continue;
+      // the mine is gone, or no attacker was seen there for the cooldown
+      if (!present.has(key) || (!b.attacked && tick - b.quiet >= wonCooldown(ctx))) x.battles.delete(key);
+    }
+  }
+  const guardSpots = [...x.battles.values()].filter((b) => b.kind === 'guard');
   // the enemy mines: a mine battle per mine we know of, the nearest to the HQ first
   const mines = new Map(x.enemy.mines.map((r) => [r.o, r]));
   for (const [key, b] of [...x.battles]) {
@@ -1099,7 +1178,11 @@ function updateBattles(ctx, ours) {
   const inPerimeter = x.atPerimeter ?? (() => false);
   const mineBattles = [...x.battles.values()].filter((b) => b.kind === 'mine');
   const contact = seen.filter(
-    (r) => !inPerimeter(r.x, r.z) && ours.some((u) => cheb(u.x, u.z, r.x, r.z) <= CONTACT) && !mineBattles.some((b) => cheb(b.x, b.z, r.x, r.z) <= BATTLE_REACH),
+    (r) =>
+      !inPerimeter(r.x, r.z) &&
+      ours.some((u) => cheb(u.x, u.z, r.x, r.z) <= CONTACT) &&
+      !mineBattles.some((b) => cheb(b.x, b.z, r.x, r.z) <= BATTLE_REACH) &&
+      !guardSpots.some((b) => b.attacked && cheb(b.x, b.z, r.x, r.z) <= GUARD_SHOOTER),
   );
   const clusters = [];
   for (const r of contact) {
@@ -1153,7 +1236,27 @@ function updateBattles(ctx, ours) {
   // power on both sides
   const remembered = (x.knownFighters ?? []).filter((r) => !seenSet.has(r.o));
   const towers = x.enemy.towers ?? [];
+  const assigned = (key, airOnly) => {
+    let pw = 0;
+    for (const u of ours) {
+      const job = x.field?.get(u.o);
+      if (job?.role === 'battle' && job.b === key && (!airOnly || hitsAir(ctx.G, u.type))) pw += u.pw;
+    }
+    return pw;
+  };
   for (const b of x.battles.values()) {
+    if (b.kind === 'guard') {
+      // a guard counts only the units given to it; the need: NEED_RATIO times the attackers - against flyers only units
+      // that can hit air count
+      const g = (b.groundFoes ?? []).reduce((t, r) => t + powerOf(r.type), 0);
+      const a = (b.airFoes ?? []).reduce((t, r) => t + powerOf(r.type), 0);
+      b.enemy = g + a;
+      b.need = Math.ceil(NEED_RATIO * (g + a));
+      b.airNeed = Math.ceil(NEED_RATIO * a);
+      b.ours = assigned(b.key, false);
+      b.airOurs = assigned(b.key, true);
+      continue;
+    }
     let enemy = near(b, seen).reduce((t, r) => t + powerOf(r.type), 0) + TOWER_POWER * near(b, towers).length;
     if (b.kind === 'mine') enemy += near(b, remembered).reduce((t, r) => t + powerOf(r.type), 0);
     b.enemy = enemy;
@@ -1173,9 +1276,11 @@ function jobOf(x, o) {
 }
 
 /**
- * Cover the battles' deficits (every BATTLE_EVERY ticks, while the perimeter is not attacked): the units at home beyond
- * the SENTINELS and the scouts not in contact, the nearest to each battle first. Replaces the reinforcements of 11 Oct
- * 2026 (one centre of all our units in contact): with several battles at a time each gets what it needs.
+ * Cover the battles' deficits: the units at home beyond the SENTINELS and the scouts not in contact, the nearest to each
+ * battle first. The GUARDS first (our attacked mines; maintainer, 11 Oct 2026: "mining must always secured!"): every
+ * think one of them lacks units, also while the perimeter is attacked (then from the scouts only), the units that can
+ * hit air first against flyers. Then, every BATTLE_EVERY ticks and while the perimeter is not attacked, the enemy mines and the fights.
+ * Replaces the reinforcements of 11 Oct 2026 (one centre of all our units in contact).
  */
 function allocate(ctx, ours) {
   const x = state(ctx);
@@ -1183,12 +1288,18 @@ function allocate(ctx, ours) {
   const gs = G.gs;
   const tick = ctx.tick | 0;
   x.fieldNeed = 0;
-  if (!x.atPerimeter || x.perimeterNow > 0) return;
-  const battles = [...x.battles.values()].filter((b) => b.need > 0);
+  x.guardShort = { air: 0, ground: 0 };
+  if (!x.atPerimeter) return;
+  const battles = [...x.battles.values()].filter((b) => b.need > 0 || (b.airNeed ?? 0) > 0);
   if (!battles.length) return;
-  // committed: ours there plus the units of the field army on their way to it
+  // committed: ours there plus the units of the field army on their way to it (a guard counts its own units only)
   const byO = new Map(ours.map((u) => [u.o, u]));
   for (const b of battles) {
+    if (b.kind === 'guard') {
+      b.committed = b.ours;
+      b.airCommitted = b.airOurs;
+      continue;
+    }
     b.committed = b.ours;
     for (const [o, job] of x.field) {
       const u = byO.get(o);
@@ -1196,16 +1307,27 @@ function allocate(ctx, ours) {
     }
   }
   const short = (b) => b.need - b.committed;
-  const mineShort = () => battles.filter((b) => b.kind === 'mine').reduce((t, b) => t + Math.max(0, short(b)), 0);
-  if (tick - (x.lastReinforce ?? -1000000) < BATTLE_EVERY || !battles.some((b) => short(b) > 0)) {
-    x.fieldNeed = mineShort();
+  const airShort = (b) => (b.kind === 'guard' ? b.airNeed - b.airCommitted : 0);
+  const guards = battles.filter((b) => b.kind === 'guard' && (short(b) > 0 || airShort(b) > 0));
+  const shortTotals = () => {
+    x.fieldNeed = battles.filter((b) => b.kind === 'mine').reduce((t, b) => t + Math.max(0, short(b)), 0);
+    x.guardShort = {
+      air: battles.filter((b) => b.kind === 'guard').reduce((t, b) => t + Math.max(0, airShort(b)), 0),
+      ground: battles.filter((b) => b.kind === 'guard').reduce((t, b) => t + Math.max(0, short(b)), 0),
+    };
+  };
+  const othersDue = x.perimeterNow === 0 && tick - (x.lastReinforce ?? -1000000) >= BATTLE_EVERY && battles.some((b) => b.kind !== 'guard' && short(b) > 0);
+  if (!guards.length && !othersDue) {
+    shortTotals();
     return;
   }
-  x.lastReinforce = tick;
+  if (othersDue) x.lastReinforce = tick;
+  x.guardAlarm = false;
   const foes = x.seenFighters ?? [];
   const inContact = (u) => foes.some((r) => cheb(r.x, r.z, u.x, u.z) <= CONTACT);
   const expedition = x.esc.phase !== 'idle' && x.esc.phase !== 'gather';
-  // the pool: units at home (the furthest from the HQ first, all but the sentinels), the scouts not in contact
+  // the pool: units at home (the furthest from the HQ first, all but the sentinels; none while the perimeter is
+  // attacked - the defence has them), the scouts not in contact
   const home = [];
   const scouts = [];
   for (const u of ours) {
@@ -1215,7 +1337,7 @@ function allocate(ctx, ours) {
       if (jobOf(x, u.o).role === 'scout' && !inContact(u)) scouts.push({ ...u, g, from: 'scout' });
       continue;
     }
-    if (!x.atPerimeter(u.x, u.z)) continue;
+    if (x.perimeterNow > 0 || !x.atPerimeter(u.x, u.z)) continue;
     const sp = u8(gs, a + O.SP);
     if (sp !== 0xff && u8(gs, a + O.STACK + 2 * sp) === 0x0b) continue; // shooting
     if (g && g[0] === 2 && (g[1] === COMMANDER_SLOT || (g[1] === ESCORT_SLOT && expedition))) continue;
@@ -1229,14 +1351,15 @@ function allocate(ctx, ours) {
     for (const u of list) {
       pool.splice(pool.indexOf(u), 1);
       b.committed += u.pw;
+      if (b.kind === 'guard' && hitsAir(G, u.type)) b.airCommitted += u.pw;
       if (!given.has(b.key)) given.set(b.key, []);
       given.get(b.key).push(u);
     }
   };
   const nearest = (b, from) => [...from].sort((u1, u2) => cheb(u1.x, u1.z, b.x, b.z) - cheb(u2.x, u2.z, b.x, b.z));
-  const cover = (b, from) => {
+  const cover = (b, from, need = short) => {
     const take = [];
-    let s = short(b);
+    let s = need(b);
     for (const u of nearest(b, from)) {
       if (s <= 0) break;
       take.push(u);
@@ -1244,15 +1367,23 @@ function allocate(ctx, ours) {
     }
     give(b, take);
   };
-  // the mines first, the nearest to the HQ first; then the fights that what is free covers whole, the smallest first
-  const mineList = battles.filter((b) => b.kind === 'mine').sort((b1, b2) => cheb(b1.x, b1.z, x.hq[0], x.hq[1]) - cheb(b2.x, b2.z, x.hq[0], x.hq[1]));
-  for (const b of mineList) if (short(b) > 0) cover(b, pool);
-  const fightList = battles.filter((b) => b.kind === 'fight' && short(b) > 0).sort((b1, b2) => short(b1) - short(b2));
-  for (const b of fightList) if (pool.reduce((t, u) => t + u.pw, 0) >= short(b)) cover(b, pool);
-  // the rest of home to the uncovered fight with the smallest deficit: our units there fight on, they get the backing
-  const open = fightList.filter((b) => short(b) > 0);
-  if (open.length) give(open[0], pool.filter((u) => u.from === 'home'));
-  x.fieldNeed = mineShort();
+  // the guards: the attacked ones first, the nearest to the HQ first; against flyers the units that can hit air
+  guards.sort((b1, b2) => Number(!!b2.attacked) - Number(!!b1.attacked) || cheb(b1.x, b1.z, x.hq[0], x.hq[1]) - cheb(b2.x, b2.z, x.hq[0], x.hq[1]));
+  for (const b of guards) {
+    if (airShort(b) > 0) cover(b, pool.filter((u) => hitsAir(G, u.type)), airShort);
+    if (short(b) > 0) cover(b, pool);
+  }
+  if (othersDue) {
+    // the enemy mines, the nearest to the HQ first; then the fights that what is free covers whole, the smallest first
+    const mineList = battles.filter((b) => b.kind === 'mine').sort((b1, b2) => cheb(b1.x, b1.z, x.hq[0], x.hq[1]) - cheb(b2.x, b2.z, x.hq[0], x.hq[1]));
+    for (const b of mineList) if (short(b) > 0) cover(b, pool);
+    const fightList = battles.filter((b) => b.kind === 'fight' && short(b) > 0).sort((b1, b2) => short(b1) - short(b2));
+    for (const b of fightList) if (pool.reduce((t, u) => t + u.pw, 0) >= short(b)) cover(b, pool);
+    // the rest of home to the uncovered fight with the smallest deficit: our units there fight on, they get the backing
+    const open = fightList.filter((b) => short(b) > 0);
+    if (open.length) give(open[0], pool.filter((u) => u.from === 'home'));
+  }
+  shortTotals();
   if (!given.size) return;
   ensureSlot(ctx, COUNTER_SLOT, KIND_COUNTER);
   for (const [key, list] of given) {
@@ -1266,18 +1397,24 @@ function allocate(ctx, ours) {
     }
     const nHome = list.filter((u) => u.from === 'home').length;
     x.stats.reinforcements2 = (x.stats.reinforcements2 ?? 0) + list.length;
-    ctx.say(`Reinforcements: ${list.length} units (${nHome} from home) to the ${b.kind === 'mine' ? 'enemy mine' : 'battle'} at ${b.x},${b.z} (needs ${b.need}, has ${b.committed}).`);
+    if (b.kind === 'guard') x.stats.guardsSent = (x.stats.guardsSent ?? 0) + list.length;
+    const what = b.kind === 'guard' ? `our ${b.what}` : b.kind === 'mine' ? 'enemy mine' : 'battle';
+    ctx.say(`${b.kind === 'guard' ? 'Guard' : 'Reinforcements'}: ${list.length} units (${nHome} from home) to the ${what} at ${b.x},${b.z} (needs ${b.need}, has ${b.committed}).`);
   }
 }
 
-/** The units of the field army that stay at their enemy mine when the perimeter is attacked (defend leaves them). */
+/**
+ * The units of the field army that stay where they are when the perimeter is attacked (defend leaves them): those
+ * fighting at an enemy mine and every guard at its mine.
+ */
 function fieldHolds(ctx, ours) {
   const x = state(ctx);
   x.fieldHold = new Set();
   for (const u of ours) {
     const job = x.field.get(u.o);
     const b = job?.role === 'battle' ? x.battles.get(job.b) : null;
-    if (b && b.kind === 'mine' && b.phase !== 'stage' && cheb(u.x, u.z, b.x, b.z) <= BATTLE_REACH) x.fieldHold.add(u.o);
+    if (!b || cheb(u.x, u.z, b.x, b.z) > BATTLE_REACH) continue;
+    if ((b.kind === 'mine' && b.phase !== 'stage') || b.kind === 'guard') x.fieldHold.add(u.o);
   }
 }
 
@@ -1342,6 +1479,22 @@ function fieldOrders(ctx, units) {
     if (job.role === 'battle' && !b) {
       job = { role: 'scout', key: '', x: -1, z: -1, issued: -1000000 };
       x.field.set(o, job);
+    }
+    if (b && b.kind === 'guard') {
+      // a guard: the nearest attacker of its mine (flyers too, for a unit that can hit air), else back to the mine
+      const canAir = hitsAir(G, u8(gs, objAddr(o) + O.TYPE));
+      let foe = null;
+      let fd = 1e9;
+      for (const r of [...(b.groundFoes ?? []), ...(canAir ? b.airFoes ?? [] : [])]) {
+        const d = cheb(ux, uz, r.x, r.z);
+        if (d < fd) {
+          fd = d;
+          foe = r;
+        }
+      }
+      if (foe) go(o, job, `foe:${foe.o}`, foe.x, foe.z, ORDER_ASSAULT, ENGAGE_EVERY);
+      else if (cheb(ux, uz, b.x, b.z) > GUARD_POST) go(o, job, `post:${b.key}`, b.x, b.z);
+      continue;
     }
     if (b) {
       if (b.kind === 'mine' && b.phase === 'stage') {
@@ -1471,6 +1624,29 @@ function disband(ctx, units, why) {
   x.counter = null;
   x.stats.disbands = (x.stats.disbands ?? 0) + 1;
   ctx.say(`Counter-offensive: ${why}, ${units.length} units scout for enemy mines and bases.`);
+}
+
+/**
+ * What the guards lack is bought (maintainer, 11 Oct 2026: "mining must always secured!"): before everything but the
+ * escort's reinforcements, also under danger, without the money reserve, at most every GUARD_BUY_EVERY ticks - infantry
+ * against flyers (it hits air), a tank first when a mine is attacked on the ground only.
+ */
+function guardBuy(ctx) {
+  const x = state(ctx);
+  const need = x.guardShort;
+  if (!need || (need.air <= 0 && need.ground <= 0)) return false;
+  const tick = ctx.tick | 0;
+  if (tick - (x.lastGuardBuy ?? -1000000) < GUARD_BUY_EVERY) return false;
+  const groundAttack = [...(x.battles?.values() ?? [])].some((b) => b.kind === 'guard' && (b.groundFoes?.length ?? 0) > 0);
+  const types = need.air <= 0 && groundAttack ? [...TANKS, ...INFANTRY] : INFANTRY;
+  for (const t of types) {
+    if (buy(ctx, [t], 1, 'Guard for our mines')) {
+      x.lastGuardBuy = tick;
+      x.stats.guardBuys = (x.stats.guardBuys ?? 0) + 1;
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1665,7 +1841,11 @@ function counterOffensive(ctx) {
     return;
   }
   fieldHolds(ctx, ours.filter((u) => all.includes(u.o)));
-  if (x.perimeterNow > 0) return; // the defence has them
+  if (x.perimeterNow > 0) {
+    // the defence has them - all but the guards, which stay with their mines
+    fieldOrders(ctx, all.filter((o) => { const j = x.field.get(o); return j?.role === 'battle' && x.battles.get(j.b)?.kind === 'guard'; }));
+    return;
+  }
   const units = all.filter((o) => jobOf(x, o).role === 'counter');
   if (units.length && !x.counter) disband(ctx, units, 'the group has no orders');
   else if (units.length) counterStep(ctx, units);
@@ -2351,7 +2531,8 @@ function engageIdle(ctx) {
   const gs = G.gs;
   const tick = ctx.tick | 0;
   const foes = x.seenFighters ?? [];
-  if (!foes.length) return;
+  const flyers = x.seenFlyers ?? []; // only for units that can hit air (hitsAir)
+  if (!foes.length && !flyers.length) return;
   x.engagedAt ??= new Map();
   const maxObj = i32(gs, GS.MAX_OBJ);
   let n = 0;
@@ -2368,6 +2549,7 @@ function engageIdle(ctx) {
       const dx = gs.readUInt16LE(a + O.DEST_X) >> 8;
       const dz = gs.readUInt16LE(a + O.DEST_Z) >> 8;
       if (foes.some((r) => cheb(r.x, r.z, dx, dz) <= ENGAGE_AIMED)) continue; // going at one already
+      if (hitsAir(G, type) && flyers.some((r) => cheb(r.x, r.z, dx, dz) <= ENGAGE_AIMED)) continue;
     }
     const [ux, uz] = tileOf(gs, a);
     let best = null;
@@ -2377,6 +2559,16 @@ function engageIdle(ctx) {
       if (d < bestD) {
         bestD = d;
         best = r;
+      }
+    }
+    // no ground enemy that near: a flyer, for a unit that can hit air
+    if (!best && hitsAir(G, type)) {
+      for (const r of flyers) {
+        const d = cheb(ux, uz, r.x, r.z);
+        if (d < bestD) {
+          bestD = d;
+          best = r;
+        }
       }
     }
     if (!best) continue;

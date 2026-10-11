@@ -3197,6 +3197,27 @@ simulation only advances; the port fed with exactly that data diverged identical
 debug mode** (`src/game.js`: only `REPLAY_FULL_MAP`; a reproduction relay started with `LOG_LEVEL=debug` had opened the
 map, maintainer: "replay with fully open map will lead to divergence!"); test `replay.test.js` (280 tests).
 
+**Mines under attack get help at once; flyers count** (11 Oct 2026, after f14e96b; maintainer: "mining must always
+secured! from failing games i see that enemy scouts are destroying mining exploiters", then "mined sites must always
+contain a guard"). A tally over five lost 30-minute games against `krusty+workers` (13 mines and 6 explorers lost):
+reapers did most of the damage to our mines (4 798 hp), then the flying scouts SCGM / ORTU (2 118 hp; 1 629 on Hoops of
+Fury alone, 5 mines lost) - and the flyers were nobody's threat, every rule counted ground units only (`isFighter`), so
+a scout shooting a mine raised no alarm. Now: `general` records the armed enemy flyers we see (`x.seenFlyers`) and every
+enemy firing at us anywhere (`x.shooters`, ground and air); `engageIdle` sends a unit that can hit air (`hitsAir`:
+`magic_bullet[class][2] > 0` - infantry, sergeants, psy-raiders, commanders, turrets; not tanks or artillery) at a flyer
+within 10 tiles when no ground enemy is that near; a mine of ours under attack (seen enemies or flyers within 10, shooters
+within 14) is a GUARD battle of the field army, ended when no attacker was seen there for the cooldown: allocated every
+think before every other battle, also while the perimeter is attacked (from the scouts then), need 1.5 x the attackers
+(against flyers only units that can hit air count), the guards stay at their mine when the base is attacked
+(`fieldHolds`), and what they lack is bought first after the escort's reinforcements, also under danger and without the
+reserve (`guardBuy`: infantry against flyers, a tank first against a ground attack, one per 96 ticks). **Measured and
+rejected** (30 in-game minutes, seeds 5 / 7 / 9, the committed f14e96b beside it): a STANDING guard of two troopers at
+every mine - against `krusty+workers` 45 of 168 wins (before 60), 1.67 mines at the end (before 2.14), the rusher 55 / 1,
+53 / 3, 54 / 2; guard battles for attacked explorers too (13 / 43 on seed 5; the escort protects them). This form:
+rusher 56 / 0 three times, `krusty+workers` 22 / 34, 20 / 35 / 1, 22 / 34 = 64 of 168, 2.28 mines at the end - the
+maintainer chose it over the standing guard. The remaining damage to mines comes from tank groups larger than what is
+free at home.
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in
