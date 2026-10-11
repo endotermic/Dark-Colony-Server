@@ -2985,7 +2985,7 @@ against a fast rush, which only the anti-rush preset does (and which in turn los
 whole pool yet. Tests: `test/krustyx.test.js` (6; the new switches parse, `tweak`, the default, the commander's slot and
 star commands in a game); 279 in all.
 
-### 19.15 Units that did not fight, the rules of the fight, and the factory behind a secured perimeter (9 Oct 2026)
+### 19.15 Units that did not fight, the rules of the fight, and the factory behind a secured perimeter (9-11 Oct 2026)
 
 Driven by replays: arena games are exported as relay recordings (one frame per tick, the commands the arena applied
 before the step to `until`, lookahead 2, the engine's 0x08 in every frame, tick 33 ms = 200 %) and watched through
@@ -3046,13 +3046,45 @@ and `patrol` (maintainer: "remove patrol and batch from the bot"). Tried and rev
 
 **Black Widow: escorts, turrets at the mines, sentinels, scouts** (11 Oct 2026, after 7146da5). "third and fourth exploiters leave the base without an escort" - the escort waited for a first enemy wave, which an expanding opponent never sends; with the first mine standing every farther vent is now reached with an escort. "first and second mine are not secured by turrets" - a new turret builder goes to the mine nearest to the HQ with fewer than two turrets and lands two tiles from it on the side away from the HQ. "all units leave the base", then "leave at home only some sentinels. count must not be tied to the size of the army" - the counter-offensive and the reinforcements take every unit in the perimeter but three sentinels (the nearest to the HQ). "scouts must search for a mines and base of an enemy starting a fight only where enemy mine or enemy base is in it's sight" and "if airscout is being attacked when airscout attacks something, it must retreat and continue his duty" - the scouts (SCGM / ORTU; not with `airscout`) have their own slot: they attack an enemy mine or building seen within 8 tiles, else fly (a plain move) to the nearest remembered enemy mine or building out of sight, else to the zone unseen for longest; hit while attacking, a scout flies 8 tiles back and leaves that target alone for 600 ticks. Against the rusher 55 / 1 (seed 7: 56 / 0, seed 9: 55 / 1), against `krusty` 56 / 0, against `krusty+workers` 13 / 43; the default bot 37 / 19, 56 / 0, 42 / 14.
 
-**Arena** (56 ten-minute games per opponent, seed 5 unless noted). The anti-rush preset
+**Arena at the first commit (24f083c, 9 Oct)** (56 ten-minute games per opponent, seed 5 unless noted). The anti-rush preset
 `tweak+second+shield+tech+upnow+lieutenant+noscout+infup=armour` against the rusher: 39 / 17 at the start of the day,
-**51 / 5** now (seed 7: 53 / 2 / 1, seed 9: 50 / 6), 56 / 0 against `krusty`, 7 / 48 / 1 against `krusty+workers`.
+**51 / 5** then (seed 7: 53 / 2 / 1, seed 9: 50 / 6), 56 / 0 against `krusty`, 7 / 48 / 1 against `krusty+workers`.
 The default `workers,lieutenant`: 1 / 55 against the rusher before, **34 / 22** now, 56 / 0 against `krusty`, 39 / 17
 against `krusty+workers` (was 31 / 24 / 1). The trooper upgrade order (`infup`: armour or weapon first, either alone)
 changed nothing measurable; armour first stays (+33 % effective hit points against +24 % damage). `keep2` never fires.
 Not deployed yet.
+
+**State at the end of the session (11 Oct 2026, Dark-Colony-Server 5d617e8).** The anti-rush preset (above; `tweak` =
+workers, upgrades=experience, hold, focus, landmines, alarm, safe, counter, escort): against the rusher 55 / 1, 56 / 0,
+55 / 1 on seeds 5 / 7 / 9 (every loss on points, no base lost; 28..36 wins per set by destroying the rusher), against
+`krusty` 56 / 0, against `krusty+workers` 13 / 43 (all on points: it ends with 8..12 mines against our 1..4 - an
+economy gap, not a fighting one). The default bot `workers,lieutenant` (BOT_VARIANT, unchanged) carries every default
+rule of this section: 37 / 19 against the rusher (1 / 55 on 8 Oct), 56 / 0 against `krusty`, 42 / 14 against
+`krusty+workers`. **Nothing of this is deployed:** Fly still runs the bot of 8 Oct until `fly deploy` (§19.14);
+whether the anti-rush preset should become the server default is the maintainer's call (it beats the rusher and the
+original, the default beats the economy bot better).
+
+Rules by kind - default for every bot with the extension layer: `defend` (union of threats, link, contact, backup,
+nearby; every armed unit; enemy commanders and shooters at the perimeter count), `holdGround` (only the commander
+retreats), the lieutenant (attacks what is near, steps back when hit, star command, no escort following), `engageIdle`
+(every unit within 10 tiles of a seen enemy attacks), turret builders (to a mine with fewer than two turrets, or land
+in front of attackers), `queueOpen` / `clearDoors` / one purchase at a time / the rally beside the HQ, the stale-memory
+check, scouts, tank upgrades as soon as they fight, the factory and the expansion behind the perimeter (only with
+`tech` / escorted expansion for the parts that need them); with `hold` only: the counter-offensive and the
+reinforcements (all but three sentinels); with `second`: the detour; with `escort`: escorts for every vent after the
+first mine and the third site waiting for the robot factory.
+
+**Tools** (committed with this text): `tools/arena2replay.js` turns an arena job into a relay recording (the
+candidate's seat watchable, 33 ms = 200 %), `tools/replaycheck.js` re-runs it through the engine against the 0x08s it
+carries (must say 0 mismatches; the game checks the same), `tools/probes/` holds the diagnostic scripts of this work
+(README there). The loop that found every bug of this section: arena with `--json` -> pick a lost game -> the
+maintainer watches it as a replay (local relay with `RECORD_DIR`, REPLAY ONLINE GAME; never `REPLAY_FULL_MAP`) ->
+a probe confirms what he saw -> fix -> `probes/one.js` on that game -> the pool on three seeds (one run at most five
+minutes: one spec against the pool, or one spec against the rusher on another seed).
+
+**Open points.** The economy against `krusty+workers` (faster or safer expansion once the perimeter is secured).
+Armageddon (D8PLAY01) as aliens is the hardest seat left (both remaining rusher losses). The probes and the converter
+are research tools, not tested code. Deployment and the choice of the server default are pending.
 
 ### 19.7 Risks and open points
 
