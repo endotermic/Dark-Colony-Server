@@ -137,6 +137,7 @@ const KIND_COUNTER = 6; // the counter-offensive group (counterOffensive)
 const COUNTER_SLOT = 11; // the last raiding-squad slot (VARIANT pressure takes free ones only)
 const COUNTER_BEYOND = 25; // tiles beyond the attack's way in where the counter-offensive goes when nothing is known
 const COUNTER_SHARE = 0.75; // of the units in the perimeter that go on the counter-offensive
+const BATTLE_EVERY = 128; // ticks between two rounds of reinforcements to a battle outside the perimeter
 const COUNTER_ENGAGE = 15; // tiles: a seen enemy fighter this close to the group becomes its target
 const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant: the four ranks of both races
 const COMMANDER_ENGAGE = 14; // tiles around the commander or the HQ within which a seen enemy fighter matters
@@ -889,6 +890,59 @@ export function noScouting(ctx) {
   return !!state(ctx) && !!variant(ctx).noscout && i32(ctx.G.gs, playerAddr(ctx.p) + P.SLOT_HP + 4 * 2) === 0;
 }
 
+/**
+ * Reinforcements (maintainer, 11 Oct 2026: "if battle is in process, we must send reinforcements to support our troops" -
+ * on Plink-O our troops reached the enemy's base and fought on without help): while our fighters outside the perimeter
+ * are in contact (an enemy fighter we see within CONTACT tiles) and the perimeter itself is not attacked, every
+ * BATTLE_EVERY ticks COUNTER_SHARE of the armed units standing in the perimeter - the furthest from the HQ; not the
+ * commander, turret builders, an expedition's escort or a unit that is shooting - join the counter group and
+ * assault-move to the battle (the centre of our units in contact); the counter group's targeting takes over from there.
+ */
+function reinforce(ctx) {
+  const x = state(ctx);
+  const { G, p, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  if (!x.atPerimeter || x.perimeterNow > 0 || tick - (x.lastReinforce ?? -1000000) < BATTLE_EVERY) return;
+  const foes = x.seenFighters ?? [];
+  if (!foes.length) return;
+  const maxObj = i32(gs, GS.MAX_OBJ);
+  const fighting = [];
+  const home = [];
+  const expedition = x.esc.phase !== 'idle' && x.esc.phase !== 'gather';
+  for (let o = 120; o <= maxObj; o++) {
+    const a = objAddr(o);
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE))) continue;
+    const type = u8(gs, a + O.TYPE);
+    if (!isFighter(G, type) || TOWER_BUILDERS.includes(type) || COMMANDER_TYPES.includes(type)) continue;
+    const [ux, uz] = tileOf(gs, a);
+    if (!x.atPerimeter(ux, uz)) {
+      if (foes.some((r) => cheb(r.x, r.z, ux, uz) <= CONTACT)) fighting.push([ux, uz]);
+      continue;
+    }
+    const sp = u8(gs, a + O.SP);
+    if (sp !== 0xff && u8(gs, a + O.STACK + 2 * sp) === 0x0b) continue; // shooting
+    const g = groupOf(ctx, o);
+    if (g && g[0] === 2 && (g[1] === COMMANDER_SLOT || g[1] === COUNTER_SLOT || (g[1] === ESCORT_SLOT && expedition))) continue;
+    home.push({ o, g, d: cheb(ux, uz, x.hq[0], x.hq[1]) });
+  }
+  if (!fighting.length || !home.length) return;
+  x.lastReinforce = tick;
+  home.sort((a, b) => b.d - a.d);
+  home.length = Math.ceil(home.length * COUNTER_SHARE);
+  const bx = Math.round(fighting.reduce((t, q) => t + q[0], 0) / fighting.length);
+  const bz = Math.round(fighting.reduce((t, q) => t + q[1], 0) / fighting.length);
+  ensureSlot(ctx, COUNTER_SLOT, KIND_COUNTER);
+  for (const { o, g } of home) {
+    if (g) unlink(gs, kai, o, g[0], g[1]);
+    link(gs, kai, o, 2, COUNTER_SLOT);
+  }
+  x.counter ??= { tx: bx, tz: bz, key: 'battle', issued: tick };
+  sendWaypointOrder(ctx, home.map((q) => q.o), [[(bx << 8) + 128, (bz << 8) + 128]], ORDER_ASSAULT);
+  x.stats.reinforcements2 = (x.stats.reinforcements2 ?? 0) + home.length;
+  ctx.say(`Reinforcements: ${home.length} units to the battle at ${bx},${bz}.`);
+}
+
 /** The task and minor holding object o, or null. */
 function groupOf(ctx, o) {
   const { G, kai } = ctx;
@@ -943,6 +997,7 @@ function counterOffensive(ctx) {
       ctx.say(`Counter-offensive: the perimeter is clear, ${go.length} units go after the enemy.`);
     }
   }
+  if (variant(ctx).hold) reinforce(ctx);
   if (x.special[COUNTER_SLOT] !== KIND_COUNTER) return;
   const units = slotUnits(ctx, COUNTER_SLOT).filter((o) => isFighter(G, u8(gs, objAddr(o) + O.TYPE)));
   if (!units.length) {
@@ -965,14 +1020,18 @@ function counterOffensive(ctx) {
   cx = Math.round(cx / units.length);
   cz = Math.round(cz / units.length);
   const arrived = c.tx >= 0 && cheb(cx, cz, c.tx, c.tz) <= 3;
-  // the nearest enemy fighter we see near the group
+  // the enemy fighter we see nearest to any unit of the group (its centre lies behind the front while reinforcements
+  // walk up from home)
+  const tiles = units.map((o) => tileOf(gs, objAddr(o)));
   let foe = null;
   let fd = COUNTER_ENGAGE + 1;
   for (const r of x.seenFighters ?? []) {
-    const d = cheb(r.x, r.z, cx, cz);
-    if (d < fd) {
-      fd = d;
-      foe = r;
+    for (const [ux, uz] of tiles) {
+      const d = cheb(r.x, r.z, ux, uz);
+      if (d < fd) {
+        fd = d;
+        foe = r;
+      }
     }
   }
   if (foe) {
