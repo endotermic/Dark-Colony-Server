@@ -3038,6 +3038,8 @@ and `patrol` (maintainer: "remove patrol and batch from the bot"). Tried and rev
 
 **Every unit near the enemy attacks** (11 Oct 2026, after 3606fed; maintainer: "all units in range of several tiles (8-10) must attack if enemy is detected in that range"): an armed unit with an enemy fighter we see within 10 tiles assault-moves onto the nearest one whatever it was doing (before: idle units only, within 8) - unless it is shooting or its destination already lies within 4 tiles of a seen enemy; a busy unit at most every 64 ticks. Against the rusher: 55 / 1 (seed 7: 50 / 5 / 1, seed 9: 50 / 4 / 2); the default bot 34 / 22.
 
+**Stale enemy records** (11 Oct 2026, after 681dafa; maintainer: "on olympus map group of units are still wandering near the enemy"): Krusty's memory is kept by object number, and the engine reuses the number of a dead unit - a dead rusher grey's record (enemy team) went on following our own new grey that got its number, and a group of ours chased it as "the enemy at 121,120" for thousands of ticks without a shot. A record whose tile we see now counts only if its object is alive and of that team. Olympus Mons game 61: our units near the enemy fire 70 % of the time (about 45 % before), won 24 / 0. Against the rusher: **56 / 0** (seed 7: 55 / 1, seed 9: 55 / 1), 55 / 1 against `krusty`, 9 / 46 / 1 against `krusty+workers`; the default bot 38 / 18, 56 / 0, 45 / 10 / 1.
+
 **Arena** (56 ten-minute games per opponent, seed 5 unless noted). The anti-rush preset
 `tweak+second+shield+tech+upnow+lieutenant+noscout+infup=armour` against the rusher: 39 / 17 at the start of the day,
 **51 / 5** now (seed 7: 53 / 2 / 1, seed 9: 50 / 6), 56 / 0 against `krusty`, 7 / 48 / 1 against `krusty+workers`.

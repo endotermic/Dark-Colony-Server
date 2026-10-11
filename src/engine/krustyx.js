@@ -466,6 +466,13 @@ export function general(ctx) {
     const t = G.tables.types[type];
     if (!t) continue;
     const rec = { o, x: u8(kai, ma), z: u8(kai, ma + 1), type, team };
+    // a record whose tile we see but whose object is no longer that enemy (dead, or its number reused - on Olympus Mons
+    // a group chased our own grey #222 as "the enemy at 121,120" for thousands of ticks, maintainer 11 Oct 2026: "group
+    // of units are still wandering near the enemy") is stale: left out
+    if (rec.x < G.map.w && rec.z < G.map.h && seenByPlayer(G, rec.x, rec.z, p)) {
+      const oa = objAddr(o);
+      if (!alive(u8(gs, oa + O.LIFE)) || u8(gs, oa + O.TEAM) !== team) continue;
+    }
     if (isFighter(G, type) || COMMANDER_TYPES.includes(type)) { // an enemy commander fights too (its gun reaches 6 tiles)
       enemyPower[team] += powerOf(type);
       const d = cheb(rec.x, rec.z, x.hq[0], x.hq[1]);
