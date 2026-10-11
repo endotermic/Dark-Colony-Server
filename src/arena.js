@@ -11,7 +11,7 @@
 // an HQ and under 2000 money waits for money forever, so "no objects at all" would never come). A game
 // that reaches the tick cap is decided ON POINTS (maintainer, 7 Oct 2026: "5 min of test play is
 // enough"): HQ standing 10, each fighter 1, each mine 3; equal points are a draw. The default cap is
-// five minutes of game time (DEFAULT_TICKS at 44 ms); `decidedBy` says 'kill' or 'points'.
+// thirty in-game minutes since 11 Oct 2026 (DEFAULT_TICKS, 66 ms a tick); `decidedBy` says 'kill' or 'points'.
 //
 // Brain spec strings: `krusty` (the server's bot: bot mode, FIXES on, no variant), `krusty+workers+vents=zone`
 // (krusty.js VARIANTS after `+`), `rusher` (src/rusher.js). A pool is specs separated by commas.
@@ -29,7 +29,10 @@ import { splitCommands, T } from './commands.js';
 import * as Krusty from './engine/krusty.js';
 import { GS, O, P, objAddr, playerAddr, u8, i32 } from './engine/mem.js';
 
-export const DEFAULT_TICKS = 6818; // five minutes of game time at 44 ms (maintainer, 7 Oct 2026)
+// thirty in-game minutes (the game's clock: 66 ms a tick at 100 %; maintainer, 11 Oct 2026: "increase play time twice,
+// because sometimes battles are very long", "not 20 real minutes but 30 ingame minutes instead of 15 minutes" - the
+// series of 8-11 Oct ran with --ticks 13636 = 15 in-game minutes; 6818 = 7.5 since 7 Oct before)
+export const DEFAULT_TICKS = 27272;
 export const POINTS = Object.freeze({ hq: 10, fighter: 1, mine: 3 }); // the decision at the tick cap
 export const CHECK_EVERY = 64; // ticks between death checks and metric samples
 const THINK_TICKS = 32;

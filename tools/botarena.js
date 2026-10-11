@@ -3,9 +3,9 @@
 // brain against a pool of opponents, paired games with the seats swapped, spread over worker threads.
 //
 //   node tools/botarena.js --a krusty+workers --b krusty,rusher [--maps J8PLAY01,D8PLAY01] [--pairs 10]
-//                          [--ticks 6818] [--jobs N] [--seed 1] [--ffa N] [--json out.json] [--quiet]
+//                          [--ticks 27272] [--jobs N] [--seed 1] [--ffa N] [--json out.json] [--quiet]
 //
-// `--pairs N` plays N pairs (2N games) per map per opponent; the default cap is five minutes of game time
+// `--pairs N` plays N pairs (2N games) per map per opponent; the default cap is thirty in-game minutes (27272 ticks of 66 ms)
 // and a capped game is decided on points (src/arena.js); `--ffa N` plays free-for-alls of N sides
 // (the candidate and N-1 pool members, every seating rotated) instead. A brain spec is `krusty`, `rusher` or
 // `krusty+<switch>+<switch>=<value>` with the krusty.js VARIANTS. The default pool is the server's bot

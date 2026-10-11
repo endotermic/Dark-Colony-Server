@@ -187,7 +187,7 @@ const CONTACT = 8; // tiles: a unit with a seen enemy fighter this close is in c
 const RETREAT_SLACK = 2; // tiles: an order taking a unit in contact further than this from its nearest enemy is a retreat
 const TURRET_ENGAGE = 12; // tiles: an enemy fighter this close to a turret builder is an attack it lands against
 const TURRET_MARGIN = 2; // tiles beyond the enemies' weapon range where a turret builder lands (the deployment takes time)
-const TURRETS_PER_MINE = 2; // turrets that secure each mine (the nearest to the HQ first)
+const TURRETS_PER_MINE = 1; // turrets that secure each mine (the nearest to the HQ first; maintainer, 11 Oct 2026, Hoops of Fury: "only one turret per harvester is needed")
 const TURRET_MINE_OFFSET = 2; // tiles from the mine, on the side away from the HQ, where its turret lands
 const TURRET_SPOT = 4; // tiles from the HQ of the spots a turret builder without a group zone goes to
 const QUEUE_FULL = 3; // units waiting in a production queue at which no more is bought into it
@@ -242,7 +242,8 @@ const RETRY_AFTER = 600; // ticks before a new try after a failed one
 const GATHER_MAX = 1500; // ticks the escort waits at the HQ for its troopers
 const ESCORT_MAX = 6000; // ticks an expedition may take at most
 const PEND_MAX = 1500; // ticks a bought recruit is waited for
-const FAIL_MEMORY = 4000; // ticks a failed vent scores worse
+const FAIL_MEMORY = 4000;
+const FAIL_TILES = 30; // tiles a failed vent's way counts longer per failure (the vent choice) // ticks a failed vent scores worse
 const EXPLORER_OBJ_TYPES = [6, 14];
 const INTERPOSE_SCAN = 8; // tiles around an attacker searched for the building it is after (VARIANT patrol)
 const INTERPOSE_REISSUE = 384; // ticks before a defender still walking to its spot gets a new one
@@ -3338,6 +3339,110 @@ function failEscort(ctx, why) {
   endEscort(ctx, why, true);
 }
 
+/**
+ * The length of the way from our HQ to a tile: a walk over the cells the game's pathfinder may enter (path.js: family
+ * not 0; a diagonal step needs the diagonal cell and, when the x-neighbour is closed, the z-neighbour), 8 directions,
+ * from the cells around the HQ. Computed once per game (the families do not change); 1e6 for a cell it cannot reach.
+ * (A first form summed the distances between zone centres along the zone graph: the path through the centres zigzags,
+ * and on Olympus Mons it still ranked 77,105 (57 steps) before 66,76 (46).)
+ */
+function ventWay(ctx, tx, tz) {
+  const x = state(ctx);
+  const { G } = ctx;
+  const W = G.map.w;
+  const H = G.map.h;
+  const open = (cx, cz) => cx >= 0 && cz >= 0 && cx < W && cz < H && famAt(G, cx, cz) !== 0;
+  if (!x.walkFromHq) {
+    const dist = new Int32Array(W * H).fill(-1);
+    const q = [];
+    for (let dz = -3; dz <= 3; dz++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const cx = x.hq[0] + dx;
+        const cz = x.hq[1] + dz;
+        if (!open(cx, cz)) continue;
+        dist[cz * W + cx] = Math.max(Math.abs(dx), Math.abs(dz));
+        q.push(cz * W + cx);
+      }
+    }
+    for (let i = 0; i < q.length; i++) {
+      const c = q[i];
+      const cx = c % W;
+      const cz = (c - cx) / W;
+      for (let k = 0; k < 9; k++) {
+        if (k === 4) continue;
+        const sx = (k % 3) - 1;
+        const sz = Math.floor(k / 3) - 1;
+        const nx = cx + sx;
+        const nz = cz + sz;
+        if (!open(nx, nz) || dist[nz * W + nx] >= 0) continue;
+        if (sx && sz && !open(cx + sx, cz) && !open(cx, cz + sz)) continue;
+        dist[nz * W + nx] = dist[c] + 1;
+        q.push(nz * W + nx);
+      }
+    }
+    x.walkFromHq = dist;
+  }
+  // the vent tile itself is closed while something stands on it: the nearest reached neighbour
+  let best = -1;
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = tx + dx;
+      const cz = tz + dz;
+      if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+      const d = x.walkFromHq[cz * W + cx];
+      if (d >= 0 && (best < 0 || d < best)) best = d;
+    }
+  }
+  return best < 0 ? 1e6 : best;
+}
+
+/**
+ * The walk to a tile from every cell (the same cells and steps as ventWay), cached for the last few targets: an Int32Array
+ * over the map, -1 where the tile cannot be reached. The vent tile itself may be closed (a unit on it): the walk starts on
+ * its open neighbours too.
+ */
+function walkTo(ctx, tx, tz) {
+  const x = state(ctx);
+  const { G } = ctx;
+  const W = G.map.w;
+  const H = G.map.h;
+  const key = tz * W + tx;
+  x.walkCache ??= new Map();
+  if (x.walkCache.has(key)) return x.walkCache.get(key);
+  const open = (cx, cz) => cx >= 0 && cz >= 0 && cx < W && cz < H && famAt(G, cx, cz) !== 0;
+  const dist = new Int32Array(W * H).fill(-1);
+  const q = [];
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = tx + dx;
+      const cz = tz + dz;
+      if (!(dx === 0 && dz === 0) && !open(cx, cz)) continue;
+      if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+      dist[cz * W + cx] = dx || dz ? 1 : 0;
+      q.push(cz * W + cx);
+    }
+  }
+  for (let i = 0; i < q.length; i++) {
+    const c = q[i];
+    const cx = c % W;
+    const cz = (c - cx) / W;
+    for (let n = 0; n < 9; n++) {
+      if (n === 4) continue;
+      const sx = (n % 3) - 1;
+      const sz = Math.floor(n / 3) - 1;
+      const nx = cx + sx;
+      const nz = cz + sz;
+      if (!open(nx, nz) || dist[nz * W + nx] >= 0) continue;
+      if (sx && sz && !open(cx + sx, cz) && !open(cx, cz + sz)) continue;
+      dist[nz * W + nx] = dist[c] + 1;
+      q.push(nz * W + nx);
+    }
+  }
+  if (x.walkCache.size >= 4) x.walkCache.delete(x.walkCache.keys().next().value);
+  x.walkCache.set(key, dist);
+  return dist;
+}
+
 /** idle -> gather: a free explorer, a free vent beyond ESCORT_FREE_HOP, troopers from the defenders (the rest bought). */
 function startEscort(ctx) {
   const x = state(ctx);
@@ -3369,7 +3474,11 @@ function startEscort(ctx) {
     const hop = u8(kai, zoneAddr(vfam) + Z.HOP);
     if (hop <= ESCORT_FREE_HOP || hop === 0xff) continue;
     const f = e.fails.get(o);
-    const score = hop + (f && tick - f.tick < FAIL_MEMORY ? 3 * f.n : 0);
+    // maintainer, 11 Oct 2026 (Plink-O, Olympus Mons: "second harvester gone too far. why isn't it detecting proximity of
+    // the working vents?" - hops are zones, and a zone is 5 or 25 tiles: on Olympus Mons the explorer passed the free vent
+    // at 66,76 for 77,65, 7 hops against 8 but 64 walking tiles against 46): the length of the way there along the
+    // walk there (ventWay), a failed vent FAIL_TILES further per failure
+    const score = ventWay(ctx, vx, vz) + (f && tick - f.tick < FAIL_MEMORY ? FAIL_TILES * f.n : 0);
     if (score < bestScore) {
       bestScore = score;
       best = o;
@@ -3888,23 +3997,34 @@ function escort(ctx) {
       if (behind.length) sendWaypointOrder(ctx, behind, [[(cx << 8) + 128, (cz << 8) + 128]], order);
       e.issued = tick;
     }
-    // the explorer waits (at the HQ) until the escort is nearer to the vent than it is - the second site's trooper may
-    // come from afar - then it keeps FOLLOW tiles behind the escort (HOLD_BACK in contact), on its own side
-    if (cheb(cx, cz, e.vx, e.vz) + FOLLOW > cheb(ex, ez, e.vx, e.vz)) {
-      if (cheb(ex, ez, hx, hz) > 3) moveExplorer(ctx, hx, hz);
-      return;
-    }
+    // the explorer waits until the escort is nearer to the vent than it is (the second site's trooper may come from
+    // afar), then it keeps FOLLOW steps behind the escort (HOLD_BACK in contact)
+    // maintainer, 11 Oct 2026 (Plink-O, Olympus Mons: "third harvester is trying to pass a blocked way, but there are a
+    // path around"): the follow point was a straight-line point FOLLOW tiles behind the escort's centre, which round a
+    // ridge lies beyond a wall - the game's pathfinder then took the explorer at it the wrong way (and following a
+    // trooper's own tile made it dance round a fight). The explorer now always walks to the vent itself, the game's
+    // pathfinder choosing the way, and is stopped while it is no more than FOLLOW steps (HOLD_BACK in contact) further
+    // from the vent than the escort trooper nearest to the vent - every distance a walk to the vent (walkTo).
     const back = contact ? HOLD_BACK : FOLLOW;
-    let dx = ex - cx;
-    let dz = ez - cz;
-    if (Math.max(Math.abs(dx), Math.abs(dz)) < 2) {
-      dx = hx - cx;
-      dz = hz - cz;
+    const toVent = walkTo(ctx, e.vx, e.vz);
+    const at = (px, pz) => (toVent[pz * G.map.w + px] >= 0 ? toVent[pz * G.map.w + px] : 1e6);
+    let lead = 1e6;
+    for (const o of units) {
+      const [ux, uz] = tileOf(gs, objAddr(o));
+      lead = Math.min(lead, at(ux, uz));
     }
-    const n = Math.hypot(dx, dz) || 1;
-    const tx = Math.min(G.map.w - 1, Math.max(0, Math.round(cx + (dx / n) * back)));
-    const tz = Math.min(G.map.h - 1, Math.max(0, Math.round(cz + (dz / n) * back)));
-    if (cheb(ex, ez, tx, tz) > 2) moveExplorer(ctx, tx, tz);
+    const mine = at(ex, ez);
+    if (mine > lead + back) {
+      if (!e.explGoing || isIdle(gs, ea) || tick - e.explOrdered >= REISSUE) {
+        sendWaypointOrder(ctx, [e.expl], [[gs.readUInt16LE(va + O.X), gs.readUInt16LE(va + O.Z)]], ORDER_MOVE);
+        e.explOrdered = tick;
+        e.explGoing = true;
+      }
+    } else if (e.explGoing) {
+      sendWaypointOrder(ctx, [e.expl], [[(ex << 8) + 128, (ez << 8) + 128]], ORDER_MOVE); // close enough: it stops
+      e.explOrdered = tick;
+      e.explGoing = false;
+    }
     return;
   }
   // arrived: the troopers guard the vent while the explorer deploys

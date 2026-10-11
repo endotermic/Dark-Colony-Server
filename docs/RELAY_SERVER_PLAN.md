@@ -3136,6 +3136,41 @@ which disbanded the counter group 5 s after its first won fight, had only 17 at 
 field army found five enemy mines and destroyed three, the one at 34,83 twice (it was rebuilt). Not watched as a
 replay yet; not deployed; 279 tests.
 
+**Explorers by the walking distance, the explorer on the pathfinder's way, one turret per mine, thirty-minute games**
+(11 Oct 2026, after 94d9d14, from the replays of the lost games; maintainer: "on 'plink' second harvester gone too far.
+why isn't it detecting proximity of the working vents? third harvester is trying to pass a blocked way, but the there
+are a path around and there are a lot of other working vents", "the same problem with explorer on olympus map", "on
+'hoops' only one turret per harvester is needed", "increase play time twice, because sometimes battles are very long").
+
+* **The vent choice** (`startEscort`) ranked the free vents by zone HOPS from home; a zone is 5 or 25 tiles, so on
+  Olympus Mons (seat 6) the fourth explorer went to 77,105 (7 hops, 57 steps) before 66,76 (8 hops, 46 steps) and the
+  fifth walked right past 66,76 to 77,65 (7 hops, 64 steps). It now ranks them by the WALK from the HQ (`ventWay`: a
+  breadth-first walk, computed once per game, over the cells the game's pathfinder may enter - path.js family not 0,
+  a diagonal step needing the diagonal cell and one of the two orthogonal ones), a failed vent 30 steps further per
+  failure (`FAIL_TILES`, was 3 hops). A first form summed the distances between zone centres along the zone graph: the
+  way through the centres zigzags and still ranked 77,105 first. On Olympus Mons the order is now 33,78 (30 steps),
+  15,134 (36), then 66,76 (46) while it is free. Plink - O (seat 7) has only three free vents within 51 steps of the HQ
+  (103,8 at 38, 144,68 at 44, 97,58 at 51); there the choice was already the nearest and did not change.
+* **The explorer on the march** was sent every think to a straight-line point FOLLOW tiles behind the escort's centre;
+  round a ridge that point lies beyond a wall and the game's pathfinder took the explorer at it the wrong way (Olympus
+  Mons: the explorer for 15,134 shuttled at the western edge 6,114..122). Following the tile of a trooper instead made it
+  turn back to stragglers and dance round a fight (Plink - O, 116..125 / 15..24). Now the explorer always walks to the
+  vent itself - the game's pathfinder chooses the way - and is stopped while it is no more than FOLLOW steps (HOLD_BACK
+  in contact) further from the vent than the escort trooper nearest to the vent; every distance is a walk to the vent
+  (`walkTo`, the same walk from the vent, cached for the last four targets). The "wait at the HQ until the escort is
+  nearer to the vent" check (Chebyshev distances) is gone: the explorer simply waits where it stands.
+* **One turret per mine** (`TURRETS_PER_MINE` 2 -> 1; seen on Hoops of Fury, applied everywhere).
+* **Thirty in-game minutes per game** (maintainer: "not 20 real minutes but 30 ingame minutes instead of 15 minutes which
+  is set right now"; the game's clock runs 66 ms a tick at 100 %): `src/arena.js` `DEFAULT_TICKS` 6818 -> 27272, twice the
+  15 in-game minutes of the 8-11 Oct series' `--ticks 13636` (the "ten minutes" of the earlier entries counted 44 ms ticks);
+  the series below runs at that length.
+
+Arena at thirty in-game minutes (anti-rush preset, 56 games per opponent and seed, the committed 94d9d14 measured at the
+same length beside it): against the rusher 56 / 0 on seeds 5 / 7 / 9 (before 56 / 0 three times; at this length nearly
+every game ends by kill), against `krusty` 56 / 0 (before 56 / 0), against `krusty+workers` 19 / 37, 19 / 37, 24 / 32 =
+62 of 168 (before 21 / 35, 26 / 30, 21 / 35 = 68) - one standard deviation (about 6 games), no measurable change; at
+thirty minutes about half of those losses are by kill. The changes repair what the replays showed, not the economy gap.
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in
