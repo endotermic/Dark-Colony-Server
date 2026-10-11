@@ -401,6 +401,7 @@ export function general(ctx) {
   const assets = []; // tiles of our mines and turrets (VARIANT alarm)
   const minePos = []; // tiles of our mines
   const ownFighterTiles = []; // tiles of our fighters
+  const ownTanks = []; // our tanks: type, tile, hit (hp below full)
   const maxObj = i32(gs, GS.MAX_OBJ);
   for (let o = 120; o <= maxObj; o++) {
     const a = objAddr(o);
@@ -413,6 +414,7 @@ export function general(ctx) {
       const [tx, tz] = tileOf(gs, a);
       if (cheb(tx, tz, x.hq[0], x.hq[1]) <= HOME_RADIUS) ownNearHome++;
       ownFighterTiles.push([tx, tz]);
+      if (TANKS.includes(type)) ownTanks.push({ type, x: tx, z: tz, hit: i32(gs, a + O.HP) < G.tables.types[type].hp });
     }
     if (MINING_TOWERS.includes(type)) {
       own.mines++;
@@ -555,6 +557,9 @@ export function general(ctx) {
   const enemiesThere = x.threats.filter((r) => atPerimeter(r.x, r.z)).length;
   const oursThere = ownFighterTiles.filter(([fx, fz]) => atPerimeter(fx, fz)).length;
   x.perimeterAttacked = enemiesThere > 0 && oursThere < PERIMETER_SUPERIORITY * enemiesThere;
+  // the tank types that have fought: one of them hit, or in contact with an enemy fighter we see (tankUpgradeNext)
+  x.foughtTanks ??= new Set();
+  for (const t of ownTanks) if (t.hit || x.seenFighters.some((r) => cheb(r.x, r.z, t.x, t.z) <= CONTACT)) x.foughtTanks.add(t.type);
   x.saving = !!saveFor && !x.perimeterAttacked && i32(gs, pa + P.SLOT_HP + 4) !== 0 && !buyableTroops(G, p).some((it) => TANKS.includes(it.type));
   // staleness: when did our own vision last cover a zone's centre
   for (let z = 1; z < 255; z++) {
@@ -722,6 +727,12 @@ export function production(ctx, have) {
   // VARIANT upnow (maintainer, 8 Oct 2026: "won't reaper upgrade help?"): the upgrades of battle experience (weapon: the
   // type with most kills, armour: most losses) bought before hold's troopers and the chain, without a reserve, once a mech
   // can be bought - only an unguarded HQ comes first (under a rush hold's purchases would otherwise take every coin)
+  // maintainer, 10 Oct 2026: "why on these lost games tanks are not upgraded as soon as they participate in the fight?"
+  // - the experience upgrades wait for a type's kills (weapon) and losses (armour), and the troopers always lead
+  if (!unguarded && tankUpgradeNext(ctx)) {
+    buyTankUpgrade(ctx);
+    return false; // bought, or the money waits for it
+  }
   if (v.upnow && !unguarded && (buyUpgrade(ctx) || upgradeDue(ctx))) return false; // bought, or the money waits for it
   // VARIANT infup (maintainer, 9 Oct 2026: "trooper upgrades right after the hard rush is faced"): once science stands
   // and the first wave came, the infantry's level-1 upgrades before hold's troopers, the factory and the army goals
@@ -2998,6 +3009,33 @@ function infupNext(ctx) {
 }
 
 const infupDue = (ctx) => infupNext(ctx) !== null;
+
+/**
+ * A tank type (reaper, scythe) that has fought (x.foughtTanks: one hit or in contact with a seen enemy) and is fielded
+ * gets its level-1 upgrades at once: armour, then weapon (as the infantry's). The next one, or null.
+ */
+function tankUpgradeNext(ctx) {
+  const x = state(ctx);
+  if (!x?.foughtTanks?.size) return null;
+  const { G, p } = ctx;
+  for (const which of [1, 0]) {
+    const up = buyableUpgrades(G, p, which).find((u) => x.foughtTanks.has(u.type) && u.level === 1 && u.fielded > 0);
+    if (up) return up;
+  }
+  return null;
+}
+
+function buyTankUpgrade(ctx) {
+  const { G, p } = ctx;
+  const up = tankUpgradeNext(ctx);
+  if (!up || money(G, p) < up.cost) return false;
+  spend(G, p, up.cost);
+  ctx.emit([build.upgrade(up.which, up.type, up.level, p)]);
+  ctx.say(`${up.which ? 'Armour' : 'Weapon'} upgrade ${up.level} for ${G.tables.types[up.type].name.toLowerCase()} (in the fight).`);
+  const x = state(ctx);
+  x.stats.tankups = (x.stats.tankups ?? 0) + 1;
+  return true;
+}
 
 function buyInfup(ctx) {
   const { G, p } = ctx;
