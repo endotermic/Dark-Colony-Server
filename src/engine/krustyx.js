@@ -166,7 +166,9 @@ const QUEUE_FULL = 3; // units waiting in a production queue at which no more is
 const QUEUE_STALL = 256; // ticks without a unit out of a non-empty queue after which it counts as stalled
 const GATHER_FRONT = 5; // tiles from the HQ towards the danger where the rally gathers (on the HQ tile it crowded the doors)
 const DOOR_STEP = 2; // tiles a unit standing on a building's spawn tile is moved outwards
-const IDLE_ENGAGE = 8; // tiles: an idle armed unit of ours with an enemy fighter this close attacks it, wherever it stands
+const ENGAGE_RANGE = 10; // tiles: an armed unit of ours with an enemy fighter we see this close attacks it, wherever it stands
+const ENGAGE_AIMED = 4; // tiles: a unit whose destination lies this close to a seen enemy is already going at one
+const ENGAGE_EVERY = 64; // ticks between two such orders to the same unit
 const DEFEND_EVERY = 96; // ticks between two rounds of defence orders (the rusher's 96); an idle defender is ordered at once
 const MINE_RADIUS = 6; // tiles around an own mine or turret within which an enemy fighter raises the alarm
 const BATCH_SIZE = 3; // troopers bought and sent together
@@ -1472,27 +1474,41 @@ function clearDoors(ctx) {
 }
 
 /**
- * No unit stands idle beside the enemy (maintainer, 9 Oct 2026: "there must be no units which doesn't fight"): an idle
- * armed unit of ours (the commander and turret builders aside) with an enemy fighter we see within IDLE_ENGAGE tiles
- * assault-moves onto the nearest one - out in the field too, where the defence does not reach (an idle unit of a human
- * seat fires only at what is in its weapon range and sleeps up to 45 ticks at a time).
+ * Every unit near the enemy attacks (maintainer, 9 Oct 2026: "there must be no units which doesn't fight"; 11 Oct 2026:
+ * "all units in range of several tiles (8-10) must attack if enemy is detected in that range"): an armed unit of ours
+ * (the commander and turret builders aside) with an enemy fighter we see within ENGAGE_RANGE tiles assault-moves onto
+ * the nearest one, whatever it was doing - unless it is shooting already or its destination lies within ENGAGE_AIMED of
+ * a seen enemy (it is going at one: re-ordering such units every 64 ticks made them wander, 9 Oct); an idle one at once,
+ * a busy one at most every ENGAGE_EVERY ticks. An idle unit of a human seat fires only at what is in its weapon range,
+ * and a marching group's units walked past the enemy to their zone's centre.
  */
 function engageIdle(ctx) {
   const x = state(ctx);
   const { G, p } = ctx;
   const gs = G.gs;
+  const tick = ctx.tick | 0;
   const foes = x.seenFighters ?? [];
   if (!foes.length) return;
+  x.engagedAt ??= new Map();
   const maxObj = i32(gs, GS.MAX_OBJ);
   let n = 0;
   for (let o = 120; o <= maxObj; o++) {
     const a = objAddr(o);
-    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE)) || !idleNotFiring(gs, a)) continue;
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE))) continue;
     const type = u8(gs, a + O.TYPE);
     if (!isFighter(G, type) || TOWER_BUILDERS.includes(type) || COMMANDER_TYPES.includes(type)) continue;
+    const sp = u8(gs, a + O.SP);
+    if (sp !== 0xff && u8(gs, a + O.STACK + 2 * sp) === 0x0b) continue; // shooting
+    const idle = isIdle(gs, a);
+    if (!idle) {
+      if (tick - (x.engagedAt.get(o) ?? -1000000) < ENGAGE_EVERY) continue;
+      const dx = gs.readUInt16LE(a + O.DEST_X) >> 8;
+      const dz = gs.readUInt16LE(a + O.DEST_Z) >> 8;
+      if (foes.some((r) => cheb(r.x, r.z, dx, dz) <= ENGAGE_AIMED)) continue; // going at one already
+    }
     const [ux, uz] = tileOf(gs, a);
     let best = null;
-    let bestD = IDLE_ENGAGE + 1;
+    let bestD = ENGAGE_RANGE + 1;
     for (const r of foes) {
       const d = cheb(ux, uz, r.x, r.z);
       if (d < bestD) {
@@ -1502,9 +1518,11 @@ function engageIdle(ctx) {
     }
     if (!best) continue;
     sendWaypointOrder(ctx, [o], [[(best.x << 8) + 128, (best.z << 8) + 128]], ORDER_ASSAULT);
+    x.engagedAt.set(o, tick);
     n++;
   }
   if (n) x.stats.engaged = (x.stats.engaged ?? 0) + n;
+  for (const [o, t] of [...x.engagedAt]) if (tick - t > 8 * ENGAGE_EVERY) x.engagedAt.delete(o);
 }
 
 /**
