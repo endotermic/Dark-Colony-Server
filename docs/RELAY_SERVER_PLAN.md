@@ -3086,6 +3086,56 @@ minutes: one spec against the pool, or one spec against the rusher on another se
 Armageddon (D8PLAY01) as aliens is the hardest seat left (both remaining rusher losses). The probes and the converter
 are research tools, not tested code. Deployment and the choice of the server default are pending.
 
+**The field army: offending scouts, enemy mines first, reinforcements split across battles** (11 Oct 2026, after
+8f6b991; maintainer: "when counter offence ends, then whole group must be disbanded and converted to scouts and scout
+for an enemies, mines and bases. top priority are mines. if mine is detected, it must be destroyed and secured even if
+we must send reinforcements. reinforcements must be split wisely across battles, because there can be multiple
+happening at the time", then "basically any group which won an offensive and after a 5 seconds of cooldown must be
+disbanded and converted to scouts", "these disbanded scouts must attack all they see. so we have two types of scouts -
+searching scouts and offending scouts", "before disband group must move in the direction of where enemy came from for
+12 tiles, then if nothing happening disband after 5 seconds"). "Mines" are read as mining towers (they stand on vents
+and can be secured); land mines stay `clear`'s. The counter group's slot (11) is now the FIELD ARMY, each unit with a
+job (`x.field`): **counter**, **scout** or **battle**.
+
+* **A won offensive** = the enemy the group fought is gone (no enemy fighter seen within 15 tiles of it) or its target
+  building or mine fell. The group then assault-moves 12 tiles (`PURSUE`) from its centre towards where the enemy came
+  from - the nearest building we know of the team it fought, else outwards from our HQ - waits 5 s (`WON_COOLDOWN_MS`
+  at the game's tick length; at most 900 ticks for the move) and is disbanded into scouts; an enemy met on the way
+  restarts the fight, so a winning group advances on the enemy base step by step (`newPursuit`, `pursuitStep`). This
+  holds for the counter group, the fight battles and **the original's attack groups**: krusty.js attack_plan's
+  "destination clear" branch calls `offensiveWon` (bot mode only), attack_plan skips the group while it pursues and
+  waits (`cooling`), then its fighters join the field army (`wonGroups`). Arriving at the counter-offensive's far point
+  with nobody in sight is the same win (wait only); nowhere left to go disbands at once.
+* **Two kinds of scouts.** The SEARCHING scouts (SCGM / ORTU, `scouts()`, unchanged) attack only mines and bases and fly
+  back when hit. The OFFENDING scouts (the disbanded groups) attack every enemy fighter, turret, building or mine they
+  see within 10 tiles (`OFFENDER_SIGHT`; fighters within 8 are `engageIdle`'s), else walk alone (assault-move) to the
+  nearest vent that is not ours and that we have not seen for 1500 ticks (`VENT_STALE`; enemy mines stand on vents),
+  else to a remembered enemy building out of sight, else to the zone unseen for longest; no two to the same place.
+* **Battles** (`updateBattles`). Kind **mine**: every enemy mine we know of, at most two at a time (the nearest to the
+  HQ first). Its force gathers 12 tiles short of it on the side of our HQ and attacks when the power there reaches
+  the need (after 2400 ticks with half of it; given up for 4000 ticks after 4800); it hits the defenders, then the
+  turrets, then the mine (object attack); once the mine is gone it holds the vent until no enemy was seen there for the
+  cooldown, or a mine of ours stands on it. Kind **fight**: a cluster of seen enemy fighters outside the perimeter in
+  contact with our units, matched across thinks within 12 tiles. Need = 1.5 x the enemy's power there (fighters seen;
+  at a mine also the remembered ones; a turret 3), at least 6 at a mine; committed = our power there plus the field
+  units on their way. `general` now also lists the enemy turrets we know of (`x.enemy.towers`).
+* **Reinforcements** (`allocate`, every 128 ticks while the perimeter is not attacked; replaces the `reinforce` of the
+  same morning, which sent every free unit to the centre of all our units in contact): the pool is the units at home
+  beyond the three sentinels plus the offending scouts not in contact; the mines first, then the fights that the pool
+  covers whole, smallest deficit first (a fight the pool cannot win gets no scouts fed into it in ones and twos), the
+  rest of home to the uncovered fight with the smallest deficit; each battle takes the units nearest to it. What the
+  mines still lack is bought, a tank first, from the money above the 1000 reserve (`fieldBuy`; not under danger, not
+  while saving). Units fighting at an enemy mine stay there when the perimeter is attacked (`fieldHolds`); every other
+  field unit is the defence's as before. All of it needs `hold`: the default `workers,lieutenant` is untouched.
+
+Arena (anti-rush preset, 56 ten-minute games per opponent, seeds 5 / 7 / 9; before = 8f6b991): against the rusher
+55 / 1, 55 / 1, 56 / 0 (before 55 / 1, 56 / 0, 56 / 0), wins by kill 28 / 29 / 25 (before 30 / 29 / 28 - the first form,
+which disbanded the counter group 5 s after its first won fight, had only 17 at seed 5); **against `krusty+workers`
+14 / 42, 24 / 32, 17 / 38 / 1 (before 8 / 48, 12 / 44, 8 / 47 / 1)**, the economy bot's final mines 7.1 -> 6.2 per game
+(seed 5); against `krusty` 55 / 1 (seed 5). In a traced Plink-O game against the economy bot (D8PLAY02, seed 5) the
+field army found five enemy mines and destroyed three, the one at 34,83 twice (it was rebuilt). Not watched as a
+replay yet; not deployed; 279 tests.
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in

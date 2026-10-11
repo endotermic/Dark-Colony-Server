@@ -1224,7 +1224,7 @@ export function attackPlan(ctx, t) {
   const ratio = variant(ctx).ratio | 0;
   for (let m = 0; m < NMINORS; m++) {
     const mn = minorAddr(t, m);
-    if (!u8(kai, mn + MN.ACTIVE) || X.isSpecial(ctx, m)) continue;
+    if (!u8(kai, mn + MN.ACTIVE) || X.isSpecial(ctx, m) || X.cooling(ctx, m)) continue; // VARIANTS: a group that won waits out its cooldown (krustyx offensiveWon)
     const state = u8(kai, mn + MN.STATE);
     const zone = i32(kai, mn + MN.ZONE);
     const dest = i32(kai, mn + MN.DEST);
@@ -1252,6 +1252,7 @@ export function attackPlan(ctx, t) {
       const zm = zoneAddr(ctx.fixes ? dest & 0xff : m); // the group index as a zone index in the original (bug); FIX: the destination
       if (e === 0 && !(u8(kai, zm + Z.FLAGS) & ZF_CONTESTED) && u16(kai, zoneAddr(dest & 0xff) + Z.BUILDINGS) === 0) {
         w8(kai, mn + MN.STATE, 2);
+        X.offensiveWon(ctx, t, m); // VARIANTS: the destination is clear - won; the group disbands into scouts after a cooldown
       } else if (ratio !== 0 ? 10 * s <= ratio * e : 2 * s <= e) w8(kai, mn + MN.STATE, 2); // too weak (VARIANT ratio: N/10 to 1)
     } else if (state === 1) {
       // 0x458B0C: every class must hold at least its share (have[c] / ((4*active)/(m+1))) and at least 3
