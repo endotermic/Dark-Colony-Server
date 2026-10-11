@@ -133,6 +133,11 @@ const KIND_ENGINEERS = 2;
 const KIND_CLEARERS = 3;
 const KIND_ESCORT = 4;
 const KIND_COMMANDER = 5;
+const KIND_COUNTER = 6; // the counter-offensive group (counterOffensive)
+const COUNTER_SLOT = 11; // the last raiding-squad slot (VARIANT pressure takes free ones only)
+const COUNTER_BEYOND = 25; // tiles beyond the attack's way in where the counter-offensive goes when nothing is known
+const COUNTER_SHARE = 0.75; // of the units in the perimeter that go on the counter-offensive
+const COUNTER_ENGAGE = 15; // tiles: a seen enemy fighter this close to the group becomes its target
 const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant: the four ranks of both races
 const COMMANDER_ENGAGE = 14; // tiles around the commander or the HQ within which a seen enemy fighter matters
 const CLUSTER_RADIUS = 6; // tiles: a fighter and ours this close to it make a group (the largest one is followed)
@@ -557,6 +562,16 @@ export function general(ctx) {
   const enemiesThere = x.threats.filter((r) => atPerimeter(r.x, r.z)).length;
   const oursThere = ownFighterTiles.filter(([fx, fz]) => atPerimeter(fx, fz)).length;
   x.perimeterAttacked = enemiesThere > 0 && oursThere < PERIMETER_SUPERIORITY * enemiesThere;
+  // the counter-offensive's trigger (counterOffensive): intruders at the perimeter last think, none now
+  x.perimeterWas = x.perimeterNow ?? 0;
+  x.perimeterNow = enemiesThere;
+  x.atPerimeter = atPerimeter;
+  if (enemiesThere) {
+    // where the attack came in: the intruder furthest from the HQ
+    let far = null;
+    for (const r of x.threats) if (atPerimeter(r.x, r.z) && (!far || cheb(r.x, r.z, x.hq[0], x.hq[1]) > cheb(far[0], far[1], x.hq[0], x.hq[1]))) far = [r.x, r.z];
+    if (far) x.attackFrom = far;
+  }
   // the tank types that have fought: one of them hit, or in contact with an enemy fighter we see (tankUpgradeNext)
   x.foughtTanks ??= new Set();
   for (const t of ownTanks) if (t.hit || x.seenFighters.some((r) => cheb(r.x, r.z, t.x, t.z) <= CONTACT)) x.foughtTanks.add(t.type);
@@ -846,6 +861,7 @@ export function tasks(ctx) {
   if (v.pressure) squads(ctx);
   if (v.mines) engineers(ctx);
   if (v.clear) clearers(ctx);
+  counterOffensive(ctx);
   const hunting = defend(ctx);
   engageIdle(ctx);
   turrets(ctx);
@@ -862,6 +878,143 @@ export function tasks(ctx) {
 /** VARIANT noscout: no unit to the scouting task and no scout bought before the robot factory (slot 2) stands. */
 export function noScouting(ctx) {
   return !!state(ctx) && !!variant(ctx).noscout && i32(ctx.G.gs, playerAddr(ctx.p) + P.SLOT_HP + 4 * 2) === 0;
+}
+
+/** The task and minor holding object o, or null. */
+function groupOf(ctx, o) {
+  const { G, kai } = ctx;
+  for (let t = 0; t < 4; t++) for (let m = 0; m < NMINORS; m++) if (u8(kai, minorAddr(t, m) + MN.ACTIVE) && listOf(G.gs, kai, t, m).includes(o)) return [t, m];
+  return null;
+}
+
+/**
+ * The counter-offensive (maintainer, 11 Oct 2026: "launch a counter offensive right after intruders are destroyed in the
+ * perimeter of the base+first_mine. use all available troops in the perimeter of the base+first_mine available at the
+ * moment"). The think the last intruder inside the perimeter (RALLY_RADIUS of the HQ, DEFEND_ASSET_RADIUS of the mine
+ * nearest to it) is gone, every armed unit of ours standing in it - the commander, turret builders and an expedition's
+ * escort aside - goes into the counter group (COUNTER_SLOT). The group assault-moves on the nearest enemy fighter we see
+ * within COUNTER_ENGAGE of it, else the aggressor's (any enemy's) remembered mines and buildings, else a point
+ * COUNTER_BEYOND tiles beyond the way the attack came in; re-targeted when it arrives, goes idle or after RETARGET. While
+ * the perimeter is attacked again the defence orders its units (defend takes every armed unit); the group is given back
+ * to the census once empty or at a target with nothing left to hunt.
+ */
+function counterOffensive(ctx) {
+  const x = state(ctx);
+  const { G, p, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  // with the hold defence only: the default bot (no hold, fewer troops at home) lost its base more often (34/22 -> 28/28)
+  if (variant(ctx).hold && x.perimeterWas > 0 && x.perimeterNow === 0 && x.atPerimeter) {
+    const expedition = x.esc.phase !== 'idle' && x.esc.phase !== 'gather';
+    const go = [];
+    const maxObj = i32(gs, GS.MAX_OBJ);
+    for (let o = 120; o <= maxObj; o++) {
+      const a = objAddr(o);
+      if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE))) continue;
+      const type = u8(gs, a + O.TYPE);
+      if (!isFighter(G, type) || TOWER_BUILDERS.includes(type) || COMMANDER_TYPES.includes(type)) continue;
+      const [ux, uz] = tileOf(gs, a);
+      if (!x.atPerimeter(ux, uz)) continue;
+      const g = groupOf(ctx, o);
+      if (g && g[0] === 2 && (g[1] === COMMANDER_SLOT || g[1] === COUNTER_SLOT || (g[1] === ESCORT_SLOT && expedition))) continue;
+      go.push({ o, g, d: cheb(ux, uz, x.hq[0], x.hq[1]) });
+    }
+    // maintainer, 11 Oct 2026: "do a counteroffensive with 75% of troops" - the COUNTER_SHARE furthest from the HQ go,
+    // the ones nearest to it stay
+    go.sort((a, b) => b.d - a.d);
+    go.length = Math.ceil(go.length * COUNTER_SHARE);
+    if (go.length) {
+      ensureSlot(ctx, COUNTER_SLOT, KIND_COUNTER);
+      for (const { o, g } of go) {
+        if (g) unlink(gs, kai, o, g[0], g[1]);
+        link(gs, kai, o, 2, COUNTER_SLOT);
+      }
+      x.counter = { tx: -1, tz: -1, key: '', issued: -1000000 };
+      x.stats.counters = (x.stats.counters ?? 0) + 1;
+      ctx.say(`Counter-offensive: the perimeter is clear, ${go.length} units go after the enemy.`);
+    }
+  }
+  if (x.special[COUNTER_SLOT] !== KIND_COUNTER) return;
+  const units = slotUnits(ctx, COUNTER_SLOT).filter((o) => isFighter(G, u8(gs, objAddr(o) + O.TYPE)));
+  if (!units.length) {
+    release(ctx, COUNTER_SLOT);
+    x.counter = null;
+    return;
+  }
+  if (x.perimeterNow > 0) return; // the defence has them
+  const c = x.counter ?? (x.counter = { tx: -1, tz: -1, key: '', issued: -1000000 });
+  let cx = 0;
+  let cz = 0;
+  let idle = true;
+  for (const o of units) {
+    const a = objAddr(o);
+    const [ux, uz] = tileOf(gs, a);
+    cx += ux;
+    cz += uz;
+    if (!isIdle(gs, a)) idle = false;
+  }
+  cx = Math.round(cx / units.length);
+  cz = Math.round(cz / units.length);
+  const arrived = c.tx >= 0 && cheb(cx, cz, c.tx, c.tz) <= 3;
+  // the nearest enemy fighter we see near the group
+  let foe = null;
+  let fd = COUNTER_ENGAGE + 1;
+  for (const r of x.seenFighters ?? []) {
+    const d = cheb(r.x, r.z, cx, cz);
+    if (d < fd) {
+      fd = d;
+      foe = r;
+    }
+  }
+  if (foe) {
+    if (tick - c.issued >= 64 || idle || c.key !== `foe:${foe.o}`) {
+      sendWaypointOrder(ctx, units, [[(foe.x << 8) + 128, (foe.z << 8) + 128]], ORDER_ASSAULT);
+      Object.assign(c, { tx: foe.x, tz: foe.z, key: `foe:${foe.o}`, issued: tick });
+    }
+    return;
+  }
+  if (c.tx >= 0 && !arrived && !idle && tick - c.issued <= RETARGET) return;
+  if (arrived && c.key.startsWith('beyond')) {
+    // at the far point with nobody in sight: back to the census
+    release(ctx, COUNTER_SLOT);
+    x.counter = null;
+    ctx.say('Counter-offensive: nobody left to hunt, the units go back to the army.');
+    return;
+  }
+  const pick = (list) => {
+    let best = null;
+    let bd = 1e9;
+    for (const r of list) {
+      if (`obj:${r.o}` === (arrived ? c.key : '')) continue;
+      const d = cheb(cx, cz, r.x, r.z);
+      if (d < bd) {
+        bd = d;
+        best = r;
+      }
+    }
+    return best;
+  };
+  const his = (list) => (x.aggressor >= 0 ? list.filter((r) => r.team === x.aggressor) : list);
+  let t = pick(his(x.enemy.mines)) ?? pick(his(x.enemy.buildings)) ?? pick(x.enemy.mines) ?? pick(x.enemy.buildings);
+  let key = t ? `obj:${t.o}` : '';
+  if (!t && x.attackFrom) {
+    const dx = x.attackFrom[0] - x.hq[0];
+    const dz = x.attackFrom[1] - x.hq[1];
+    const n = Math.hypot(dx, dz) || 1;
+    t = {
+      x: Math.min(G.map.w - 1, Math.max(0, Math.round(x.attackFrom[0] + (dx / n) * COUNTER_BEYOND))),
+      z: Math.min(G.map.h - 1, Math.max(0, Math.round(x.attackFrom[1] + (dz / n) * COUNTER_BEYOND))),
+    };
+    key = 'beyond';
+  }
+  if (!t) {
+    release(ctx, COUNTER_SLOT);
+    x.counter = null;
+    return;
+  }
+  sendWaypointOrder(ctx, units, [[(t.x << 8) + 128, (t.z << 8) + 128]], ORDER_ASSAULT);
+  Object.assign(c, { tx: t.x, tz: t.z, key, issued: tick });
+  void kai;
 }
 
 /**
