@@ -363,8 +363,11 @@ Runs every tick for every unit that has nothing else to do:
   berserk (`+0xD0`); or `magic_bullet[my weapon class][its defence class] == 0` (e.g. ground guns
   vs air).
 * Score: 50 for an unarmed type, 150 for an armed type, +200 if it flies. For area weapons
-  (`weapon.+0x1C != 0`) every neighbouring occupied tile adds +10 for an enemy and −15 for an ally
-  (artillery prefers clusters and avoids friendly fire). For single-target weapons the score is
+  (`weapon.+0x1C != 0`) every occupied tile of the 3x3 around the candidate (its own included) adds
+  +10 - **the occupant is never looked at**: the life and alliance tests read the CANDIDATE
+  (`0x435C56` takes the object from `[ebp-4]`, `0x435CB6` = alliance(searcher, candidate)), so
+  artillery simply prefers crowded tiles, friend or foe (the −15 branch only applies to an allied
+  candidate of a berserk searcher; corrected 11 Oct 2026, see §20). For single-target weapons the score is
   multiplied by `((hp <= 0 ? 2048 - hp : 1024) >> 11)`, which is 0 for any living target, so **direct-fire
   units simply take the first candidate in spiral order (the nearest)**; the scoring only matters for
   area weapons, which pick the highest score over all rings searched.
@@ -1056,3 +1059,8 @@ names the section it corrects. The code wins over the earlier descriptive text.
   in the tick of its birth (and draws its idle fidget `rand()` there). The port had cached the
   bound and ran such units one tick late; found with the replayed two-player battle of 18 Sep 2026
   (server plan §16, 19 Sep 2026).
+* §6 `find_target` area-weapon score (11 Oct 2026): the 3x3 loop tests the candidate, not the occupant of each
+  neighbouring cell (see the corrected bullet in §6). The port had scored each occupant (+10 enemy, −15 ally); with
+  enemy units beside our scythes on Hoops of Fury an ATRIL picked a farther target than the game's, its shell came
+  8 ticks later elsewhere, and the client's checksum differed at tick 8222 (sync.c line 125). Found by dumping the
+  exe's game state and grid from a replay and running the port's `find_target` on it (server plan §19.15).

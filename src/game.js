@@ -58,8 +58,11 @@ export class Game {
     if (this.room.replay) {
       // replay (§18.7): the recorded frames carry their own TICK_SPEED. The optional map reveal goes
       // out on its own: the client holds a non-UNTIL frame and executes it with the next sync frame
-      // (F6), so the flag is set from the first recorded tick without touching a recorded frame
-      if (this.cfg.REPLAY_FULL_MAP || this.cfg.DEBUG) this.room.broadcast(build.cheat(0, 0));
+      // (F6), so the flag is set from the first recorded tick without touching a recorded frame.
+      // Only on the explicit REPLAY_FULL_MAP, never from DEBUG / LOG_LEVEL=debug: the reveal alters the game, so a
+      // replay diverges from its recording (11 Oct 2026: a hang reproduction run with LOG_LEVEL=debug opened the map;
+      // maintainer: "replay with fully open map will lead to divergence!")
+      if (this.cfg.REPLAY_FULL_MAP) this.room.broadcast(build.cheat(0, 0));
       return;
     }
     // first sync frame: lock the speed (F11); in debug mode reveal the whole map (F28)

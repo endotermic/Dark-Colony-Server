@@ -3171,6 +3171,32 @@ every game ends by kill), against `krusty` 56 / 0 (before 56 / 0), against `krus
 62 of 168 (before 21 / 35, 26 / 30, 21 / 35 = 68) - one standard deviation (about 6 games), no measurable change; at
 thirty minutes about half of those losses are by kill. The changes repair what the replays showed, not the economy gap.
 
+**The "hang" of the Hoops replay = a sync error from the port's artillery targeting; no map reveal in replays**
+(11 Oct 2026, after 54b1c9e; maintainer: "i tried to watch 'hoops' where hq was destroyed, but replay hanged at the
+middle, when my troopers started an offence on enemy explorer mining vent"). The relay was fine (the client's last
+message at tick 8223, evicted "no echo for frame 8225"); the exe had hit `sync error: time 8222, net -251, me -463` +
+`assert failure, file sync.c line 125` - its message box behind the full-screen surface is the "hang". The port's
+checksum (in the recording) and the exe's differed. Found by replaying the recording into the exe from the session rig
+(`hang_dump.py` / `hang_dump2.py`: the main thread suspended, the game state (`gs`, 0x48000 bytes) and the three grid
+layers (`map+0x804/0xC04/0x1004`) read every ~4 ticks from 8150) and diffing against the port at the same ticks: every
+checksum field, the grid (objects and seen bits), the missiles' random bytes and the ATRIL's whole state stack were
+equal through 8203; at 8204 the enemy ATRIL #219 (alien artillery, weapon 24) turned 180 -> 183 and fired in the exe,
+180 -> 192 and fired 2 ticks later in the port; its shell landed 8 ticks apart, and at 8222 nine units of both sides had
+other hit points. The cause is `find_target` `0x4356C8`: for an area weapon the 3x3 cells around a candidate are
+scored, and the original's loop reads the CANDIDATE for the life and alliance test (`0x435C56` object from `[ebp-4]`,
+`0x435CB6` alliance(searcher, candidate)) - the occupant's id only says "occupied", so every occupied cell around an
+enemy candidate adds 10. The port scored each occupant (allies -15) and preferred a candidate away from its own units.
+`src/engine/combat.js` reads the candidate now; the port then matches the exe's dumps through 8222 (checksum fields
+and missiles). **Live impact:** Fly runs `SYNC_CHECK=send`, so any relay game in which an artillery's choice depends on
+units of its own side beside a target could end every client with this assert; the fix needs a deploy.
+`DC16_BATTLE_ENGINE.md` §6 and §20 corrected. Checked on the way and ruled out (maintainer: "animozi.dat is wrong! we
+must use classic for network game!"): the data the Ultimate exe uses in a network game (`exp/animozi.dat` with the
+`exp/` overlay, the `dc/gamestat/weapstat.txt` names) equals the Classic data by content for all 106 types, explosions
+and blast sets; it adds bullet animations to weapons 1-3, 5, 16, 17, 43, 62 (the tracers of 2 Oct), which the
+simulation only advances; the port fed with exactly that data diverged identically. **Replays never reveal the map from
+debug mode** (`src/game.js`: only `REPLAY_FULL_MAP`; a reproduction relay started with `LOG_LEVEL=debug` had opened the
+map, maintainer: "replay with fully open map will lead to divergence!"); test `replay.test.js` (280 tests).
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in

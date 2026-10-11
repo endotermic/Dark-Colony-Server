@@ -174,6 +174,19 @@ test('REPLAY_FULL_MAP sends the map reveal as a standalone frame at battle start
   }
 });
 
+test('debug mode does not reveal the map in a replay (only REPLAY_FULL_MAP does)', () => {
+  const h = new Harness({ MIN_PLAYERS: 1, TICK_MS: 33, DEBUG: true, LOG_LEVEL: 'debug' }, { replay: new Replay(recording()) });
+  const me = h.join('Me');
+  me.take();
+  me.pressReady();
+  me.send(build.mready(7, 2));
+  assert.equal(h.room.state, STATE.RUNNING);
+  const atStart = me.take().filter((p) => p[0] !== T.LOBBY_CHAT && p[0] !== T.READY && p[0] !== T.TYPE);
+  assert.equal(atStart.length, 0, 'no CHEAT frame: the reveal would make the replay diverge');
+  h.stepAfter(33);
+  assert.ok(me.take()[0].equals(recordedPayloads()[0]), 'the first recorded frame is unchanged');
+});
+
 test('a start shuffle that differs from the recording is logged', () => {
   const out = [];
   const log = createLogger('info', { write: (s) => out.push(JSON.parse(s)) });

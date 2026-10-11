@@ -230,9 +230,13 @@ export function findTarget(G, obj, maxRing) {
                   if (nz < 0 || nz >= map.h) continue;
                   const nid = Grid.cellGround(G, nx, nz) & 0x3ff;
                   if (nid === 0x3ff || nid === 0x3fe) continue;
-                  const no = objAddr(nid);
-                  if (u8(gs, no + O.LIFE) === 10) continue;
-                  if (alliance(G, team, u8(gs, no + O.TEAM)) !== 0) score -= 15;
+                  // the original tests the CANDIDATE here, not the neighbour (0x435C56 takes the object from [ebp-4] =
+                  // the candidate; 0x435CB6 = alliance(attacker, candidate)): the neighbour's id only decides that the
+                  // cell is occupied, so every occupied cell around an enemy candidate adds 10, whoever stands there.
+                  // The port read the neighbour (allies -15) and diverged from the game (11 Oct 2026, Hoops of Fury:
+                  // an ATRIL chose another target and its shell hit nine units 8 ticks earlier - sync error at 8222)
+                  if (u8(gs, o + O.LIFE) === 10) continue;
+                  if (alliance(G, team, oteam) !== 0) score -= 15;
                   else score += 10;
                 }
               }
