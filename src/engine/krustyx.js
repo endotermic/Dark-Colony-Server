@@ -198,10 +198,15 @@ const DETOUR_PATH = 8; // tiles: the detour's path keeps this far from every ene
 const DETOUR_BASE = 30; // tiles: no detour to a vent this close to a known enemy building
 const DETOUR_MAX = 120; // steps: the longest detour path searched
 const ROUTE_POINTS = 8; // waypoints of a planned route (the game's object holds eight)
+const ROUTE_REACHED = 2; // tiles: a route cell this close to the explorer counts as reached
+const ROUTE_STUCK = 3; // waypoint renewals without progress after which the planned route is dropped
+const ROUTE_AHEAD = 12; // cells past the progress where a reached cell is looked for
 const ROUTE_STEP = 3; // cells between two of them, so that the explorer cannot cut a corner towards the enemy
 const DETOUR_AWAY_NEAR = 15; // tiles: the enemies this close to the explorer give the direction it turns away from
 const DETOUR_KEEP_MIN = 6; // tiles: the detour keeps at least this far from every seen enemy ...
 const DETOUR_KEEP_MAX = 16; // ... and at most this far (as far as the explorer was at the contact, in between)
+const REPLAN_EVERY = 64; // ticks: the detour plans again at most this often
+const KNOWN_KEEP = 6; // tiles: no detour to a vent this close to an enemy fighter we remember but do not see now
 const REPLAN_NEAR = 6; // tiles: a seen enemy this close to the rest of the way makes the explorer plan again
 const GUARD_OFFSET = 2; // tiles short of the vent where the escort stands (the vent tile is the explorer's)
 const ESCORT_MAX_REINF = 3; // reinforcement requests per expedition at most
@@ -454,6 +459,7 @@ export function general(ctx) {
   x.prevDist ??= new Map(); // enemy object -> its distance to our HQ at the last think (approaching backup)
   const nowDist = new Map();
   const seenFighters = [];
+  const knownFighters = [];
   const enemyPower = new Array(8).fill(0);
   let liveThreat = 0;
   x.interest.fill(0);
@@ -476,6 +482,7 @@ export function general(ctx) {
     }
     if (isFighter(G, type) || COMMANDER_TYPES.includes(type)) { // an enemy commander fights too (its gun reaches 6 tiles)
       enemyPower[team] += powerOf(type);
+      knownFighters.push(rec);
       const d = cheb(rec.x, rec.z, x.hq[0], x.hq[1]);
       if (d <= HOME_RADIUS) enemyNearHome++;
       // a record our own vision covers right now was refreshed this think: a live position, not a ghost
@@ -541,6 +548,7 @@ export function general(ctx) {
     q.len = len;
   }
   x.seenFighters = seenFighters;
+  x.knownFighters = knownFighters; // seen now or remembered (the detour keeps away from both)
   x.liveThreat = liveThreat;
   if (liveThreat > 0) {
     x.lastLiveThreat = tick;
@@ -1138,6 +1146,27 @@ function lieutenant(ctx) {
     sendWaypointOrder(ctx, [o], [[(tx << 8) + 128, (tz << 8) + 128]], ORDER_ASSAULT);
     x.lastOrder.set(o, tick);
   };
+  // maintainer, 11 Oct 2026 (Rings of fire: "lieutenant is not shooting at intruder" - with no group to follow it waited at
+  // the HQ for 600 ticks, a trooper six tiles away): an enemy fighter we see within ENGAGE_RANGE of it is attacked first
+  let near = null;
+  let nd = ENGAGE_RANGE + 1;
+  for (const r of x.seenFighters ?? []) {
+    const d = cheb(r.x, r.z, lx, lz);
+    if (d < nd) {
+      nd = d;
+      near = r;
+    }
+  }
+  const lsp = u8(gs, a + O.SP);
+  const shooting = lsp !== 0xff && u8(gs, a + O.STACK + 2 * lsp) === 0x0b;
+  // the star command first when it is ready (the group logic below gives it)
+  const starReady = u8(gs, a + O.CHARGE) >= 0x20 && friends.filter(([fx, fz]) => cheb(fx, fz, lx, lz) <= STAR_REACH).length >= STAR_MIN;
+  if (near && !starReady && !shooting && (tick - last >= 64 || isIdle(gs, a))) {
+    sendWaypointOrder(ctx, [o], [[(near.x << 8) + 128, (near.z << 8) + 128]], ORDER_ASSAULT);
+    x.lastOrder.set(o, tick);
+    return;
+  }
+  if (near && !starReady) return; // shooting, or ordered a moment ago
   if (!friends.length) {
     go(hx, hz);
     return;
@@ -2701,12 +2730,13 @@ function detour(ctx, ex, ez) {
   let bestLen = 1e9;
   for (let o = 0; o < MAX_OBJECTS; o++) {
     const a = objAddr(o);
-    if (o === e.vent || u8(gs, a + O.TYPE) !== TYPE_VENT || i16(gs, a + O_VENT_RATE) === 0 || !alive(u8(gs, a + O.LIFE))) continue;
+    if (o === e.vent || e.avoid?.has(o) || u8(gs, a + O.TYPE) !== TYPE_VENT || i16(gs, a + O_VENT_RATE) === 0 || !alive(u8(gs, a + O.LIFE))) continue;
     const [vx, vz] = tileOf(gs, a);
     if (groundIdAt(G, vx, vz) !== 0x3ff) continue;
     const vfam = famAt(G, vx, vz);
     if (!vfam || taken.has(vfam)) continue;
     if (foes.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_CLEAR)) continue;
+    if ((x.knownFighters ?? []).some((r) => cheb(r.x, r.z, vx, vz) <= KNOWN_KEEP)) continue;
     if (bases.some((r) => cheb(r.x, r.z, vx, vz) <= DETOUR_BASE)) continue;
     // maintainer, 9 Oct 2026: "there are a lot of vents all around the map. you must send exploiter to the nearest vent in
     // the opposite direction" - only vents on the far side of the explorer from the enemy (the half-plane away from it)
@@ -2721,7 +2751,10 @@ function detour(ctx, ex, ez) {
   e.fails.set(e.vent, { n: (f && tick - f.tick < FAIL_MEMORY ? f.n : 0) + 1, tick });
   const [vx, vz] = tileOf(gs, objAddr(best));
   ctx.say(`Escort: detour from the vent at ${e.vx},${e.vz} to the one at ${vx},${vz} (${bestLen} steps, clear of the enemy).`);
-  Object.assign(e, { vent: best, vx, vz, zone: famAt(G, vx, vz), since: tick, route: pathCells(plan, vx, vz, G.map.w), routeK: 0 });
+  // maintainer, 11 Oct 2026 (Rings of fire: the explorer flip-flopped between vents every think): a vent given up stays
+  // out for the rest of the expedition
+  (e.avoid ??= new Set()).add(e.vent);
+  Object.assign(e, { vent: best, vx, vz, zone: famAt(G, vx, vz), since: tick, route: pathCells(plan, vx, vz, G.map.w), routeK: 0, replanned: tick });
   x.stats.detours = (x.stats.detours ?? 0) + 1;
   return true;
 }
@@ -2742,6 +2775,8 @@ function safeSearch(ctx, ex, ez) {
   const keep = Math.max(1, Math.min(startD, Math.max(DETOUR_KEEP_MIN, Math.min(DETOUR_KEEP_MAX, startD))));
   const dist = new Int16Array(W * H).fill(-1);
   const prev = new Int32Array(W * H).fill(-1);
+  // (remembered enemies are not in the search: on Armageddon a path around them led the explorer into a corner it could
+  // not leave; they only keep the vent choice away)
   const blocked = (cx, cz) => foes.some((r) => cheb(r.x, r.z, cx, cz) < keep);
   dist[ez * W + ex] = 0;
   let front = [[ex, ez]];
@@ -2790,15 +2825,12 @@ function routeTo(plan, tx, tz, W) {
  * never goes back - on a bending route an earlier cell can be as near, and the explorer was sent back and forth).
  */
 function routeIndex(e, ex, ez) {
+  // only cells the explorer has reached count (within ROUTE_REACHED tiles), looked for ROUTE_AHEAD cells on: the nearest
+  // cell anywhere on a bending route can lie past a slope - on Armageddon it skipped the way round and the explorer
+  // shuttled below the next waypoint for 4000 ticks
   let k = e.routeK ?? 0;
-  let bd = 1e9;
-  for (let i = e.routeK ?? 0; i < e.route.length; i++) {
-    const d = cheb(e.route[i][0], e.route[i][1], ex, ez);
-    if (d < bd) {
-      bd = d;
-      k = i;
-    }
-  }
+  const end = Math.min(e.route.length, k + ROUTE_AHEAD);
+  for (let i = k; i < end; i++) if (cheb(e.route[i][0], e.route[i][1], ex, ez) <= ROUTE_REACHED) k = i;
   e.routeK = k;
   return k;
 }
@@ -2813,6 +2845,14 @@ function sendExplorerRoute(ctx, va) {
   const [ex, ez] = tileOf(gs, objAddr(e.expl));
   if (e.route?.length) {
     const k = routeIndex(e, ex, ez);
+    // stuck: no progress along the route over ROUTE_STUCK renewals (the walk ignores slopes the game's units cannot
+    // climb) - the planned route is dropped and the game's own pathfinder takes the explorer to the vent
+    e.routeStuck = k === e.routeLastK ? (e.routeStuck ?? 0) + 1 : 0;
+    e.routeLastK = k;
+    if (e.routeStuck >= ROUTE_STUCK) e.route = null;
+  }
+  if (e.route?.length) {
+    const k = e.routeK;
     const pts = [];
     for (let i = k + ROUTE_STEP; pts.length < ROUTE_POINTS && i < e.route.length + ROUTE_STEP - 1; i += ROUTE_STEP) pts.push(e.route[Math.min(i, e.route.length - 1)]);
     if (pts.length) {
@@ -2836,6 +2876,7 @@ function replanDetour(ctx) {
   const rest = e.route.slice(routeIndex(e, ex, ez));
   const foes = x.seenFighters ?? [];
   if (!foes.some((r) => cheb(r.x, r.z, ex, ez) <= REPLAN_NEAR || rest.some(([px, pz]) => cheb(r.x, r.z, px, pz) <= REPLAN_NEAR))) return false;
+  if ((ctx.tick | 0) - (e.replanned ?? -1000000) < REPLAN_EVERY) return false;
   if (detour(ctx, ex, ez)) {
     sendExplorerRoute(ctx, objAddr(e.vent));
     e.explOrdered = ctx.tick | 0;
