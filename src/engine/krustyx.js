@@ -134,9 +134,15 @@ const KIND_CLEARERS = 3;
 const KIND_ESCORT = 4;
 const KIND_COMMANDER = 5;
 const KIND_COUNTER = 6; // the counter-offensive group (counterOffensive)
+const KIND_SCOUT = 7; // the scouts (scouts)
+const SCOUT_SLOT = 10; // a raiding-squad slot (VARIANT pressure takes free ones only)
+const SCOUT_SIGHT = 8; // tiles: an enemy mine or building we see this close to a scout is attacked
+const SCOUT_ARRIVED = 3; // tiles: a scout this close to its destination picks the next one
+const SCOUT_RETREAT = 8; // tiles a scout hit while attacking flies back, away from the enemies near it
+const SCOUT_AVOID = 600; // ticks such a scout leaves that target alone
 const COUNTER_SLOT = 11; // the last raiding-squad slot (VARIANT pressure takes free ones only)
 const COUNTER_BEYOND = 25; // tiles beyond the attack's way in where the counter-offensive goes when nothing is known
-const COUNTER_SHARE = 0.75; // of the units in the perimeter that go on the counter-offensive
+const SENTINELS = 3; // units that stay in the perimeter when the counter-offensive and the reinforcements leave
 const BATTLE_EVERY = 128; // ticks between two rounds of reinforcements to a battle outside the perimeter
 const COUNTER_ENGAGE = 15; // tiles: a seen enemy fighter this close to the group becomes its target
 const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant: the four ranks of both races
@@ -162,6 +168,8 @@ const CONTACT = 8; // tiles: a unit with a seen enemy fighter this close is in c
 const RETREAT_SLACK = 2; // tiles: an order taking a unit in contact further than this from its nearest enemy is a retreat
 const TURRET_ENGAGE = 12; // tiles: an enemy fighter this close to a turret builder is an attack it lands against
 const TURRET_MARGIN = 2; // tiles beyond the enemies' weapon range where a turret builder lands (the deployment takes time)
+const TURRETS_PER_MINE = 2; // turrets that secure each mine (the nearest to the HQ first)
+const TURRET_MINE_OFFSET = 2; // tiles from the mine, on the side away from the HQ, where its turret lands
 const TURRET_SPOT = 4; // tiles from the HQ of the spots a turret builder without a group zone goes to
 const QUEUE_FULL = 3; // units waiting in a production queue at which no more is bought into it
 const QUEUE_STALL = 256; // ticks without a unit out of a non-empty queue after which it counts as stalled
@@ -513,6 +521,7 @@ export function general(ctx) {
   x.threats = threats;
   x.prevDist = nowDist;
   x.assets = assets;
+  x.minePos = minePos;
   // an enemy firing at one of ours - the engine marks the shooter with its target's team (O.ATTACKED) and reveals its
   // tile to that team: a threat from its first shot within SHOOTER_RADIUS of the HQ or a mine (maintainer, 9 Oct 2026: "base and mining
   // sites must be defended immediately"; in the Hoops replay the attackers of a mine became targets only when our
@@ -579,6 +588,7 @@ export function general(ctx) {
   const atPerimeter = (px, pz) => cheb(px, pz, x.hq[0], x.hq[1]) <= RALLY_RADIUS || (nearMine && cheb(px, pz, nearMine[0], nearMine[1]) <= DEFEND_ASSET_RADIUS);
   const enemiesThere = x.threats.filter((r) => atPerimeter(r.x, r.z)).length;
   const oursThere = ownFighterTiles.filter(([fx, fz]) => atPerimeter(fx, fz)).length;
+  x.homeCount = oursThere; // our fighters in the perimeter (mayLeave)
   x.perimeterAttacked = enemiesThere > 0 && oursThere < PERIMETER_SUPERIORITY * enemiesThere;
   // the counter-offensive's trigger (counterOffensive): intruders at the perimeter last think, none now
   x.perimeterWas = x.perimeterNow ?? 0;
@@ -853,6 +863,7 @@ export function take(ctx, o, cls) {
   if (v.mines && ENGINEERS.includes(type)) return ensureSlot(ctx, ENG_SLOT, KIND_ENGINEERS);
   if (v.clear && DETECTORS.includes(type) && x.enemy.hiddenMines.length && slotUnits(ctx, CLEAR_SLOT).length === 0) return ensureSlot(ctx, CLEAR_SLOT, KIND_CLEARERS);
   if (v.lieutenant && COMMANDER_TYPES.includes(type)) return ensureSlot(ctx, COMMANDER_SLOT, KIND_COMMANDER); // VARIANT lieutenant
+  if (SCOUTS.includes(type) && !v.airscout) return ensureSlot(ctx, SCOUT_SLOT, KIND_SCOUT); // the scouts (scouts; VARIANT airscout keeps its air patrol)
   // VARIANT escort: the recruits and reinforcements bought for the expedition
   const e = x.esc;
   // VARIANT second: the starting trooper (the first free infantry of the first census) does not go scouting, it waits
@@ -880,6 +891,7 @@ export function tasks(ctx) {
   if (v.mines) engineers(ctx);
   if (v.clear) clearers(ctx);
   counterOffensive(ctx);
+  scouts(ctx);
   const hunting = defend(ctx);
   engageIdle(ctx);
   turrets(ctx);
@@ -902,8 +914,8 @@ export function noScouting(ctx) {
  * Reinforcements (maintainer, 11 Oct 2026: "if battle is in process, we must send reinforcements to support our troops" -
  * on Plink-O our troops reached the enemy's base and fought on without help): while our fighters outside the perimeter
  * are in contact (an enemy fighter we see within CONTACT tiles) and the perimeter itself is not attacked, every
- * BATTLE_EVERY ticks COUNTER_SHARE of the armed units standing in the perimeter - the furthest from the HQ; not the
- * commander, turret builders, an expedition's escort or a unit that is shooting - join the counter group and
+ * BATTLE_EVERY ticks the armed units standing in the perimeter but SENTINELS (mayLeave; the furthest from the HQ go; not
+ * the commander, turret builders, an expedition's escort or a unit that is shooting) join the counter group and
  * assault-move to the battle (the centre of our units in contact); the counter group's targeting takes over from there.
  */
 function reinforce(ctx) {
@@ -937,7 +949,8 @@ function reinforce(ctx) {
   if (!fighting.length || !home.length) return;
   x.lastReinforce = tick;
   home.sort((a, b) => b.d - a.d);
-  home.length = Math.ceil(home.length * COUNTER_SHARE);
+  home.length = Math.min(home.length, mayLeave(ctx, x.homeCount ?? home.length));
+  if (!home.length) return;
   const bx = Math.round(fighting.reduce((t, q) => t + q[0], 0) / fighting.length);
   const bz = Math.round(fighting.reduce((t, q) => t + q[1], 0) / fighting.length);
   ensureSlot(ctx, COUNTER_SLOT, KIND_COUNTER);
@@ -949,6 +962,107 @@ function reinforce(ctx) {
   sendWaypointOrder(ctx, home.map((q) => q.o), [[(bx << 8) + 128, (bz << 8) + 128]], ORDER_ASSAULT);
   x.stats.reinforcements2 = (x.stats.reinforcements2 ?? 0) + home.length;
   ctx.say(`Reinforcements: ${home.length} units to the battle at ${bx},${bz}.`);
+}
+
+/**
+ * How many of the units standing in the perimeter may leave it: all but SENTINELS, however large the army (maintainer,
+ * 11 Oct 2026: "disable that requirement for 25% of army home. leave at home only some sentinels. count must not be tied
+ * to the size of the army"). The sentinels are the units nearest to the HQ (the callers send the furthest first).
+ */
+function mayLeave(ctx, atHome) {
+  return Math.max(0, atHome - SENTINELS);
+}
+
+/**
+ * The scouts (maintainer, 11 Oct 2026: "scouts must search for a mines and base of an enemy starting a fight only where
+ * enemy mine or enemy base is in it's sight"). Every scout (SCGM / ORTU) is in SCOUT_SLOT. An enemy mine or building we
+ * see within SCOUT_SIGHT tiles of it is attacked (the object, re-ordered every REISSUE ticks); else it flies - a plain
+ * move, it does not stop for units - to the nearest remembered enemy mine or building we do not see now, else to the
+ * zone unseen for longest (scoutZone; no two scouts to the same one), and picks the next destination on arrival, when
+ * idle or after RETARGET ticks.
+ */
+function scouts(ctx) {
+  const x = state(ctx);
+  const { G, p, kai } = ctx;
+  const gs = G.gs;
+  const tick = ctx.tick | 0;
+  if (x.special[SCOUT_SLOT] !== KIND_SCOUT) return;
+  const units = slotUnits(ctx, SCOUT_SLOT, SCOUTS);
+  if (!units.length) return;
+  x.scoutJobs ??= new Map();
+  const visible = (r) => r.x < G.map.w && r.z < G.map.h && seenByPlayer(G, r.x, r.z, p);
+  const targets = [...(x.enemy?.mines ?? []), ...(x.enemy?.buildings ?? [])];
+  const claimed = new Set([...x.scoutJobs.values()].map((j) => j.key));
+  x.scoutAvoid ??= new Map(); // target object -> tick until which the scouts leave it alone
+  for (const o of units) {
+    const a = objAddr(o);
+    const [ux, uz] = tileOf(gs, a);
+    let job = x.scoutJobs.get(o);
+    // maintainer, 11 Oct 2026: "if airscout is being attacked when airscout attacks something, it must retreat and continue
+    // his duty": hit (its hit points fell since the last think) while attacking - SCOUT_RETREAT tiles away from the
+    // enemy fighters seen near it (else from its target), the target left alone for SCOUT_AVOID ticks, then the search goes on
+    const hp = i32(gs, a + O.HP);
+    const hitNow = job && hp < (job.hp ?? hp);
+    if (job) job.hp = hp;
+    if (hitNow && job.key.startsWith('hit:')) {
+      x.scoutAvoid.set(Number(job.key.slice(4)), tick + SCOUT_AVOID);
+      const near = (x.seenFighters ?? []).filter((r) => cheb(r.x, r.z, ux, uz) <= SCOUT_SIGHT + 4);
+      const fx = near.length ? near.reduce((t, r) => t + r.x, 0) / near.length : job.x;
+      const fz = near.length ? near.reduce((t, r) => t + r.z, 0) / near.length : job.z;
+      const n = Math.hypot(ux - fx, uz - fz) || 1;
+      const rx = Math.min(G.map.w - 1, Math.max(0, Math.round(ux + ((ux - fx) / n) * SCOUT_RETREAT)));
+      const rz = Math.min(G.map.h - 1, Math.max(0, Math.round(uz + ((uz - fz) / n) * SCOUT_RETREAT)));
+      sendWaypointOrder(ctx, [o], [[(rx << 8) + 128, (rz << 8) + 128]], ORDER_MOVE);
+      x.scoutJobs.set(o, { key: 'retreat', x: rx, z: rz, issued: tick, hp });
+      x.stats.scoutRetreats = (x.stats.scoutRetreats ?? 0) + 1;
+      continue;
+    }
+    if (job?.key === 'retreat' && cheb(ux, uz, job.x, job.z) > SCOUT_ARRIVED && !isIdle(gs, a) && tick - job.issued <= REISSUE) continue;
+    // an enemy mine or building in sight: attack it
+    let hit = null;
+    let hd = SCOUT_SIGHT + 1;
+    for (const r of targets) {
+      const d = cheb(ux, uz, r.x, r.z);
+      if (d < hd && visible(r) && !(x.scoutAvoid.get(r.o) > tick)) {
+        hd = d;
+        hit = r;
+      }
+    }
+    if (hit) {
+      if (!job || job.key !== `hit:${hit.o}` || tick - job.issued >= REISSUE || isIdle(gs, a)) {
+        ctx.emit([build.targetObj(o, hit.o), build.order(o, 0x0e)]);
+        job = { key: `hit:${hit.o}`, x: hit.x, z: hit.z, issued: tick, hp };
+        x.scoutJobs.set(o, job);
+      }
+      continue;
+    }
+    const arrived = job && cheb(ux, uz, job.x, job.z) <= SCOUT_ARRIVED;
+    if (job && !job.key.startsWith('hit') && !arrived && !isIdle(gs, a) && tick - job.issued <= RETARGET) continue;
+    // the next destination: a remembered enemy mine or building out of sight, else the zone unseen for longest
+    let dest = null;
+    let dd = 1e9;
+    for (const r of targets) {
+      const key = `find:${r.o}`;
+      if (visible(r) || claimed.has(key) || x.scoutAvoid.get(r.o) > tick) continue;
+      const d = cheb(ux, uz, r.x, r.z);
+      if (d < dd) {
+        dd = d;
+        dest = { key, x: r.x, z: r.z };
+      }
+    }
+    if (!dest) {
+      const z = scoutZone(ctx, claimed);
+      if (z >= 0) {
+        const [cx, cz] = centreOf(kai, z);
+        dest = { key: `zone:${z}`, x: cx, z: cz };
+      }
+    }
+    if (!dest) continue;
+    claimed.add(dest.key);
+    sendWaypointOrder(ctx, [o], [[(dest.x << 8) + 128, (dest.z << 8) + 128]], ORDER_MOVE);
+    x.scoutJobs.set(o, { ...dest, issued: tick, hp });
+  }
+  for (const o of [...x.scoutJobs.keys()]) if (!units.includes(o)) x.scoutJobs.delete(o);
 }
 
 /** The task and minor holding object o, or null. */
@@ -990,10 +1104,10 @@ function counterOffensive(ctx) {
       if (g && g[0] === 2 && (g[1] === COMMANDER_SLOT || g[1] === COUNTER_SLOT || (g[1] === ESCORT_SLOT && expedition))) continue;
       go.push({ o, g, d: cheb(ux, uz, x.hq[0], x.hq[1]) });
     }
-    // maintainer, 11 Oct 2026: "do a counteroffensive with 75% of troops" - the COUNTER_SHARE furthest from the HQ go,
-    // the ones nearest to it stay
+    // all but SENTINELS go (mayLeave; maintainer, 11 Oct 2026, first "75% of troops", then "leave at home only some
+    // sentinels"), the furthest from the HQ first
     go.sort((a, b) => b.d - a.d);
-    go.length = Math.ceil(go.length * COUNTER_SHARE);
+    go.length = Math.min(go.length, mayLeave(ctx, x.homeCount ?? go.length));
     if (go.length) {
       ensureSlot(ctx, COUNTER_SLOT, KIND_COUNTER);
       for (const { o, g } of go) {
@@ -1428,12 +1542,35 @@ function turrets(ctx) {
     let t = x.turret.get(o);
     if (!t) {
       const zone = u8(gs, a + OA.ZONE);
-      let dest = zone ? centreOf(kai, zone) : null;
+      // maintainer, 11 Oct 2026 (Black Widow: "first and second mine are not secured by turrets"): the mine nearest to
+      // the HQ with fewer than TURRETS_PER_MINE turrets (deployed ones, and builders on their way to it) gets this one,
+      // TURRET_MINE_OFFSET tiles from the mine on the side away from the HQ
+      let dest = null;
+      const mines = [...(x.minePos ?? [])].sort((m1, m2) => cheb(m1[0], m1[1], x.hq[0], x.hq[1]) - cheb(m2[0], m2[1], x.hq[0], x.hq[1]));
+      for (const m of mines) {
+        let n = 0;
+        for (const q of x.turret.values()) if (q.mine && q.mine[0] === m[0] && q.mine[1] === m[1]) n++;
+        for (let q = 120; q <= maxObj; q++) {
+          const qa = objAddr(q);
+          if (u8(gs, qa + O.TEAM) === p && alive(u8(gs, qa + O.LIFE)) && [41, 42].includes(u8(gs, qa + O.TYPE))) {
+            const [qx, qz] = tileOf(gs, qa);
+            if (cheb(qx, qz, m[0], m[1]) <= TURRET_MINE_OFFSET + 2) n++;
+          }
+        }
+        if (n >= TURRETS_PER_MINE) continue;
+        const ox = Math.sign(m[0] - x.hq[0]);
+        const oz = Math.sign(m[1] - x.hq[1]);
+        dest = [m[0] + ox * TURRET_MINE_OFFSET, m[1] + oz * TURRET_MINE_OFFSET];
+        x.turretMine = m;
+        break;
+      }
+      if (!dest) dest = zone ? centreOf(kai, zone) : null;
       if (!dest || (dest[0] === 0 && dest[1] === 0)) {
         const k = (x.stats.turretSpots = (x.stats.turretSpots ?? 0) + 1) % 8;
         dest = [x.hq[0] + dirs[k][0] * TURRET_SPOT, x.hq[1] + dirs[k][1] * TURRET_SPOT];
       }
-      t = { dest: [clampX(dest[0]), clampZ(dest[1])], hp: i32(gs, a + O.HP), last: -1000000, lands: 0, landAt: null };
+      t = { dest: [clampX(dest[0]), clampZ(dest[1])], hp: i32(gs, a + O.HP), last: -1000000, lands: 0, landAt: null, mine: x.turretMine ?? null };
+      x.turretMine = null;
       x.turret.set(o, t);
     }
     const hp = i32(gs, a + O.HP);
@@ -2004,7 +2141,7 @@ function patrolHome(ctx) {
 }
 
 /** Stalest reachable zone at least three hops out: where a squad without a target goes. */
-function scoutZone(ctx) {
+function scoutZone(ctx, claimed = null) {
   const x = state(ctx);
   const { kai } = ctx;
   const tick = ctx.tick | 0;
@@ -2012,7 +2149,7 @@ function scoutZone(ctx) {
   let bestScore = -1;
   for (let z = 1; z < 255; z++) {
     const hop = u8(kai, zoneAddr(z) + Z.HOP);
-    if (hop === 0xff || hop < 3) continue;
+    if (hop === 0xff || hop < 3 || claimed?.has(`zone:${z}`)) continue;
     const score = x.lastSeen[z] < 0 ? 100000 + hop : tick - x.lastSeen[z];
     if (score > bestScore) {
       bestScore = score;
@@ -2424,7 +2561,10 @@ export function escortInfo(ctx) {
   // before the first wave (no enemy around yet, no troopers to spare) and with no mine yet the dispatch of
   // worker_update reaches every vent (with safe: over a route free of enemy units); VARIANT second: the
   // second explorer goes with its trooper whatever the wave
-  const on = (variant(ctx).escort && x.own.mines > 0 && x.waveSeen) || secondDue(ctx, x);
+  // maintainer, 11 Oct 2026 (Black Widow: "third and fourth exploiters leave the base without an escort" - the escort
+  // waited for a first enemy wave, which an expanding opponent never sends): with the first mine standing, every farther
+  // vent is reached with an escort
+  const on = (variant(ctx).escort && x.own.mines > 0) || secondDue(ctx, x);
   return { on, objs: e.expl >= 0 ? new Set([e.expl]) : NO_ESCORT.objs, zone: e.phase === 'idle' ? 0 : e.zone };
 }
 
@@ -2577,7 +2717,7 @@ function startEscort(ctx) {
   const tick = ctx.tick | 0;
   const second = secondDue(ctx, x); // VARIANT second: right after the barracks, whatever the wave, danger or saving
   if (tick < e.retryAt) return;
-  if (!second && (!variant(ctx).escort || x.saving || x.own.mines === 0 || !x.waveSeen)) return;
+  if (!second && (!variant(ctx).escort || x.saving || x.own.mines === 0)) return;
   const size = second ? SECOND_ESCORT : ESCORT_SIZE;
   const list = listOf(gs, kai, 0, 0);
   let expl = -1;
