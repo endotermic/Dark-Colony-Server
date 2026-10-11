@@ -3218,6 +3218,32 @@ rusher 56 / 0 three times, `krusty+workers` 22 / 34, 20 / 35 / 1, 22 / 34 = 64 o
 maintainer chose it over the standing guard. The remaining damage to mines comes from tank groups larger than what is
 free at home.
 
+**Only troopers on Hoops: the guard purchases; turrets for attacked mines; reinforcements only as strong as needed**
+(11 Oct 2026, after 45c03bb; maintainer: "'hoops' reply shows that you have a bug! at some point only troopers are
+coming out and no tanks, no artillery", "prefer turret if production is available for mine defence", "check the
+attackers to defenders strength ratio ... send the troops for reinforcement only in amount that is needed to destroy
+that threat"). In the Hoops of Fury game (J8PLAY02, job 51 of the seed-5 run, our side Gray) an enemy flying scout
+attacked our mines 29 times; every attack opened a guard battle that wanted three Grays against one scout and
+`guardBuy` bought them, every 96 ticks and before everything else - 55 Grays in one game; the guards turned scouts when
+the scout left, the next attack found nobody and bought again, and from about tick 21 000 the money (300-350) never
+reached a tank (600) or an ATRIL (1000) while the robot factory stood. Now:
+* `guardBuy` buys a TURRET for an attacked mine that still lacks power, when a turret builder can be bought - once per
+  attack, at most `GUARD_TURRETS` (2) per mine counting deployed ones and builders on their way, without the reserve -
+  and `turrets()` sends that builder to the requesting mine (`x.turretRequests`); a turret hits ground (256) and air
+  (128). Nothing else is bought for the guards; the free units go (allocate).
+* `fieldBuy` (enemy mines) and any purchase for a battle are capped by the battle's need over its life (`buyFor`,
+  `b.bought`), a tank first unless the battle's attackers fly.
+* Strength: our deployed turrets count on our side in every battle (`TOWER_POWER`, as the enemy's do); a guard counts
+  everything of ours at its mine and its units on their way (before: only its own units, so help went where the turret
+  and the troops there sufficed); the leftover of home goes to the uncovered fight with the smallest deficit only as far
+  as that deficit (before: all of home). In the Hoops game: 47 sends, each stopping at the need (12 power overshoot in
+  all, from unit size - a tank is 3), 26 short because nothing more was free.
+
+Arena (anti-rush preset, 30 in-game minutes, seeds 5 / 7 / 9): the rusher 56 / 0 three times, vanilla `krusty` 56 / 0
+three times (maintainer: "our upgraded bot must always beat rusher and vanilla krusty"; every commit of the day measured
+56 / 0 against both on seed 5 - the fault was the production mix, not the result against those two), `krusty+workers`
+19 / 37, 20 / 36, 22 / 34 = 61 of 168 (before 64), our HQ standing at the end in 111 of 168 games against it (before 97).
+
 ### 19.7 Risks and open points
 
 * **One-frame latency.** A bot's order may reach a unit that died or a slot that was re-allocated in

@@ -166,7 +166,7 @@ const OFFENDER_SIGHT = 10; // tiles: an offending scout attacks every enemy it s
 const GUARD_RADIUS = 10; // tiles around a mine or explorer of ours within which a seen enemy (or flyer) attacks it
 const GUARD_SHOOTER = 14; // tiles within which an enemy firing at us counts against it (artillery reaches 12)
 const GUARD_POST = 3; // tiles from its mine beyond which a guard walks back
-const GUARD_BUY_EVERY = 96; // ticks between two purchases for the guards
+const GUARD_TURRETS = 2; // turrets per mine at most when an attack buys one (guardBuy)
 const FIELD_ARRIVED = 2; // tiles: a ground scout this close to its destination picks the next one
 const COMMANDER_TYPES = [69, 70, 71, 72, 73, 74, 75, 76]; // VARIANT lieutenant: the four ranks of both races
 const COMMANDER_ENGAGE = 14; // tiles around the commander or the HQ within which a seen enemy fighter matters
@@ -809,7 +809,7 @@ export function production(ctx, have) {
   const { G, p } = ctx;
   if (G.stat(6, p) >= i32(G.gs, GS.UNIT_CAP)) return false;
   if (escortOn(ctx) && escortBuy(ctx)) return false; // VARIANT escort: its reinforcements first, the expedition is under fire
-  if (v.hold && guardBuy(ctx)) return false; // the guards of our mines
+  if (v.hold && guardBuy(ctx)) return false; // a turret for an attacked mine
   // VARIANT escort: up to the third mining site its troopers come before hold's, unless the HQ stands unguarded
   const unguarded = x.fighters < HOLD_BUY_MIN || (x.ownNearHome === 0 && x.intruders.length > 0);
   if (escortOn(ctx) && x.own.mines < ESCORT_SITES && !unguarded && escortRecruit(ctx)) return false;
@@ -1236,32 +1236,48 @@ function updateBattles(ctx, ours) {
   // power on both sides
   const remembered = (x.knownFighters ?? []).filter((r) => !seenSet.has(r.o));
   const towers = x.enemy.towers ?? [];
-  const assigned = (key, airOnly) => {
-    let pw = 0;
+  // our deployed turrets count on our side as the enemy's do on theirs (TOWER_POWER; they hit air too) - maintainer, 11
+  // Oct 2026: "measure opponent strength and send the troops for reinforcement only in amount that is needed"
+  const ownTurrets = [];
+  {
+    const gs = ctx.G.gs;
+    const maxObj = i32(gs, GS.MAX_OBJ);
+    for (let o = 120; o <= maxObj; o++) {
+      const a = objAddr(o);
+      if (u8(gs, a + O.TEAM) !== ctx.p || !alive(u8(gs, a + O.LIFE)) || !TURRETS.includes(u8(gs, a + O.TYPE))) continue;
+      const [tx, tz] = tileOf(gs, a);
+      ownTurrets.push({ x: tx, z: tz });
+    }
+  }
+  const turretPower = (b) => TOWER_POWER * near(b, ownTurrets).length;
+  // our power at a battle: every fighter of ours within BATTLE_REACH, the turrets there, and the field units on their way
+  const oursAt = (b, airOnly) => {
+    let pw = turretPower(b);
     for (const u of ours) {
+      if (airOnly && !hitsAir(ctx.G, u.type)) continue;
       const job = x.field?.get(u.o);
-      if (job?.role === 'battle' && job.b === key && (!airOnly || hitsAir(ctx.G, u.type))) pw += u.pw;
+      if (cheb(u.x, u.z, b.x, b.z) <= BATTLE_REACH || (job?.role === 'battle' && job.b === b.key)) pw += u.pw;
     }
     return pw;
   };
   for (const b of x.battles.values()) {
     if (b.kind === 'guard') {
-      // a guard counts only the units given to it; the need: NEED_RATIO times the attackers - against flyers only units
-      // that can hit air count
+      // the need: NEED_RATIO times the attackers; ours: everything of ours at the mine (its turret included) and the units
+      // on their way - against flyers only what hits air counts
       const g = (b.groundFoes ?? []).reduce((t, r) => t + powerOf(r.type), 0);
       const a = (b.airFoes ?? []).reduce((t, r) => t + powerOf(r.type), 0);
       b.enemy = g + a;
       b.need = Math.ceil(NEED_RATIO * (g + a));
       b.airNeed = Math.ceil(NEED_RATIO * a);
-      b.ours = assigned(b.key, false);
-      b.airOurs = assigned(b.key, true);
+      b.ours = oursAt(b, false);
+      b.airOurs = oursAt(b, true);
       continue;
     }
     let enemy = near(b, seen).reduce((t, r) => t + powerOf(r.type), 0) + TOWER_POWER * near(b, towers).length;
     if (b.kind === 'mine') enemy += near(b, remembered).reduce((t, r) => t + powerOf(r.type), 0);
     b.enemy = enemy;
     b.need = b.kind === 'mine' ? (b.phase === 'secure' ? 0 : Math.max(MINE_MIN_POWER, Math.ceil(NEED_RATIO * enemy))) : Math.ceil(NEED_RATIO * enemy);
-    b.ours = near(b, ours).reduce((t, u) => t + u.pw, 0);
+    b.ours = near(b, ours).reduce((t, u) => t + u.pw, 0) + turretPower(b);
   }
 }
 
@@ -1379,9 +1395,10 @@ function allocate(ctx, ours) {
     for (const b of mineList) if (short(b) > 0) cover(b, pool);
     const fightList = battles.filter((b) => b.kind === 'fight' && short(b) > 0).sort((b1, b2) => short(b1) - short(b2));
     for (const b of fightList) if (pool.reduce((t, u) => t + u.pw, 0) >= short(b)) cover(b, pool);
-    // the rest of home to the uncovered fight with the smallest deficit: our units there fight on, they get the backing
+    // the uncovered fight with the smallest deficit gets what is left at home - only as much as it lacks (it got all of
+    // home before; maintainer, 11 Oct 2026: "send the troops for reinforcement only in amount that is needed")
     const open = fightList.filter((b) => short(b) > 0);
-    if (open.length) give(open[0], pool.filter((u) => u.from === 'home'));
+    if (open.length) cover(open[0], pool.filter((u) => u.from === 'home'));
   }
   shortTotals();
   if (!given.size) return;
@@ -1627,39 +1644,102 @@ function disband(ctx, units, why) {
 }
 
 /**
- * What the guards lack is bought (maintainer, 11 Oct 2026: "mining must always secured!"): before everything but the
- * escort's reinforcements, also under danger, without the money reserve, at most every GUARD_BUY_EVERY ticks - infantry
- * against flyers (it hits air), a tank first when a mine is attacked on the ground only.
+ * The battle whose deficit purchases should cover next, and the types to buy for it: of `kind`'s battles still short of
+ * units, the one with the largest deficit whose purchases so far (b.bought, in power) are below its need - every battle
+ * gets at most its need in purchases over its life (maintainer, 11 Oct 2026, Hoops of Fury: "at some point only troopers
+ * are coming out and no tanks, no artillery" - an attacked mine kept its guard battle open while attackers came and
+ * went, a trooper was bought for it every 96 ticks, 55 in one game, and the money never reached a tank or an ATRIL).
+ * Infantry only against flyers there (it hits air), a tank first otherwise.
  */
-function guardBuy(ctx) {
+function buyFor(ctx, kind) {
   const x = state(ctx);
-  const need = x.guardShort;
-  if (!need || (need.air <= 0 && need.ground <= 0)) return false;
-  const tick = ctx.tick | 0;
-  if (tick - (x.lastGuardBuy ?? -1000000) < GUARD_BUY_EVERY) return false;
-  const groundAttack = [...(x.battles?.values() ?? [])].some((b) => b.kind === 'guard' && (b.groundFoes?.length ?? 0) > 0);
-  const types = need.air <= 0 && groundAttack ? [...TANKS, ...INFANTRY] : INFANTRY;
-  for (const t of types) {
-    if (buy(ctx, [t], 1, 'Guard for our mines')) {
-      x.lastGuardBuy = tick;
-      x.stats.guardBuys = (x.stats.guardBuys ?? 0) + 1;
-      return true;
+  let best = null;
+  let bs = 0;
+  for (const b of x.battles?.values() ?? []) {
+    if (b.kind !== kind || (b.bought ?? 0) >= b.need) continue;
+    const air = kind === 'guard' ? (b.airNeed ?? 0) - (b.airCommitted ?? b.airOurs ?? 0) : 0;
+    const ground = b.need - (b.committed ?? b.ours ?? 0);
+    const s = Math.max(air, ground);
+    if (s > bs) {
+      bs = s;
+      best = { b, air: air > 0 && (b.airFoes?.length ?? 0) > 0 };
     }
+  }
+  if (!best) return null;
+  return { b: best.b, types: best.air ? INFANTRY : [...TANKS, ...INFANTRY] };
+}
+
+/** One purchase for a battle chosen by buyFor; the battle's budget is charged. */
+function buyForBattle(ctx, pick, reason, reserve) {
+  const { G, p } = ctx;
+  for (const t of pick.types) {
+    const it = buyableTroops(G, p).find((i) => i.type === t && queueOpen(ctx, i.type));
+    if (!it || money(G, p) - it.cost < reserve) continue;
+    if (!buy(ctx, [t], 1, reason)) continue;
+    pick.b.bought = (pick.b.bought ?? 0) + powerOf(t);
+    return true;
   }
   return false;
 }
 
+/** Our turrets at a mine: deployed ones within TURRET_MINE_OFFSET + 2, and builders on their way to it. */
+function turretsAt(ctx, m) {
+  const x = state(ctx);
+  const { G, p } = ctx;
+  const gs = G.gs;
+  let n = 0;
+  for (const q of x.turret?.values() ?? []) if (q.mine && q.mine[0] === m[0] && q.mine[1] === m[1]) n++;
+  n += x.turretRequests?.filter((r) => r[0] === m[0] && r[1] === m[1]).length ?? 0;
+  const maxObj = i32(gs, GS.MAX_OBJ);
+  for (let o = 120; o <= maxObj; o++) {
+    const a = objAddr(o);
+    if (u8(gs, a + O.TEAM) !== p || !alive(u8(gs, a + O.LIFE)) || !TURRETS.includes(u8(gs, a + O.TYPE))) continue;
+    const [tx, tz] = tileOf(gs, a);
+    if (cheb(tx, tz, m[0], m[1]) <= TURRET_MINE_OFFSET + 2) n++;
+  }
+  return n;
+}
+
+/**
+ * A turret for an attacked mine (maintainer, 11 Oct 2026: "prefer turret if production is available for mine
+ * defence"): when a mine's guard battle still lacks power (ground or air - a turret hits both, 256 and 128) and a
+ * turret builder can be bought, one is bought for that mine - once per attack, at most GUARD_TURRETS per mine,
+ * before everything but the escort's reinforcements, without the money reserve - and turrets() lands it there. Nothing
+ * else is bought for the guards: the free units go (allocate). Troopers bought for every attack were the Hoops bug of
+ * 11 Oct 2026: "at some point only troopers are coming out and no tanks, no artillery" (a flying scout attacked our
+ * mines 29 times, three troopers were bought each time - 55 in one game - and the money never reached a tank).
+ */
+function guardBuy(ctx) {
+  const x = state(ctx);
+  const { G, p } = ctx;
+  let best = null;
+  let bs = 0;
+  for (const b of x.battles?.values() ?? []) {
+    if (b.kind !== 'guard' || !b.attacked || b.turretBought) continue;
+    const s = Math.max(b.need - (b.committed ?? b.ours ?? 0), (b.airNeed ?? 0) - (b.airCommitted ?? b.airOurs ?? 0));
+    if (s > bs && turretsAt(ctx, [b.x, b.z]) < GUARD_TURRETS) {
+      bs = s;
+      best = b;
+    }
+  }
+  if (!best) return false;
+  const it = buyableTroops(G, p).find((i) => TOWER_BUILDERS.includes(i.type) && queueOpen(ctx, i.type));
+  if (!it || money(G, p) < it.cost) return false;
+  if (!buy(ctx, [it.type], 1, `Turret for our mine at ${best.x},${best.z}`)) return false;
+  best.turretBought = true;
+  (x.turretRequests ??= []).push([best.x, best.z]);
+  x.stats.guardTurrets = (x.stats.guardTurrets ?? 0) + 1;
+  return true;
+}
+
 /**
  * What the enemy mines still lack is bought (maintainer: "it must be destroyed and secured even if we must send
- * reinforcements"): one fighter a think, a tank first, from the money above RESERVE; the allocation sends it.
+ * reinforcements"): a tank first, from the money above RESERVE, within each mine battle's budget (buyFor).
  */
 function fieldBuy(ctx) {
   const x = state(ctx);
-  if (!(x.fieldNeed > 0)) return false;
-  const { G, p } = ctx;
-  const it = buyableTroops(G, p).find((i) => TANKS.includes(i.type) && queueOpen(ctx, i.type)) ?? buyableTroops(G, p).find((i) => INFANTRY.includes(i.type) && queueOpen(ctx, i.type));
-  if (!it || money(G, p) - it.cost < RESERVE) return false;
-  if (!buy(ctx, [it.type], 1, 'For the enemy mine')) return false;
+  const pick = buyFor(ctx, 'mine');
+  if (!pick || !buyForBattle(ctx, pick, 'For the enemy mine', RESERVE)) return false;
   x.stats.fieldBuys = (x.stats.fieldBuys ?? 0) + 1;
   return true;
 }
@@ -2357,7 +2437,9 @@ function turrets(ctx) {
       // the HQ with fewer than TURRETS_PER_MINE turrets (deployed ones, and builders on their way to it) gets this one,
       // TURRET_MINE_OFFSET tiles from the mine on the side away from the HQ
       let dest = null;
-      const mines = [...(x.minePos ?? [])].sort((m1, m2) => cheb(m1[0], m1[1], x.hq[0], x.hq[1]) - cheb(m2[0], m2[1], x.hq[0], x.hq[1]));
+      // a turret bought for an attacked mine (guardBuy) goes to that mine
+      const req = x.turretRequests?.shift();
+      const mines = req ? [req] : [...(x.minePos ?? [])].sort((m1, m2) => cheb(m1[0], m1[1], x.hq[0], x.hq[1]) - cheb(m2[0], m2[1], x.hq[0], x.hq[1]));
       for (const m of mines) {
         let n = 0;
         for (const q of x.turret.values()) if (q.mine && q.mine[0] === m[0] && q.mine[1] === m[1]) n++;
@@ -2368,7 +2450,7 @@ function turrets(ctx) {
             if (cheb(qx, qz, m[0], m[1]) <= TURRET_MINE_OFFSET + 2) n++;
           }
         }
-        if (n >= TURRETS_PER_MINE) continue;
+        if (n >= (req ? GUARD_TURRETS : TURRETS_PER_MINE)) continue;
         const ox = Math.sign(m[0] - x.hq[0]);
         const oz = Math.sign(m[1] - x.hq[1]);
         dest = [m[0] + ox * TURRET_MINE_OFFSET, m[1] + oz * TURRET_MINE_OFFSET];
