@@ -360,6 +360,15 @@ lacks one, so the Council Wars campaign missions kept surfacing as untracked fil
 The 8-bpp `.OVH` caches stay tracked (part of the CD data set). `map2json.js --images` reads whichever cache is
 present; the committed `maps/*.json` carry none.
 
+**OZI pack, first human mission at 75 % enemy health (20 Oct 2026, maintainer: "first human mission must have
+all enemies with 75% of they health by default").** `ozi_ns/scenario/globo/globo01.scn` (RETURN TO MARS, the first entry
+of `ozi_ns/gamestat/hxscene.txt`) carries an explicit start value in the sixth column of every enemy object line:
+`tools/scn_enemy_hp.py` (verify / plan / apply) rewrote the 87 objects of the teams not allied with team 0 - the 66
+GRAY / SCYT (types 8, 10) of teams 2 and 3 from -1 (800 by the pack's gamestat) to 600, the 21 FETU incubators of team 5
+from the pack's 500 to 375 and its three TORT (88) from 5 to 4 - leaving the player's and Ternox' (team 1) objects, the
+vents, the `%Label` lines and the LF line ending as they were. Reinforcements the `.tro` script brings in keep their
+default hit points. The installer's copy under `patcher/game/` follows through `tools/resources.py sync`.
+
 ## 12. JSON (`tools/map2json.js`, format `dc16-scenario` version 1)
 
 ```

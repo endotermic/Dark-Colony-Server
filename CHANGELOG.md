@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **OZI MISSIONS: the first human mission starts every enemy at 75 % health** (20 Oct 2026, maintainer; map doc
+  §11): `tools/scn_enemy_hp.py` (verify / plan / apply, any `.scn`, `--percent`, `--player`) writes the start hit
+  points into the sixth column of every object line owned by a team not allied with the player's - the scenario
+  loader passes it to initObject 0x41B124, -1 meaning the type's GAMESTAT value - scaling an explicit value in place
+  and leaving vents, artifact sites, generators, the player's and allied objects alone. Applied to
+  `ozi_ns/scenario/globo/globo01.scn` (RETURN TO MARS) in the game repository: 87 edits (66 GRAY/SCYT of teams 2 and 3
+  at 600 of 800, 21 incubators at 375 of 500, 3 TORT at 4 of 5); the `patcher/game/` copy synced and the installer
+  package republished to Dark-Colony-Ultimate.
 - **Fix `wow64` and the Linux desktop launchers in the generator** (20 Oct 2026; doc §10.79): both had been added by
   hand to the game repository's `Apply-DarkColonyPatches.ps1` on 19-20 Oct 2026. `tools/patch_wow64.py` is the new
   patch tool (verify / plan / apply): the four Watcom callback wrappers of the exe no longer push and pop the GS
