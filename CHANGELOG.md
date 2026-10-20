@@ -6,6 +6,18 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Fix `wow64` and the Linux desktop launchers in the generator** (20 Oct 2026; doc §10.79): both had been added by
+  hand to the game repository's `Apply-DarkColonyPatches.ps1` on 19-20 Oct 2026. `tools/patch_wow64.py` is the new
+  patch tool (verify / plan / apply): the four Watcom callback wrappers of the exe no longer push and pop the GS
+  segment register - seven two-byte NOP edits - because under Wine's 64-bit-only "wow64" mode (Wine 10.0 to 10.13,
+  the default on Ubuntu 26.10 without wine32) a GS write cleared the base Wine's 64-bit side keeps its thread block
+  at and the game died before its first screen (Wine bug 58141, fixed upstream in Wine 10.14). The generator applies
+  it last in the Dark Colony Ultimate build; its template now carries `New-LinuxLauncher`, `New-LinuxWrapper` and
+  `Export-IconPng` (`-DesktopShortcut` under PowerShell 7 on Linux writes `.desktop` launchers with the themed icon,
+  and the game's launcher runs a start script that sets a GNOME Wayland desktop to 100 % display scale while the game
+  runs) and writes the script with the platform's line ending (git stores it with LF). Patcher **2.9**; the
+  regenerated script is byte-for-byte the hand-edited one apart from its header. Reference 1024x768 dark
+  `998669f9…` unchanged from the hand edit.
 - **The default bot is `workers,lieutenant`; the rusher series** (8 Oct 2026, maintainer; plan §19.14): `BOT_VARIANT`
   now defaults to the economy fix plus `lieutenant` - the commander leaves the groups, follows 3 tiles behind the
   largest group of the bot's fighters and gives its star command (the rally: up to 6 units at 130 % damage) when that

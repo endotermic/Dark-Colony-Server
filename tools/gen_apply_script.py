@@ -50,7 +50,7 @@ MANIFEST = json.load(open(os.path.join(TOOLS, 'disc_manifest.json'), encoding='u
 # (YYYYMMDD.HHMM, unique and sortable) plus the commits of the two repositories the file was generated from
 # (short hash, "+" when the working tree had uncommitted changes).  Both are shown in the window title, on the
 # welcome page, in the result box and in the command-line banner, and written into the script's header.
-PATCHER_VERSION = '2.9'   # 2.9 (19-20 Oct 2026): fix wow64 - the four Watcom callback wrappers no longer push/pop GS, so the game starts under Wine's 64-bit-only wow64 mode (Wine bug 58141); -DesktopShortcut on Linux writes .desktop launchers and the GNOME Wayland 100 % display-scale start script - both added by hand in the game repository's script, port to tools/patch_wow64.py and the launcher branch pending; 2.8 (7 Oct 2026): fix volume - the SOUND slider attenuates the sound effects only, no longer the game's Windows per-application volume, which scaled the music as well (doc 10.78); 2.7 (7 Oct 2026): fix intro - the campaign intro movies no longer play over the main menu's looping hum (doc 10.77); 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
+PATCHER_VERSION = '2.9'   # 2.9 (19-20 Oct 2026): fix wow64 - the four Watcom callback wrappers no longer push/pop GS, so the game starts under Wine's 64-bit-only wow64 mode (Wine bug 58141); -DesktopShortcut on Linux writes .desktop launchers and the GNOME Wayland 100 % display-scale start script (both added by hand in the game repository's script on 19-20 Oct 2026 and ported here on 20 Oct 2026: tools/patch_wow64.py, New-LinuxLauncher / New-LinuxWrapper / Export-IconPng in the template); 2.8 (7 Oct 2026): fix volume - the SOUND slider attenuates the sound effects only, no longer the game's Windows per-application volume, which scaled the music as well (doc 10.78); 2.7 (7 Oct 2026): fix intro - the campaign intro movies no longer play over the main menu's looping hum (doc 10.77); 2.6 (5 Oct 2026): INTRO.GIF - the Classic menu's dress, drawn by no screen Dark Colony Ultimate reaches - no longer ships per size, the stock picture is letterboxed like every other screen (doc 10.76); 2.5: the repository ships no patched file; 2.4: fix intro (no start-up movie; the campaign buttons play theirs); 2.0 (5 Oct 2026): patcher/ folder, resources beside the script, install from the two discs; 2.1: the soundtrack ripped from the discs; 2.2: ozisave\ozisave.txt created, not carried; 2.3: the deprecated Dark Colony build removed
 
 
 def _git_state(repo):
@@ -298,7 +298,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
            'speed': ('patch_speed.py', ['--percent', '150']),
            'ddraw': 'patch_ddraw_lost.py', 'palette': 'patch_palette.py', 'camera': 'patch_camera.py', 'restore': 'patch_restore.py',
            'longpath': 'patch_longpath.py', 'music': 'patch_music.py', 'widemap': 'patch_widemap.py',
-           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py', 'fps': 'patch_fps.py', 'pointer': 'patch_pointer.py', 'intro': 'patch_intro.py', 'volume': 'patch_volume.py',
+           'menuorder': 'patch_menu_order.py', 'chat': 'patch_chat.py', 'netsave': 'patch_netsave.py', 'fps': 'patch_fps.py', 'pointer': 'patch_pointer.py', 'intro': 'patch_intro.py', 'volume': 'patch_volume.py', 'wow64': 'patch_wow64.py',
            'ozi': 'patch_ozi_menu.py',
            # map editor: one tool, one fix id per step (the plan is taken once with --fix all)
            'blocksets': ('patch_maped.py', ['--fix', 'blocksets']), 'teams': ('patch_maped.py', ['--fix', 'teams']),
@@ -316,7 +316,7 @@ TOOL_OF = {'nocd': 'patch_nocd.py',
 PLAN_OF = {'nocd': 'nocd',
            'resolution': 'resolution', 'hdpaths': 'hd_paths', 'cursor': 'cursor', 'pool': 'pool',
            'clock': 'clock', 'console': 'clock', 'speed': 'speed', 'ddraw': 'ddraw_lost', 'palette': 'palette', 'camera': 'camera', 'restore': 'restore', 'longpath': 'longpath', 'widemap': 'widemap',
-           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave', 'fps': 'fps', 'pointer': 'pointer', 'intro': 'intro', 'volume': 'volume',
+           'music': 'music', 'menuorder': 'menu_order', 'chat': 'chat', 'netsave': 'netsave', 'fps': 'fps', 'pointer': 'pointer', 'intro': 'intro', 'volume': 'volume', 'wow64': 'wow64',
            'ozi': 'ozi_menu',
            'blocksets': 'maped', 'teams': 'maped', 'healer': 'maped', 'troopsframe': 'maped',
            'race': 'maped', 'campaign': 'maped', 'medfiles': 'maped', 'blockmenu': 'maped', 'teamdialogs': 'maped',
@@ -458,6 +458,15 @@ def blocks_volume(g):
     assert len(out) == 4, (g, len(out))                                   # the engine's three SetVolume sites and the module
     out += reloc_lines(t, '.reloc table: ')
     assert len(out) == 62, (g, len(out))                                  # + the old mixer walk's 58 entries -> type 0
+    return out
+
+def blocks_wow64(g):
+    t = plan(g, 'wow64'); out = []
+    for m in re.finditer(r'^\s+(.+?)\s+VA 0x[0-9a-f]+ file 0x([0-9a-f]+) (\d+) bytes: ((?:[0-9a-f]{2} )*[0-9a-f]{2}) -> ((?:[0-9a-f]{2} )*[0-9a-f]{2});(.*)$', t, re.M):
+        old = bytes.fromhex(m.group(4).replace(' ', '')); new = bytes.fromhex(m.group(5).replace(' ', ''))
+        assert len(old) == len(new) == int(m.group(3)) == 2 and new == b'\x90\x90', (g, old.hex())
+        out.append((int(m.group(2), 16), len(old), m.group(1).strip() + ':' + m.group(6).rstrip(), old, new))
+    assert len(out) == 7, (g, len(out))                                   # four push gs, three pop gs; no .reloc entry
     return out
 
 def blocks_fps(g):
@@ -1128,6 +1137,24 @@ mixer walk at maximum, returns 0 so set_volume does nothing more) and setvol (vo
 the cached or saved level, clamped at DirectSound's minimum, IDirectSoundBuffer::SetVolume); the sample
 engine's three SetVolume calls go through setvol.  The 58 .reloc entries of the old walk become type 0;
 the new code has no absolute operand.  Independent of every other fix.'''),
+ dict(id='wow64', name='Wine 64-bit-only (wow64) mode: the game starts (no GS segment register writes)', date='19 Oct 2026',
+      tool='tools/patch_wow64.py', doc='docs/DC16_DISPLAY_AND_RESOLUTION.md section 10.79 (Wine bug 58141, fixed in Wine 10.14)', blocks=blocks_wow64, cw_only=True,
+      desc='''Under Wine's new "wow64" mode - a 64-bit-only Wine running this 32-bit game, which is what Ubuntu
+26.10 installs (Wine 10.0 with no wine32 package) and the only mode Wine 11 has - the game died
+before its first screen, with "err:virtual:virtual_setup_exception stack overflow" in Wine's
+output (the untouched ENGEXP16.EXE too).  Four routines of the Watcom runtime save and restore the
+segment registers around their body: push es / push fs / push gs on entry, pop gs / pop fs /
+pop es on exit, the compiler's convention for callbacks.  On x86-64 Linux a write to the GS
+register - even of the value it already holds - clears the 64-bit GS base that Wine's 64-bit side
+uses to find its thread block; the next access faults, the fault handler needs the same thread
+block and faults again, and that recursion runs the 64-bit stack out (Wine bug 58141, the same
+crash in MDK and Blood Omen, two other Watcom-built games; fixed in Wine 10.14 of Aug 2025, which
+repairs the GS base in its fault handler - Wine 10.0 to 10.13 do not).  The game is flat 32-bit code
+and never reads GS, so each of the four push gs and the three pop gs becomes two NOPs; every push
+keeps its pop (the routine entered at 0x440BBF leaves through the shared epilogue at 0x440B8C),
+nothing moves.  Verified 19 Oct 2026: under Wine 10.0 in wow64 mode the game reaches the main
+menu with this fix and dies without it.  Windows and the classic 32-bit Wine run the game either
+way.'''),
  dict(id='ozi', name='DARK COLONY and OZI MISSIONS menu modes (Council Wars only)', date='10 Sep 2026', tool='tools/patch_ozi_menu.py',
       doc='docs/DC16_DISPLAY_AND_RESOLUTION.md sections 10.13 and 10.36', blocks=blocks_ozi, cw_only=True,
       requires=lambda mode: [] if mode == STOCK_MODE else ['resolution'], data=ozi_data,
@@ -1423,7 +1450,7 @@ BUILDS = [
  dict(id='CouncilWars', g='cw', exe='Dark Colony Ultimate.exe', product='Dark Colony Ultimate', orig_name='ENGEXP16.EXE', orig_path='DC - Council wars\\ENGEXP16.EXE',
       title='Dark Colony - The Council Wars ENGEXP16.EXE, 659968 bytes (patched build: "Dark Colony Ultimate.exe" - Council Wars plus the Dark Colony, OZI and Academy campaigns; until 25 Sep 2026 engexp16new.exe)',
       source='the Council Wars CD holds exactly this file as EXPENG\\ENGEXP16.EXE - copy it into the "DC - Council wars" folder.',
-      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'ozi', 'intro', 'volume', 'icon', 'online']),
+      steps=['nocd', 'resolution', 'hdpaths', 'clock', 'console', 'cursor', 'pool', 'speed', 'ddraw', 'palette', 'camera', 'widemap', 'restore', 'longpath', 'music', 'menuorder', 'chat', 'netsave', 'fps', 'pointer', 'ozi', 'intro', 'volume', 'icon', 'online', 'wow64']),
  dict(id='MapEditor', g='maped', exe='Dark Colony Map Editor.exe', product='Dark Colony Map Editor', orig_name='maped.exe', orig_path='Dark Colony - Map editor\\maped.exe',
       title='Dark Colony map editor maped.exe (Aug 1997, Borland C++), 336424 bytes (unlocked build: "Dark Colony Map Editor.exe", until 25 Sep 2026 maped_ozi_ns_v1.2.exe)',
       source='the Dark Colony CD holds exactly this file as DC\\MAPED.EXE - copy it into the "Dark Colony - Map editor" folder as maped.exe.',
@@ -1767,7 +1794,10 @@ W(r'''.SYNOPSIS
     After a successful write, put a shortcut to the patched exe on the desktop ("Dark Colony",
     "Dark Colony - Council Wars" or "Dark Colony Map Editor"; start folder = the game folder, which
     the game needs to find its data).  An existing shortcut of that name is replaced.  The window
-    does the same with its "Desktop shortcut" checkbox (ticked by default).
+    does the same with its "Desktop shortcut" checkbox (ticked by default).  Under PowerShell 7 on
+    Linux a ".desktop" launcher that starts the exe with Wine is written instead (19 Oct 2026); for
+    the game it runs a small "<name>.sh" script beside the exe that, on a GNOME Wayland desktop, sets
+    the display scale to 100 % while the game runs and puts it back afterwards (20 Oct 2026).
 
 .PARAMETER Verify
     Instead of patching, inspect an existing exe: which build it is and which patches it carries.
@@ -3781,13 +3811,22 @@ function Write-OnlineScreen([string] $GameDir, [string] $Mode) {
 # command line).  The game opens its data files relative to its working folder, so the shortcut's
 # "Start in" is the game folder - a COPY of the exe on the desktop would not find anything.  Made with
 # the WScript.Shell COM object that is part of Windows; an existing shortcut of the same name is
-# replaced.  $script:DesktopFolder lets a test write somewhere else than the real desktop.
+# replaced.  Under PowerShell 7 on Linux (19 Oct 2026) there is no COM: a freedesktop ".desktop"
+# launcher of the same name is written instead (New-LinuxLauncher) - it starts the exe with Wine from
+# the game folder, shows DC_HD.ICO, and is made executable and marked trusted (GNOME) so that a
+# double-click runs it without the "untrusted launcher" question.  $script:DesktopFolder lets a test
+# write somewhere else than the real desktop.
 $script:DesktopFolder = $null
 function New-GameShortcut([string] $ExePath, $Build) {
     $name = $Build.ProductName          # "Dark Colony", "Dark Colony Ultimate", "Dark Colony Map Editor"
-    $desktop = if ($script:DesktopFolder) { $script:DesktopFolder } else { [Environment]::GetFolderPath('Desktop') }
+    # Windows PowerShell 5.1 has no $IsWindows (and is Windows); PowerShell 7 sets it on every platform
+    $onWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or [bool] (Get-Variable IsWindows -ValueOnly -ErrorAction SilentlyContinue)
+    $desktop = if ($script:DesktopFolder) { $script:DesktopFolder }
+               elseif (-not $onWindows -and (Get-Command xdg-user-dir -ErrorAction SilentlyContinue)) { @(& xdg-user-dir DESKTOP 2>$null)[0] }   # the user's real desktop folder (localised names, XDG settings)
+               else { [Environment]::GetFolderPath('Desktop') }
     if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) { throw 'this user has no desktop folder' }
     $exe = Get-AbsolutePath $ExePath
+    if (-not $onWindows) { return New-LinuxLauncher $desktop $name $exe ($Build.Modes.Count -gt 0) }   # a build with screen sizes = the full-screen game
     $lnkPath = Join-Path $desktop ($name + '.lnk')
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -3801,6 +3840,189 @@ function New-GameShortcut([string] $ExePath, $Build) {
         [void] [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
     }
     return $lnkPath
+}
+
+# The Linux form of the desktop shortcut (19 Oct 2026): a freedesktop.org desktop entry
+# "<name>.desktop" on the desktop that runs  wine "<exe>"  with the game folder as the working
+# directory.  For the full-screen game ($FullScreen, 20 Oct 2026) it runs the small shell script
+# "<name>.sh" that New-LinuxWrapper writes beside the exe instead, which starts the exe with Wine and,
+# on a GNOME Wayland desktop with a display scale above 100 %, sets the scale to 100 % for the time the
+# game runs - the exe itself is untouched, -Verify and the reference SHA-256 values do not change.
+# Icon: the 256x256 PNG image inside DC_HD.ICO (beside the exe, or the patcher's own copy
+# patcher\game\DC_HD.ICO) is written to the user's icon theme folder,
+# ~/.local/share/icons/hicolor/256x256/apps/dark-colony.png, and the launcher names it "dark-colony" -
+# a desktop without an .ico image loader (GNOME on Ubuntu) shows nothing for an .ico path, every
+# desktop finds a themed PNG; only an .ico without a PNG image falls back to the .ico path.  The Exec
+# value is quoted and escaped as the specification asks (\ " ` $ with a backslash, % doubled).  chmod +x
+# and the GNOME "trusted" mark let a double-click start it at once.  Wine itself is not checked for
+# beyond a warning: the launcher is for the desktop, the patcher runs without Wine.
+function New-LinuxLauncher([string] $Desktop, [string] $Name, [string] $Exe, [bool] $FullScreen = $false) {
+    $folder = Split-Path -Parent $Exe
+    $icon = $null
+    foreach ($c in @((Join-Path $folder 'DC_HD.ICO'), (Join-Path (Join-Path $PSScriptRoot 'game') 'DC_HD.ICO'))) {
+        if (Test-Path -LiteralPath $c) { $icon = $c; break }
+    }
+    if ($icon) {
+        $dataHome = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+        $hicolor = Join-Path $dataHome 'icons/hicolor'
+        $png = Join-Path $hicolor '256x256/apps/dark-colony.png'
+        if (Export-IconPng $icon $png) {
+            $icon = 'dark-colony'
+            try { [System.IO.Directory]::SetLastWriteTimeUtc($hicolor, [DateTime]::UtcNow) } catch { }   # GTK re-reads a theme folder whose time changed
+        }
+    }
+    if (-not (Get-Command wine -ErrorAction SilentlyContinue)) { Write-Warning 'wine was not found in PATH - the desktop launcher starts the exe with "wine" and needs it installed.' }
+    $target = if ($FullScreen) { New-LinuxWrapper $folder $Name (Split-Path -Leaf $Exe) } else { $Exe }
+    $q = $target.Replace('\', '\\').Replace('"', '\"').Replace('`', '\`').Replace('$', '\$').Replace('%', '%%')
+    $lines = @(
+        '[Desktop Entry]'
+        'Type=Application'
+        'Version=1.0'
+        "Name=$Name"
+        "Comment=$Name - patched exe written by Apply-DarkColonyPatches.ps1"
+        $(if ($FullScreen) { 'Exec="{0}"' -f $q } else { 'Exec=wine "{0}"' -f $q })
+        "Path=$folder"
+    )
+    if ($icon) { $lines += "Icon=$icon" }
+    $lines += @('Terminal=false', 'Categories=Game;StrategyGame;', 'StartupNotify=false')
+    $path = Join-Path $Desktop ($Name + '.desktop')
+    [System.IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+    if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $path }
+    if (Get-Command gio -ErrorAction SilentlyContinue) { & gio set $path 'metadata::trusted' 'true' 2>$null }
+    return $path
+}
+
+# The game's start script "<name>.sh" beside the exe (20 Oct 2026), the target of the Linux desktop
+# launcher: cd to its own folder, wine "<exe>", and around that the GNOME display scale.  Wine 10.0's
+# Wayland driver sizes the full-screen game in the desktop's scaled (logical) pixels and ignores the
+# compositor's answer, so at a scale of 125 % the 1920x1080 picture is drawn 1.25x from the top-left
+# corner and cropped (only 1536x864 of it visible); at 100 % every game pixel is one screen pixel
+# (verified with screenshots, Ubuntu 26.10 / GNOME 51 / Wine 10.0, 20 Oct 2026).  The script therefore
+# asks mutter (org.gnome.Mutter.DisplayConfig on the session bus, via python3 + GObject introspection,
+# which every GNOME desktop has) for the current monitor layout and, if any logical monitor's scale is
+# not 1.0, applies the same layout at scale 1.0 with ApplyMonitorsConfig method 1 - temporary: nothing
+# is persisted, a logout restores the desktop's own setting - and applies the saved layout again in an
+# EXIT/INT/TERM/HUP trap when the game is over.  Positions are re-laid out for the new scale (one scale
+# everywhere: multiplied by it; mixed scales: a row from left to right; physical layout mode: kept).
+# Without a Wayland session, without mutter on the bus, without python3/gi, or if mutter rejects the
+# layout, the script just starts the game - exactly what the launcher did before.  Written with LF
+# line endings and chmod +x; an existing script of the name is replaced.
+function New-LinuxWrapper([string] $Folder, [string] $Name, [string] $ExeName) {
+    $text = @'
+#!/bin/sh
+# __NAME__.sh - written by Apply-DarkColonyPatches.ps1 (-DesktopShortcut), 20 Oct 2026.
+# Starts "__EXE__" with Wine from this folder - the desktop launcher runs this file.
+#
+# On a GNOME Wayland desktop whose display scale is above 100 % the game would not fit the screen:
+# Wine 10.0's Wayland driver draws the full-screen game in the desktop's scaled pixels, so at 125 % it
+# comes out a quarter too large from the top-left corner with the right and bottom edges off the
+# screen.  So this script first sets the scale of every monitor to 100 % for the time the game runs
+# (mutter's ApplyMonitorsConfig in its temporary form: nothing is saved, a logout brings the desktop's
+# own setting back) and puts the previous scale back when the game exits.  Anywhere else - an X11
+# session, another desktop, no python3 with GObject introspection - the game is simply started.
+exe='__EXE__'
+cd "$(dirname -- "$0")" || exit 1
+
+helper='
+import sys, json
+try:
+    import gi
+    gi.require_version("Gio", "2.0"); gi.require_version("GLib", "2.0")
+    from gi.repository import Gio, GLib
+except Exception:
+    sys.exit(1)
+TYPE = "(uua(iiduba(ssa{sv}))a{sv})"
+def state():
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    p = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.DO_NOT_AUTO_START, None, "org.gnome.Mutter.DisplayConfig",
+                               "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig", None)
+    serial, monitors, logical, props = p.call_sync("GetCurrentState", None, 0, 5000, None).unpack()
+    return p, serial, monitors, logical, props
+def apply(p, serial, layout):
+    lm = [(x, y, float(s), t, bool(prim), [(c, m, {}) for c, m in mons]) for x, y, s, t, prim, mons in layout]
+    p.call_sync("ApplyMonitorsConfig", GLib.Variant(TYPE, (serial, 1, lm, {})), 0, 5000, None)   # 1 = temporary
+if sys.argv[1] == "scale100":
+    p, serial, monitors, logical, props = state()
+    if all(abs(l[2] - 1.0) < 0.001 for l in logical): sys.exit(1)
+    size = {}                               # connector -> (current mode id, physical w, h)
+    for mon in monitors:
+        for m in mon[1]:
+            if m[6].get("is-current"): size[mon[0][0]] = (m[0], m[1], m[2])
+    orig = [[l[0], l[1], l[2], l[3], l[4], [[m[0], size[m[0]][0]] for m in l[5] if m[0] in size]] for l in logical]
+    orig = [l for l in orig if l[5]]
+    if not orig: sys.exit(1)
+    logicalmode = props.get("layout-mode", 1) == 1    # positions in scaled pixels; 2 = physical pixels
+    def extent(l):
+        c, mode = l[5][0]; w, h = size[c][1], size[c][2]
+        return (h, w) if l[3] % 2 else (w, h)
+    tries = []
+    if not logicalmode:
+        tries.append([[x, y, 1.0, t, prim, mons] for x, y, s, t, prim, mons in orig])
+    else:
+        if len({l[2] for l in orig}) == 1:    # one scale everywhere: positions grow by the same factor
+            f = orig[0][2]
+            tries.append([[int(round(x * f)), int(round(y * f)), 1.0, t, prim, mons] for x, y, s, t, prim, mons in orig])
+        row = []; nx = 0                      # otherwise (or if that fails): a row from left to right
+        for l in sorted(orig, key=lambda l: (l[0], l[1])):
+            row.append([nx, int(round(l[1] * l[2])), 1.0, l[3], l[4], l[5]]); nx += extent(l)[0]
+        tries.append(row)
+    for layout in tries:
+        try:
+            apply(p, serial, layout)
+            print(json.dumps(orig)); sys.exit(0)
+        except Exception:
+            serial = state()[1]
+    sys.exit(1)
+elif sys.argv[1] == "restore":
+    orig = json.load(sys.stdin)
+    p, serial = state()[:2]
+    apply(p, serial, orig)
+'
+orig=''
+if { [ "${XDG_SESSION_TYPE:-}" = wayland ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v python3 >/dev/null 2>&1; then
+    orig=$(python3 -I -c "$helper" scale100 2>/dev/null) || orig=''
+fi
+restore() {
+    if [ -n "$orig" ]; then printf '%s' "$orig" | python3 -I -c "$helper" restore >/dev/null 2>&1; fi
+    orig=''
+}
+if [ -n "$orig" ]; then
+    trap restore EXIT
+    trap 'restore; exit 130' INT TERM HUP
+fi
+wine "$exe"
+'@
+    $text = $text.Replace("`r`n", "`n").Replace('__NAME__', $Name).Replace('__EXE__', $ExeName.Replace("'", "'\''"))
+    $path = Join-Path $Folder ($Name + '.sh')
+    [System.IO.File]::WriteAllText($path, $text + "`n", (New-Object System.Text.UTF8Encoding $false))
+    if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod +x $path }
+    return $path
+}
+
+# The largest PNG-compressed image of an .ico file (Vista-style icons keep their 256x256 image as a
+# PNG; DC_HD.ICO has 96x96 and 256x256 as PNG, the smaller sizes as BMP) written to $Png as it is -
+# no decoder needed.  Returns $false when the file is no icon or holds no PNG image.
+function Export-IconPng([string] $Ico, [string] $Png) {
+    $d = [System.IO.File]::ReadAllBytes($Ico)
+    if ($d.Length -lt 6 -or [BitConverter]::ToUInt16($d, 0) -ne 0 -or [BitConverter]::ToUInt16($d, 2) -ne 1) { return $false }
+    $n = [int] [BitConverter]::ToUInt16($d, 4)
+    $bestOff = -1; $bestLen = 0; $bestW = -1
+    for ($i = 0; $i -lt $n; $i++) {
+        $e = 6 + 16 * $i
+        if ($e + 16 -gt $d.Length) { break }
+        $w = [int] $d[$e]; if ($w -eq 0) { $w = 256 }
+        $len = [BitConverter]::ToInt32($d, $e + 8); $off = [BitConverter]::ToInt32($d, $e + 12)
+        if ($off -lt 0 -or $len -lt 8 -or $off + $len -gt $d.Length) { continue }
+        $isPng = $d[$off] -eq 0x89 -and $d[$off + 1] -eq 0x50 -and $d[$off + 2] -eq 0x4E -and $d[$off + 3] -eq 0x47
+        if ($isPng -and $w -gt $bestW) { $bestOff = $off; $bestLen = $len; $bestW = $w }
+    }
+    if ($bestOff -lt 0) { return $false }
+    $dir = Split-Path -Parent $Png
+    if (-not (Test-Path -LiteralPath $dir)) { [void] (New-Item -ItemType Directory -Path $dir -Force) }
+    $out = New-Object byte[] $bestLen
+    [Array]::Copy($d, $bestOff, $out, 0, $bestLen)
+    [System.IO.File]::WriteAllBytes($Png, $out)
+    return $true
 }
 
 # Applies the chosen patches (canonical order) to the bytes of $OriginalPath and writes $OutputPath.
@@ -5335,6 +5557,8 @@ Write-Host ('{0} executable(s) patched, {1} failed.' -f $done, $failed)
 if ($failed -gt 0 -or $done -eq 0) { exit 1 }
 ''')
 
-open(OUT, 'w', encoding='utf-8', newline='\r\n').write('\n'.join(out))
+# CRLF on Windows (Notepad), LF on Linux: git stores the script with LF either way, so a regeneration on Linux
+# does not turn every line into a change (20 Oct 2026)
+open(OUT, 'w', encoding='utf-8', newline=('\r\n' if os.name == 'nt' else '\n')).write('\n'.join(out))
 shutil.rmtree(WORK, ignore_errors=True)
 print('wrote', OUT, os.path.getsize(OUT), 'bytes')

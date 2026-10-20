@@ -163,6 +163,11 @@ only a stock Python 3 (no third-party packages).
   (block-set buttons, team colour and allies, the Healer row; what the Polish ozi_ns editor did, minus
   the translation; verify / plan / apply `--fix ID|all`). `tools/gen_apply_script.py` generates
   `Apply-DarkColonyPatches.ps1` for the game repository from all patch tools (three builds).
+- `tools/patch_wow64.py` - lets the game start under Wine's 64-bit-only "wow64" mode (Wine 10.0 to 10.13,
+  the default on Ubuntu 26.10 without wine32): the four Watcom callback wrappers no longer push and pop the GS
+  segment register, whose write cleared the base Wine's 64-bit side keeps its thread block at (Wine bug 58141,
+  fixed in Wine 10.14; patcher fix `wow64`, last in `-All`; verify / plan / apply, keeps a `.wow64.bak`). Section
+  10.79 of the display document.
 - `tools/make_dc_icon.py` - renders the high-resolution icon `DC - Council wars/DC_HD.ICO` (16 to 256
   pixels) from the geometry of the game's 32x32 `DC.ICO` (frame, 3-D "DC" letters, the planet Mars);
   `tools/patch_icon.py` puts it into all three patched exes as a new `.dcicon` resource section

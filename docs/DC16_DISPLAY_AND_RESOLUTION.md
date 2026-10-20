@@ -7105,3 +7105,56 @@ rig's `subst X:` copy at 1024x768 dark: byte-identical to the reference, `patch_
 (the cache is 0, the saved level 5 applies), so the new path runs at every start. The rig cannot hear the game (section
 10.77), and the sliders need a hand on the options screen. **Confirmed by the maintainer the same day: "tested. working as
 expected"** - the SOUND slider moves the effects only, the music keeps its own level.
+
+### 10.79 Wine's 64-bit-only "wow64" mode: no GS segment register writes; the Linux desktop launcher (19-20 Oct 2026)
+
+**Report (19 Oct 2026, Ubuntu 26.10 / Wine 10.0): the game dies before its first screen, `err:virtual:virtual_setup_exception
+stack overflow` in Wine's log - the untouched `ENGEXP16.EXE` as well as every patched build.** New fix **`wow64`**
+(`tools/patch_wow64.py`), last in `-All` of Dark Colony Ultimate; the map editor (Borland) is not affected. Patcher **2.9**.
+Both fixes of this section were first written by hand into the game repository's `Apply-DarkColonyPatches.ps1` (19-20 Oct
+2026) and ported into the generator on 20 Oct 2026.
+
+**Cause.** Ubuntu 26.10 ships Wine 10.0 without a `wine32` package, so the 32-bit game runs in Wine's "wow64" mode: a
+64-bit-only Wine whose 64-bit side keeps its thread block behind the **GS base** of the x86-64 thread. Four routines of the
+game's Watcom run-time save and restore the segment registers around their body - `push es / push fs / push gs` on entry,
+`pop gs / pop fs / pop es` on exit, the compiler's convention for callbacks - and on x86-64 Linux a write to GS, even of
+the value it already holds, clears that 64-bit GS base. The next access to the thread block faults, the fault handler
+needs the same thread block, faults again, and the recursion runs the 64-bit stack out: Wine bug 58141 (the same crash in
+MDK and Blood Omen, two other Watcom-built games), fixed in Wine 10.14 (Aug 2025, commit `94447cee`, which repairs the GS
+base in the fault handler); Wine 10.0 to 10.13 do not. Windows and the classic 32-bit Wine run the game either way.
+
+**The sites.** A byte scan of the AUTO section for `06 0F A0 0F A8` (push es / fs / gs) and `0F A9 0F A1 07` (pop gs / fs /
+es) finds exactly four prologues and three epilogues (Council Wars VAs; Classic `dc16.exe` 0x60 lower, the same bytes):
+
+| push gs | routine | pop gs |
+|---|---|---|
+| `0x440B4E` | callback wrapper A, entered at `0x440B49` | `0x440B8C` (shared with B) |
+| `0x440BBF` | callback wrapper B, entered at `0x440BB8`; its body ends with `leave ; jmp 0x440B8C` at `0x440FE0` | `0x440B8C` |
+| `0x47A105` | callback wrapper C, entered at `0x47A0FE` | `0x47A1DF` |
+| `0x47AB1A` | callback wrapper D, entered at `0x47AB13` | `0x47ABB2` |
+
+**Fix.** The game is flat 32-bit code and never reads GS, so each `push gs` and `pop gs` becomes two NOPs: **14 bytes in 7
+edits**, every push keeps its pop, no `.reloc` entry is involved and nothing moves; the fix is independent of every other
+one (the tool applies at any point, the patcher runs it last). The tool refuses an exe whose scan finds any other such
+sequence or whose known sites hold neither the stock nor the patched bytes. Verified 19 Oct 2026: under Wine 10.0 in wow64
+mode the game reaches the main menu with the fix and dies without it.
+
+**The Linux desktop launcher (installer, no exe byte).** Under PowerShell 7 on Linux there is no WScript.Shell, so
+`-DesktopShortcut` writes a freedesktop `.desktop` launcher (`New-LinuxLauncher`) that starts the exe with Wine from the
+game folder, made executable and marked trusted for GNOME, with the 256x256 PNG image of `DC_HD.ICO` installed as the
+themed icon `dark-colony` (`Export-IconPng`: the PNG is copied out of the icon as it is). The game's launcher runs the start
+script `Dark Colony Ultimate.sh` beside the exe (`New-LinuxWrapper`, 20 Oct 2026): Wine 10.0's Wayland driver sizes the
+full-screen game in the desktop's scaled (logical) pixels and ignores the compositor's configure, so at a display scale of
+125 % the 1920x1080 picture is drawn 1.25x from the top-left corner and cropped (1536x864 visible), while at 100 % every
+game pixel is one screen pixel (screenshots, Ubuntu 26.10 / GNOME 51 Wayland / Wine 10.0, 20 Oct 2026); Wine's X11 driver
+cannot switch the mode under Wayland at all and leaves the picture small in the corner. The script asks mutter
+(`org.gnome.Mutter.DisplayConfig`, via python3 + GObject introspection) for the monitor layout and, if any logical monitor's
+scale is not 1.0, applies the same layout at scale 1.0 with `ApplyMonitorsConfig` method 1 (temporary, nothing persisted),
+restoring it in an EXIT / INT / TERM / HUP trap when the game ends; outside a GNOME Wayland session it just starts the
+game. `PATCH_HOWTO.TXT` "ON LINUX, WITHOUT WINDOWS" has the player's side (pwsh needs OpenSSL 1.1 or 3; the Wayland driver
+registry key).
+
+**Verified.** Generator: fix wow64 7 edits of 2 bytes, no `.reloc` line; the regenerated script is byte-for-byte the
+hand-edited one apart from its header, and the hand edit's references hold: Ultimate 1024x768 dark **`998669f9…`** (was
+`d37b674e…`), light `880ba6d9…`, 640x480 `a7d708c1…`, 1920x1080 dark `54e35f56…` / light `9abacec6…`; the editor
+`de8076dc…` unchanged. `patch_wow64.py verify` reports the two originals stock and a patched copy patched.
