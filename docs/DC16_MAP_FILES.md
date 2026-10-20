@@ -369,6 +369,19 @@ from the pack's 500 to 375 and its three TORT (88) from 5 to 4 - leaving the pla
 vents, the `%Label` lines and the LF line ending as they were. Reinforcements the `.tro` script brings in keep their
 default hit points. The installer's copy under `patcher/game/` follows through `tools/resources.py sync`.
 
+**OZI pack, second alien mission `council/tarr02`: the captain's walk (20 Oct 2026, maintainer: "allied human
+lieutenant is stuck in half way").** The team 5 lieutenant at (9,4) is moved by four `waypoint` patrols (triggers 5,
+7, 21, 23) to the rebel camp, where trigger 9 (`trip 1 (S==5)`) sends the rebels away. Two faults, fixed by
+`tools/fix_tarr02_captain.py` (verify / plan / apply): (1) triggers 7, 21 and 23 were `trip 0 (S==0)` - fired by a
+*player* step, one of their 99 lives per step (0x43E610), their areas being the corridors the escort walks through -
+so an escort disarmed the hand-off before the captain stood on the three pickup tiles and he patrolled at the mine
+field for ever; they are `(S==5)` now, fired by his own steps (the step code reads a mover's previous tile, the three
+actions cover his patrol row). (2) The camp corridor is five tiles wide and rows z 73-74 are completely filled with
+rebel objects; his last waypoints and trigger 9's area (z 70-71) lie south of that wall, he arrives from the north,
+and allies never pass through each other: trigger 9's area now also covers x 102-106, z 75-76 in the `.mtg` (ten bytes;
+the formation is unchanged, so the player gains no shortcut). Found by reading `.tro`/`.mtg`/`.pth`/`.scn` against the
+engine port and the disassembly of 0x43E610 / 0x416110 / 0x43E183; confirmed in a game by the maintainer on 20 Oct 2026.
+
 ## 12. JSON (`tools/map2json.js`, format `dc16-scenario` version 1)
 
 ```

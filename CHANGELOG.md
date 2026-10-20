@@ -6,6 +6,13 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **OZI MISSIONS: the captain of THE ROAD TO FREEDOM reaches the rebel camp** (20 Oct 2026, maintainer's report;
+  map doc §11): `tools/fix_tarr02_captain.py` (verify / plan / apply) edits `ozi_ns/scenario/council/tarr02.tro` and
+  `.mtg` in the game repository. The hand-off triggers 7, 21, 23 fire on the lieutenant's own steps (`S==5`) instead of
+  the player's, whose escort spent their 99 lives before he was on the pickup tiles; trigger 9's area gains the two
+  free rows north of the rebel wall (z 75-76) so the rebels leave before he has to pass rows 73-74, which they fill
+  completely. Installer copy synced, package republished. Played through by the maintainer on 20 Oct 2026 ("well done"),
+  as was the first human mission at 75 % enemy health.
 - **OZI MISSIONS: the first human mission starts every enemy at 75 % health** (20 Oct 2026, maintainer; map doc
   §11): `tools/scn_enemy_hp.py` (verify / plan / apply, any `.scn`, `--percent`, `--player`) writes the start hit
   points into the sixth column of every object line owned by a team not allied with the player's - the scenario
