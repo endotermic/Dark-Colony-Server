@@ -6,6 +6,14 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **Movies visible under Wine: the frame goes into the back buffer and is flipped** (20 Oct 2026, maintainer's
+  report "only sound of the video is heard and black screen"; doc §10.8): the stretched movie path of fix
+  `resolution` blitted every frame onto the primary surface without a `Flip`. Windows shows that at once, Wine's
+  DirectDraw presents only on `Flip` (`ddraw_surface_update_frontbuffer` with swap interval 0 never presents), so
+  under Wine the campaign movies were black with sound. `patch_resolution.py` stage 4 now blits into the back
+  buffer and jumps into `draw_flip`'s Flip-and-exit tail (same length, the 13 epilogue bytes become the jump).
+  Patcher **2.10**, regenerated; reference checksums change. Confirmed by the maintainer under Wine 10.0 (Wayland
+  driver) the same day.
 - **OZI MISSIONS: the captain of THE ROAD TO FREEDOM reaches the rebel camp** (20 Oct 2026, maintainer's report;
   map doc §11): `tools/fix_tarr02_captain.py` (verify / plan / apply) edits `ozi_ns/scenario/council/tarr02.tro` and
   `.mtg` in the game repository. The hand-off triggers 7, 21, 23 fire on the lieutenant's own steps (`S==5`) instead of

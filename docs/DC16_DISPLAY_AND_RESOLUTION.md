@@ -1444,6 +1444,22 @@ blitting to the back buffer and flipping needs 15 bytes more than the block has)
 alternatives are the four immediates in the block: `(0,0,1024,768)` full screen (distorts
 16:9→4:3), or 3× integer `(32,114,992,654)`.
 
+**Wine: Blt to the primary is never shown (20 Oct 2026, maintainer: "video clips are not visible under wine,
+only sound of the video is heard and black screen while video is playing"; Wine 10.0, Wayland driver).** The
+decoder is found (Wine registers `vidc.cvid=iccvid.dll` in `system.ini`, and `open_video` asserts "Unable to locate
+CODEC" into `ERROR.LOG` and exits otherwise - the log stayed empty), the frames are decoded and written into the
+movie surface, but Wine's ddraw presents the screen only on `Flip`: a `Blt` onto a `DDSCAPS_PRIMARYSURFACE`
+surface ends in `ddraw_surface_update_frontbuffer(dst, rect, FALSE, swap_interval = 0)` (surface.c), which blits
+into wined3d's front-buffer texture and calls `wined3d_swapchain_present` only when `swap_interval` is non-zero -
+that is, from `Flip`. Windows shows a primary write at once, so the path above looked right there. Fix, same
+length: the block's `Blt` targets the **back buffer** (`0x48971C`) and the 13-byte epilogue that followed it
+(`lea esp,[ebp+82h]`, six pops, `ret`) becomes `jmp 0x004077F6` - the Flip-and-exit tail of `draw_flip`
+(`Flip(primary, NULL, 0)`, `Restore` on `DDERR_SURFACELOST`, retry on `WASSTILLDRAWING`, then the identical
+epilogue; both drawers have the same Watcom frame, `sub esp,N; sub ebp,82h`). The two buffers are cleared by
+`clear_and_flip` at movie start (`build_luts` `0x0040763E`) and end (`avi_end`), so the letterbox bars stay
+black while the frames alternate buffers. This also removes the tearing risk of the paragraph above; ENGEXP16
+has the same bytes `0x60` higher. Patcher 2.10. Confirmed by the maintainer under Wine 10.0 (Wayland driver, 1920x1080) on 20 Oct 2026: "videos are visible now".
+
 #### 10.9 The minimap's input side **(verified)**
 
 Fifth test pass: clicking the minimap to send troops did nothing. Stage 3 had moved the

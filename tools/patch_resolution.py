@@ -23,7 +23,8 @@ Stages are cumulative and mirror the plan in the doc:
          draw_terrain's stack lightmap (17x16 tiles), its frame is grown and the PE
          header's stack reserve/commit raised
     4  + movies: pitch-aware back-buffer clear, and the frame path rerouted through the
-         320x180 movie surface + a stretching IDirectDrawSurface::Blt (16:9 letterbox
+         320x180 movie surface + a stretching IDirectDrawSurface::Blt into the back buffer and
+         a Flip (since 20 Oct 2026; before, Blt to the primary: invisible under Wine) (16:9 letterbox
          across the full width)                             (default)
 
 Stage 5 of the plan is data and art only; nothing here touches it. Stage 6 (parity) is the
@@ -521,7 +522,7 @@ SITES += [
      'display thread: always draw through the 320x180 movie surface'),
     (4, 0x07214, lambda g: movie_blt_block(g, stock=True), None,
      lambda g: movie_blt_block(g, stock=False),
-     'draw_offscreen: BltFast -> stretching Blt(primary, dest rect, movie surface)'),
+     'draw_offscreen: BltFast -> stretching Blt(back buffer, dest rect, movie surface) + Flip'),
     (4, 0x06879, 'e9d4000000', None, lambda g: b'\x90' * 5,
      'clear_and_flip: also clear the movie surface in flip mode'),
     (4, 0x06430, '7518', None, lambda g: b'\x90\x90',
@@ -532,39 +533,55 @@ SITES += [
 
 
 def movie_blt_block(g, stock):
-    """The 62 bytes at 0x00407E14..0x00407E51 of draw_offscreen (doc 10.8).
+    """The 75 bytes at 0x00407E14..0x00407E5E of draw_offscreen: the 62-byte BltFast block and the
+    13-byte epilogue (doc 10.8).
 
     Stock: srcRect = (0,0,320,180) at [ebp+52h..], BltFast(primary, x=160, y=2*yoff, movie,
-    &srcRect, DDBLTFAST_WAIT). New: destRect at [ebp+62h..] (dead temporaries of the finished
-    copy loop), Blt(primary, &destRect, movie, NULL, DDBLT_WAIT, NULL) -- stretches. The two
-    absolute DGROUP addresses (primary 0x489718, movie surface 0x488E00) move with the build's
-    DGROUP shift, the .bss one (yoff 0x4A5680) with its .bss shift.
+    &srcRect, DDBLTFAST_WAIT), then `lea esp,[ebp+82h]; pop x6; ret`. New: destRect at
+    [ebp+62h..] (dead temporaries of the finished copy loop), Blt(BACK BUFFER, &destRect, movie,
+    NULL, DDBLT_WAIT, NULL) -- stretches -- then `jmp 0x004077F6`: the Flip-and-exit tail of
+    draw_flip (Flip(primary, NULL, 0), Restore on DDERR_SURFACELOST, retry on WASSTILLDRAWING,
+    and the same six-pop epilogue: both drawers have the identical Watcom frame, `sub esp; sub
+    ebp,82h`). Until 20 Oct 2026 the Blt went to the primary with no Flip; Windows shows a
+    primary write at once, but Wine's ddraw presents only on Flip (a Blt onto the primary lands
+    in wined3d's front-buffer texture without a present, surface.c
+    ddraw_surface_update_frontbuffer with swap_interval 0), so under Wine - black screen, sound
+    only, found with the Wayland driver - the movies were never seen. The two absolute DGROUP
+    addresses (back buffer 0x48971C, movie surface 0x488E00) move with the build's DGROUP shift,
+    the .bss one of the stock bytes (yoff 0x4A5680) with its .bss shift; the jmp is relative and
+    both ends shift alike (+0x60 in ENGEXP16).
     """
     primary = struct.pack('<I', 0x489718 + g.dgroup_shift)
+    back = struct.pack('<I', 0x48971C + g.dgroup_shift)
     movie = struct.pack('<I', 0x488E00 + g.dgroup_shift)
     yoff = struct.pack('<I', 0x4A5680 + g.bss_shift)
+    epilogue = bytes.fromhex('8da582000000' '5d5f5e5a595b' 'c3')          # lea esp,[ebp+82h]; pops; ret
     if stock:
         return (bytes.fromhex('ba40010000b9b40000006a10a1') + primary
                 + bytes.fromhex('89555a8d55528b1d') + movie
                 + bytes.fromhex('5231ff8b15') + yoff
-                + bytes.fromhex('5301d2897d5252897d56894d5e68a00000008b0850ff511c'))
+                + bytes.fromhex('5301d2897d5252897d56894d5e68a00000008b0850ff511c')
+                + epilogue)
     left, top, right, bottom = g.movie_rect
     # dest.left: zero through edi as the stock code did (5 bytes), or, for a pillarboxed movie,
     # an immediate (9 bytes; edi is still zeroed) that takes four of the six trailing NOPs.
     store_left = (bytes.fromhex('31ff897d62') if left == 0               # xor edi,edi; [ebp+62h]=edi
                   else bytes.fromhex('31ff') + b'\xC7\x45\x62' + struct.pack('<I', left))
-    return (store_left
-            + b'\xC7\x45\x66' + struct.pack('<I', top)                   # dest.top
-            + b'\xC7\x45\x6A' + struct.pack('<I', right)                 # dest.right
-            + b'\xC7\x45\x6E' + struct.pack('<I', bottom)                # dest.bottom
-            + bytes.fromhex('6a00')                                      # lpDDBltFx = NULL
-            + bytes.fromhex('6800000001')                                # DDBLT_WAIT
-            + bytes.fromhex('6a00')                                      # lpSrcRect = NULL
-            + b'\xFF\x35' + movie                                        # push [movie surface]
-            + bytes.fromhex('8d556252')                                  # lea edx,[ebp+62h]; push
-            + b'\xA1' + primary + b'\x50'                                # mov eax,[primary]; push
-            + bytes.fromhex('8b08ff5114')                                # call [vtbl+14h] = Blt
-            + b'\x90' * (6 if left == 0 else 2))
+    blt = (store_left
+           + b'\xC7\x45\x66' + struct.pack('<I', top)                    # dest.top
+           + b'\xC7\x45\x6A' + struct.pack('<I', right)                  # dest.right
+           + b'\xC7\x45\x6E' + struct.pack('<I', bottom)                 # dest.bottom
+           + bytes.fromhex('6a00')                                       # lpDDBltFx = NULL
+           + bytes.fromhex('6800000001')                                 # DDBLT_WAIT
+           + bytes.fromhex('6a00')                                       # lpSrcRect = NULL
+           + b'\xFF\x35' + movie                                         # push [movie surface]
+           + bytes.fromhex('8d556252')                                   # lea edx,[ebp+62h]; push
+           + b'\xA1' + back + b'\x50'                                    # mov eax,[back buffer]; push
+           + bytes.fromhex('8b08ff5114')                                 # call [vtbl+14h] = Blt
+           + b'\x90' * (6 if left == 0 else 2))
+    assert len(blt) == 62
+    # 0x00407E52: jmp 0x004077F6 (rel32 = 0x4077F6 - 0x407E57), then the 8 unused epilogue bytes
+    return blt + b'\xE9' + struct.pack('<i', 0x4077F6 - 0x407E57) + b'\x90' * 8
 
 
 # -- stage 2: code-positioned menu furniture (doc 10.7) -------------------------------------
