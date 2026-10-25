@@ -7174,3 +7174,29 @@ registry key).
 hand-edited one apart from its header, and the hand edit's references hold: Ultimate 1024x768 dark **`998669f9…`** (was
 `d37b674e…`), light `880ba6d9…`, 640x480 `a7d708c1…`, 1920x1080 dark `54e35f56…` / light `9abacec6…`; the editor
 `de8076dc…` unchanged. `patch_wow64.py verify` reports the two originals stock and a patched copy patched.
+**Desktop launcher, "the game hangs in the background" (20 Oct 2026, maintainer: "when starting the game by using
+desktop shortcut, then game is not starting until i use window switching using 'windows' key").** Wine logs
+(`WINEDEBUG=+waylanddrv,+keyboard,+win,+ddraw`) of a good and a bad start are identical for the first 0.7 s: the window
+is mapped full screen, GNOME gives it keyboard focus 5 ms after its configure, the pointer is over it, two frames are
+presented. In the bad start the second present never returns: `ddraw_surface_update_frontbuffer` → wined3d's
+command-stream thread → `eglSwapBuffers`, which in Mesa (platform_wayland.c) waits for the compositor's frame callback
+while the swap interval is 1 - and mutter sent none for 5.4 s, until the player opened the overview (keyboard leave at
++5.8 s; the next trace of the game's main thread, stuck in `CreatePalette` behind the wined3d lock, follows 50 ms
+later). Wine's Wayland driver keeps the toplevel transparent under the OpenGL sub-surface (opengl.c, client
+surface), so the desktop shows through: the game is on top, focused, running - and invisible. Why mutter withholds the
+callback on some starts is not visible from outside the compositor (a candidate is its "unredirect" of new full-screen
+windows for direct scanout). Earlier readings were wrong and are superseded: the desktop-icons extension's rebuild
+(both of its windows are DESKTOP-typed before they map and never take focus), the driver's `managed` race (both
+starts show the same focus events), and the stacking assertion in the journal (mutter raising a window for Wine's
+pre-map fullscreen request, every start). Tried and discarded: a settle wait after the scale switch and a one-pixel
+GTK window for a focus round trip (no effect, the mechanism is not focus), and wined3d's `renderer=gdi` (black: its
+no-3D present goes through a screen DC the Wayland driver has not). Candidate fix: the start script runs
+`vblank_mode=0 wine "<exe>"`. Mesa's `dri2_setup_swap_interval` then clamps the swap interval to 0
+(`DRI_CONF_VBLANK_NEVER`), its Wayland swap requests no throttle callback and never waits (`if (SwapInterval > 0)`
+in platform_wayland.c), the game's fps limiter paces the frames, and a Wayland compositor does not tear. Windows
+and the exe are untouched. **Reverted the same day at the maintainer's request before a test; nothing of this is in
+the launcher (2.10: the scale switch only).** Options on the table: `vblank_mode=0` (above); wined3d's Vulkan
+presenter (same frame-callback wait expected in FIFO mode); `DDFLIP_NOVSYNC` in the exe (would cost Windows its
+vsync); the compositor side (mutter's unredirect of new full-screen windows, the "Disable unredirect fullscreen
+windows" extension as the test); the X11 driver under XWayland.
+

@@ -6,6 +6,9 @@ live tests); the wire protocol is in [`docs/DC16_NETWORK_PROTOCOL.md`](docs/DC16
 
 ## Unreleased
 
+- **OZI MISSIONS: the first drop pod of the third alien mission brings a harvester** (25 Oct 2026, maintainer; map
+  doc §11): `tools/fix_tarr03_harvester.py` appends one SLUG to trigger 1's `reinforce` in
+  `ozi_ns/scenario/council/tarr03.tro` (4 XENO, 1 PSYC, 4 GRAY before). Installer copy synced, package republished.
 - **Movies visible under Wine: the frame goes into the back buffer and is flipped** (20 Oct 2026, maintainer's
   report "only sound of the video is heard and black screen"; doc §10.8): the stretched movie path of fix
   `resolution` blitted every frame onto the primary surface without a `Flip`. Windows shows that at once, Wine's

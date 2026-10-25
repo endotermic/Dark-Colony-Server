@@ -382,6 +382,11 @@ and allies never pass through each other: trigger 9's area now also covers x 102
 the formation is unchanged, so the player gains no shortcut). Found by reading `.tro`/`.mtg`/`.pth`/`.scn` against the
 engine port and the disassembly of 0x43E610 / 0x416110 / 0x43E183; confirmed in a game by the maintainer on 20 Oct 2026.
 
+**OZI pack, third alien mission `council/tarr03`: the first drop pod brings a harvester (25 Oct 2026, maintainer).**
+Trigger 1 dropped 4 XENO, 1 PSYC and 4 GRAY for the player and no SLUG; `tools/fix_tarr03_harvester.py` (verify / plan
+/ apply) appends the pair `14 1` to that `reinforce` line (five pairs are allowed, missing ones read as zero, the pack
+uses the same form elsewhere), so the pod unloads one harvester after the fighters.
+
 ## 12. JSON (`tools/map2json.js`, format `dc16-scenario` version 1)
 
 ```
